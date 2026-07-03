@@ -3927,9 +3927,9 @@ class DiscordAdapter(BasePlatformAdapter):
         async def slash_undo(interaction: discord.Interaction):
             await self._run_simple_slash(interaction, "/undo")
 
-        @tree.command(name="status", description="Show Hermes session status")
-        async def slash_status(interaction: discord.Interaction):
-            await self._run_simple_slash(interaction, "/status", "Status sent~")
+        @tree.command(name="gateway", description="Show Hermes Gateway status")
+        async def slash_gateway(interaction: discord.Interaction):
+            await self._run_simple_slash(interaction, "/status", "Gateway status sent~")
 
         @tree.command(name="sethome", description="Set this chat as the home channel")
         async def slash_sethome(interaction: discord.Interaction):

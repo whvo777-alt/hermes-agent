@@ -8897,7 +8897,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 self._release_running_agent_state(_quick_key)
 
         if _quick_key in self._running_agents:
-            if event.get_command() == "status":
+            if event.get_command() in {"status", "gateway"}:
                 return await self._handle_status_command(event)
 
             # Resolve the command once for all early-intercept checks below.
@@ -9404,7 +9404,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if canonical == "whoami":
             return await self._handle_whoami_command(event)
 
-        if canonical == "status":
+        if canonical in {"status", "gateway"}:
             return await self._handle_status_command(event)
 
         if canonical == "agents":
