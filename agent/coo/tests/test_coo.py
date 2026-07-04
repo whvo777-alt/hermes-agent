@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import unittest
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from agent.coo.execution_planner import ExecutionPlanner
 from agent.coo.execution_policy import ExecutionPolicy
@@ -355,6 +356,353 @@ class TestWorkerInterface(unittest.TestCase):
                 mode=WorkerExecutionMode.EXECUTE,
             )
         self.assertIn("Phase 4", str(ctx.exception))
+
+
+class TestExecutionContract(unittest.TestCase):
+    def test_boundary_policy_defaults(self) -> None:
+        from agent.coo.execution_contract import default_boundary_policy
+
+        policy = default_boundary_policy()
+        self.assertFalse(policy.auto_apply)
+        self.assertTrue(policy.review_required)
+        self.assertFalse(policy.allow_publish)
+        self.assertFalse(policy.allow_approval_decision)
+        self.assertFalse(policy.allow_learning_apply)
+        self.assertFalse(policy.allow_strategy_apply)
+        self.assertTrue(policy.repository2_read_only)
+
+    def test_skill_execution_request_safeguard_defaults(self) -> None:
+        from agent.coo.execution_contract import SkillExecutionRequest
+
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-1",
+            run_date="2026-07-04",
+        )
+        self.assertFalse(request.auto_apply)
+        self.assertTrue(request.review_required)
+
+    def test_execute_publish_blocked_when_allow_publish_false(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionStatus,
+            evaluate_skill_execution,
+            validate_skill_execution_request,
+        )
+        from agent.coo.execution_contract import SkillExecutionRequest
+        from agent.coo.skills_catalog import RISK_CATEGORY_PUBLISH, get_skill
+
+        definition = get_skill("publish_content")
+        self.assertIsNotNone(definition)
+        assert definition is not None
+        self.assertEqual(definition.risk_category, RISK_CATEGORY_PUBLISH)
+        self.assertTrue(definition.requires_ceo_approval)
+
+        request = SkillExecutionRequest(
+            skill_id="publish_content",
+            worker_id="publisher_worker",
+            assignment_id="a-pub-1",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.EXECUTE,
+        )
+        ok, error = validate_skill_execution_request(request)
+        self.assertFalse(ok)
+        self.assertIsNotNone(error)
+
+        result = evaluate_skill_execution(request)
+        self.assertEqual(result.status, SkillExecutionStatus.BLOCKED)
+        self.assertTrue(result.dry_run)
+        self.assertIn("Publish", result.blocked_reason)
+
+    def test_worker_plan_only_rejects_skill_execute(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionStatus,
+            SkillExecutionRequest,
+            evaluate_skill_execution,
+            validate_mode_compatibility,
+            validate_skill_execution_request,
+        )
+
+        ok, _ = validate_mode_compatibility("plan_only", SkillExecutionMode.EXECUTE)
+        self.assertFalse(ok)
+
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-1",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.EXECUTE,
+            worker_mode="plan_only",
+        )
+        ok, error = validate_skill_execution_request(request)
+        self.assertFalse(ok)
+        self.assertIsNotNone(error)
+
+        result = evaluate_skill_execution(request)
+        self.assertEqual(result.status, SkillExecutionStatus.BLOCKED)
+
+    def test_worker_dry_run_rejects_skill_execute(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionStatus,
+            SkillExecutionRequest,
+            evaluate_skill_execution,
+            validate_mode_compatibility,
+            validate_skill_execution_request,
+        )
+
+        ok, _ = validate_mode_compatibility("dry_run", SkillExecutionMode.EXECUTE)
+        self.assertFalse(ok)
+
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-2",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.EXECUTE,
+            worker_mode="dry_run",
+        )
+        ok, error = validate_skill_execution_request(request)
+        self.assertFalse(ok)
+        self.assertIsNotNone(error)
+
+        result = evaluate_skill_execution(request)
+        self.assertEqual(result.status, SkillExecutionStatus.BLOCKED)
+
+    def test_worker_execute_allows_skill_dry_run(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionStatus,
+            SkillExecutionRequest,
+            evaluate_skill_execution,
+            validate_mode_compatibility,
+            validate_skill_execution_request,
+        )
+
+        ok, error = validate_mode_compatibility("execute", SkillExecutionMode.DRY_RUN)
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-3",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.DRY_RUN,
+            worker_mode="execute",
+        )
+        ok, error = validate_skill_execution_request(request)
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+
+        result = evaluate_skill_execution(request)
+        self.assertEqual(result.status, SkillExecutionStatus.PLANNED)
+        self.assertTrue(result.dry_run)
+
+    def test_allowed_execute_request_planned_with_dry_run_false(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionStatus,
+            SkillExecutionRequest,
+            evaluate_skill_execution,
+            validate_skill_execution_request,
+        )
+
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-4",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.EXECUTE,
+            worker_mode="execute",
+        )
+        ok, error = validate_skill_execution_request(request)
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+
+        result = evaluate_skill_execution(request)
+        self.assertEqual(result.status, SkillExecutionStatus.PLANNED)
+        self.assertFalse(result.dry_run)
+        self.assertEqual(result.mode, SkillExecutionMode.EXECUTE)
+
+    def test_execution_artifact_ref_is_path_metadata_only(self) -> None:
+        from dataclasses import fields
+
+        from agent.coo.execution_contract import ExecutionArtifactRef
+
+        artifact = ExecutionArtifactRef(
+            path="outputs/2026-07-04/_reports/daily.json",
+            kind="report",
+            summary="Daily brief",
+        )
+        field_names = {field.name for field in fields(artifact)}
+        self.assertEqual(field_names, {"path", "kind", "summary"})
+        self.assertNotIn("blob", field_names)
+        self.assertNotIn("content", field_names)
+
+
+class TestPipelineAdapter(unittest.TestCase):
+    def test_pipeline_adapter_config_defaults(self) -> None:
+        from agent.coo.pipeline_adapter import PipelineAdapterConfig
+
+        config = PipelineAdapterConfig()
+        self.assertEqual(config.pipeline_root, "/opt/data/multi-content-pipeline")
+        self.assertFalse(config.allow_execute)
+        self.assertEqual(config.timeout_seconds, 60)
+        self.assertTrue(config.repository2_read_only)
+
+    def test_validate_root_checks_directory_existence(self) -> None:
+        from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
+
+        missing = PipelineAdapter(
+            PipelineAdapterConfig(pipeline_root="/nonexistent/pipeline/root/phase4a")
+        )
+        ok, error = missing.validate_root()
+        self.assertFalse(ok)
+        self.assertIn("not found", error)
+
+        if Path("/opt/data/multi-content-pipeline").is_dir():
+            present = PipelineAdapter()
+            ok, error = present.validate_root()
+            self.assertTrue(ok)
+            self.assertEqual(error, "")
+
+    def test_dry_run_returns_result_without_subprocess(self) -> None:
+        import subprocess
+
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionRequest,
+            SkillExecutionStatus,
+        )
+        from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            adapter = PipelineAdapter(
+                PipelineAdapterConfig(pipeline_root="/opt/data/multi-content-pipeline")
+            )
+            request = SkillExecutionRequest(
+                skill_id="create_content",
+                worker_id="draft_worker",
+                assignment_id="a-dry-1",
+                run_date="2026-07-04",
+                mode=SkillExecutionMode.DRY_RUN,
+                worker_mode="dry_run",
+            )
+            result = adapter.dry_run(request)
+
+        self.assertEqual(result.status, SkillExecutionStatus.PLANNED)
+        self.assertTrue(result.dry_run)
+        self.assertIn("Dry-run ready", result.summary)
+        self.assertFalse(result.auto_apply)
+        self.assertTrue(result.review_required)
+
+    def test_dispatch_raises_runtime_error_in_phase_4a(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionRequest,
+        )
+        from agent.coo.pipeline_adapter import PipelineAdapter
+
+        adapter = PipelineAdapter()
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-disp-1",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.EXECUTE,
+            worker_mode="execute",
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.dispatch(request)
+        self.assertIn("allow_execute", str(ctx.exception))
+
+    def test_publish_skill_blocked_before_adapter(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionRequest,
+            SkillExecutionStatus,
+        )
+        from agent.coo.pipeline_adapter import PipelineAdapter
+
+        adapter = PipelineAdapter()
+        request = SkillExecutionRequest(
+            skill_id="publish_content",
+            worker_id="publisher_worker",
+            assignment_id="a-pub-dry",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.DRY_RUN,
+        )
+        result = adapter.dry_run(request)
+        self.assertEqual(result.status, SkillExecutionStatus.BLOCKED)
+        self.assertTrue(result.dry_run)
+        self.assertIn("Publish", result.blocked_reason)
+
+    def test_request_entrypoint_override_uses_catalog(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionRequest,
+            SkillExecutionStatus,
+        )
+        from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
+        from agent.coo.skills_catalog import get_skill
+
+        definition = get_skill("create_content")
+        self.assertIsNotNone(definition)
+        assert definition is not None
+
+        adapter = PipelineAdapter(
+            PipelineAdapterConfig(pipeline_root="/opt/data/multi-content-pipeline")
+        )
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-override-1",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.DRY_RUN,
+            worker_mode="dry_run",
+            entrypoint_hint="npm run evil-override",
+        )
+        result = adapter.dry_run(request)
+        self.assertEqual(result.status, SkillExecutionStatus.PLANNED)
+        self.assertIn("entrypoint='node pipeline.js'", result.summary)
+
+        plan = adapter.plan(request)
+        self.assertEqual(plan.entrypoint_hint, definition.entrypoint_hint)
+        self.assertEqual(plan.entrypoint_hint, "node pipeline.js")
+
+    def test_repository2_read_only_false_raises_runtime_error(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionRequest,
+        )
+        from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
+
+        adapter = PipelineAdapter(
+            PipelineAdapterConfig(
+                pipeline_root="/opt/data/multi-content-pipeline",
+                repository2_read_only=False,
+            )
+        )
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-ro-1",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.DRY_RUN,
+            worker_mode="dry_run",
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            adapter.dry_run(request)
+        self.assertIn("repository2_read_only", str(ctx.exception))
+
+        with self.assertRaises(RuntimeError):
+            adapter.plan(request)
+
+        with self.assertRaises(RuntimeError):
+            adapter.dispatch(request)
 
 
 class TestCooOrchestrateTool(unittest.TestCase):

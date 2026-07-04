@@ -8,6 +8,14 @@ from typing import Dict, Optional
 from agent.coo.models import PlanPhase
 
 
+# Risk categories — source of truth for execution boundary evaluation.
+RISK_CATEGORY_STANDARD = "standard"
+RISK_CATEGORY_PUBLISH = "publish"
+RISK_CATEGORY_APPROVAL_DECISION = "approval_decision"
+RISK_CATEGORY_LEARNING_APPLY = "learning_apply"
+RISK_CATEGORY_STRATEGY_APPLY = "strategy_apply"
+
+
 @dataclass(frozen=True)
 class SkillDefinition:
     skill_id: str
@@ -16,6 +24,8 @@ class SkillDefinition:
     entrypoint_hint: str
     phases: tuple[PlanPhase, ...]
     read_only: bool = False
+    requires_ceo_approval: bool = False
+    risk_category: str = RISK_CATEGORY_STANDARD
 
 
 SKILL_CATALOG: Dict[str, SkillDefinition] = {
@@ -52,6 +62,8 @@ SKILL_CATALOG: Dict[str, SkillDefinition] = {
         ),
         entrypoint_hint="npm run preflight:publish",
         phases=(PlanPhase.PUBLISHER,),
+        requires_ceo_approval=True,
+        risk_category=RISK_CATEGORY_PUBLISH,
     ),
     "daily_brief": SkillDefinition(
         skill_id="daily_brief",
@@ -73,3 +85,11 @@ SKILL_CATALOG: Dict[str, SkillDefinition] = {
 
 def get_skill(skill_id: str) -> Optional[SkillDefinition]:
     return SKILL_CATALOG.get(skill_id)
+
+
+def resolve_risk_category(skill_id: str) -> str:
+    """Return risk_category from catalog metadata; unknown skills are standard."""
+    definition = get_skill(skill_id)
+    if definition is None:
+        return RISK_CATEGORY_STANDARD
+    return definition.risk_category
