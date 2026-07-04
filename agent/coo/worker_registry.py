@@ -7,9 +7,10 @@ WorkerManager → WorkerAssignment; COO never addresses individual workers.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, Type
 
 from agent.coo.models import PlanPhase
+from agent.coo.worker_interface import BaseWorker
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class WorkerDefinition:
     skill_ids: tuple[str, ...] = ()
     read_only: bool = False
     requires_ceo_approval: bool = False
+    worker_class: Optional[Type[BaseWorker]] = None
 
 
 DEPARTMENT_REGISTRY: Dict[str, DepartmentDefinition] = {
@@ -168,3 +170,47 @@ def worker_for_phase(phase: PlanPhase) -> Optional[WorkerDefinition]:
     if worker_id is None:
         return None
     return WORKER_REGISTRY.get(worker_id)
+
+
+class RegistryWorker(BaseWorker):
+    """Minimal BaseWorker backed by a static WorkerDefinition."""
+
+    def __init__(self, definition: WorkerDefinition) -> None:
+        self._definition = definition
+        self.worker_id = definition.worker_id
+        self.department_id = definition.department_id
+        self.supported_phases = definition.phases
+
+    def describe(self) -> Dict[str, object]:
+        return {
+            "worker_id": self._definition.worker_id,
+            "name": self._definition.name,
+            "department_id": self._definition.department_id,
+            "phases": [phase.value for phase in self._definition.phases],
+            "skill_ids": list(self._definition.skill_ids),
+            "read_only": self._definition.read_only,
+            "requires_ceo_approval": self._definition.requires_ceo_approval,
+        }
+
+
+def instantiate_worker(worker_id: str) -> Optional[BaseWorker]:
+    """Create a BaseWorker instance for registry-backed workers.
+
+    Custom workers registered via ``WorkerDefinition.worker_class`` **must**
+    accept a single ``WorkerDefinition`` constructor argument::
+
+        class MyWorker(BaseWorker):
+            def __init__(self, definition: WorkerDefinition) -> None:
+                self._definition = definition
+                self.worker_id = definition.worker_id
+                self.department_id = definition.department_id
+                self.supported_phases = definition.phases
+
+    When ``worker_class`` is omitted, ``RegistryWorker`` is used as the default.
+    """
+    definition = get_worker(worker_id)
+    if definition is None:
+        return None
+    if definition.worker_class is not None:
+        return definition.worker_class(definition)
+    return RegistryWorker(definition)

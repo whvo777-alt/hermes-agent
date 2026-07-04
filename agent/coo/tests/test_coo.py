@@ -22,6 +22,12 @@ from agent.coo.models import (
 )
 from agent.coo.orchestrator import COOOrchestrator
 from agent.coo.skill_selection import SkillSelector
+from agent.coo.worker_interface import (
+    BaseWorker,
+    WorkerContext,
+    WorkerExecutionMode,
+    WorkerResult,
+)
 from agent.coo.worker_manager import WorkerManager
 
 
@@ -229,6 +235,126 @@ class TestWorkerManager(unittest.TestCase):
         )
         self.assertEqual(publisher.status, WorkerStatus.BLOCKED)
         self.assertIn(PlanPhase.PUBLISHER, publisher.phases)
+
+
+class DummyWorker(BaseWorker):
+    """Test double for Worker Interface contract."""
+
+    def __init__(self) -> None:
+        self.worker_id = "dummy_worker"
+        self.department_id = "research"
+        self.supported_phases = (PlanPhase.RESEARCH,)
+
+    def describe(self) -> dict:
+        return {
+            "worker_id": self.worker_id,
+            "department_id": self.department_id,
+            "phases": [phase.value for phase in self.supported_phases],
+        }
+
+
+class TestWorkerInterface(unittest.TestCase):
+    def _sample_context(
+        self,
+        *,
+        mode: WorkerExecutionMode = WorkerExecutionMode.PLAN_ONLY,
+        status: WorkerStatus = WorkerStatus.SELECTED,
+    ) -> WorkerContext:
+        from agent.coo.models import PolicyDecision, PolicyVerdict, WorkerAssignment
+
+        assignment = WorkerAssignment(
+            assignment_id="test-assignment-1",
+            worker_id="dummy_worker",
+            department_id="research",
+            phases=[PlanPhase.RESEARCH],
+            status=status,
+        )
+        plan = ExecutionPlanner().plan(
+            IntentAnalyzer().analyze("오늘 상태 보고해", run_date="2026-07-04")
+        )
+        policy = PolicyDecision(
+            verdict=PolicyVerdict.ALLOW,
+            auto_apply=False,
+            review_required=True,
+            requires_ceo_approval=False,
+            allowed_phases=[PlanPhase.RESEARCH],
+        )
+        return WorkerContext(
+            assignment=assignment,
+            plan=plan,
+            policy=policy,
+            skill_invocations=[],
+            run_date="2026-07-04",
+            pipeline_root="/opt/data/multi-content-pipeline",
+            mode=mode,
+        )
+
+    def test_dummy_worker_describe_plan_perform(self) -> None:
+        worker = DummyWorker()
+        ctx = self._sample_context()
+
+        description = worker.describe()
+        self.assertEqual(description["worker_id"], "dummy_worker")
+
+        plan_result = worker.plan(ctx)
+        self.assertIsInstance(plan_result, WorkerResult)
+        self.assertEqual(plan_result.worker_id, "dummy_worker")
+        self.assertTrue(plan_result.dry_run)
+
+        perform_result = worker.perform(ctx)
+        self.assertIsInstance(perform_result, WorkerResult)
+        self.assertEqual(perform_result.status, WorkerStatus.SELECTED)
+
+    def test_worker_context_safeguard_defaults(self) -> None:
+        ctx = self._sample_context()
+        self.assertFalse(ctx.auto_apply)
+        self.assertTrue(ctx.review_required)
+
+    def test_perform_execute_mode_stays_dry_run(self) -> None:
+        worker = DummyWorker()
+        ctx = self._sample_context(mode=WorkerExecutionMode.EXECUTE)
+        result = worker.perform(ctx)
+
+        self.assertTrue(result.dry_run)
+        self.assertFalse(result.auto_apply)
+        self.assertTrue(result.review_required)
+        self.assertEqual(result.mode, WorkerExecutionMode.EXECUTE)
+        self.assertIn(
+            result.status,
+            (WorkerStatus.SELECTED, WorkerStatus.WAITING, WorkerStatus.BLOCKED),
+        )
+
+    def test_dry_run_rejects_execute_mode(self) -> None:
+        from agent.coo.models import PolicyDecision, PolicyVerdict, WorkerAssignment
+
+        manager = WorkerManager()
+        assignment = WorkerAssignment(
+            assignment_id="test-assignment-exec",
+            worker_id="research_worker",
+            department_id="research",
+            phases=[PlanPhase.RESEARCH],
+            status=WorkerStatus.SELECTED,
+        )
+        plan = ExecutionPlanner().plan(
+            IntentAnalyzer().analyze("오늘 상태 보고해", run_date="2026-07-04")
+        )
+        policy = PolicyDecision(
+            verdict=PolicyVerdict.ALLOW,
+            auto_apply=False,
+            review_required=True,
+            requires_ceo_approval=False,
+            allowed_phases=[PlanPhase.RESEARCH],
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            manager.dry_run(
+                [assignment],
+                plan,
+                policy,
+                "/opt/data/multi-content-pipeline",
+                mode=WorkerExecutionMode.EXECUTE,
+            )
+        self.assertIn("Phase 4", str(ctx.exception))
 
 
 class TestCooOrchestrateTool(unittest.TestCase):

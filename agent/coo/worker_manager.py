@@ -18,7 +18,8 @@ from agent.coo.models import (
     WorkerAssignment,
     WorkerStatus,
 )
-from agent.coo.worker_registry import worker_for_phase
+from agent.coo.worker_interface import WorkerContext, WorkerExecutionMode, WorkerResult
+from agent.coo.worker_registry import instantiate_worker, worker_for_phase
 
 
 # Phase status merge priority (highest wins when one assignment spans phases):
@@ -116,6 +117,60 @@ class WorkerManager:
             )
 
         return assignments
+
+    def build_context(
+        self,
+        assignment: WorkerAssignment,
+        plan: ExecutionPlan,
+        policy: PolicyDecision,
+        pipeline_root: str,
+        mode: WorkerExecutionMode = WorkerExecutionMode.PLAN_ONLY,
+        prior_results: List[WorkerResult] | None = None,
+    ) -> WorkerContext:
+        """Build a WorkerContext for plan/perform calls (no execution)."""
+        return WorkerContext(
+            assignment=assignment,
+            plan=plan,
+            policy=policy,
+            skill_invocations=list(assignment.skill_invocations),
+            run_date=plan.run_date,
+            pipeline_root=pipeline_root,
+            mode=mode,
+            prior_results=list(prior_results or []),
+            auto_apply=False,
+            review_required=True,
+        )
+
+    def dry_run(
+        self,
+        assignments: List[WorkerAssignment],
+        plan: ExecutionPlan,
+        policy: PolicyDecision,
+        pipeline_root: str,
+        mode: WorkerExecutionMode = WorkerExecutionMode.DRY_RUN,
+    ) -> List[WorkerResult]:
+        """Run plan/perform dry-run for staffed workers — no skill execution."""
+        if mode is WorkerExecutionMode.EXECUTE:
+            raise RuntimeError("EXECUTE mode is not available until Phase 4.")
+
+        results: List[WorkerResult] = []
+        for assignment in assignments:
+            worker = instantiate_worker(assignment.worker_id)
+            if worker is None:
+                continue
+            ctx = self.build_context(
+                assignment,
+                plan,
+                policy,
+                pipeline_root,
+                mode=mode,
+                prior_results=results,
+            )
+            if mode is WorkerExecutionMode.PLAN_ONLY:
+                results.append(worker.plan(ctx))
+            else:
+                results.append(worker.perform(ctx))
+        return results
 
     @staticmethod
     def _index_skills_by_phase(
