@@ -9,6 +9,12 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from agent.coo.approval_report import build_approval_report
+from agent.coo.approval_session import (
+    CEOApprovalSessionStore,
+    create_approval_session,
+    get_default_session_store,
+    should_create_approval_session,
+)
 from agent.coo.models import COOOrchestrationResult, SkillInvocation, SkillInvocationStatus, WorkerAssignment
 from agent.coo.orchestrator import COOOrchestrator
 from tools.registry import registry, tool_error, tool_result
@@ -42,14 +48,30 @@ def _assignment_payload(assignment: WorkerAssignment) -> Dict[str, Any]:
     return assignment.to_dict()
 
 
-def _format_tool_response(result: COOOrchestrationResult) -> Dict[str, Any]:
+def _format_tool_response(
+    result: COOOrchestrationResult,
+    *,
+    session_store: Optional[CEOApprovalSessionStore] = None,
+) -> Dict[str, Any]:
     """Build the coo_orchestrate tool payload.
 
     ``ceo_message`` — short operational summary (plan/policy/runtime headline).
     ``approval_report_markdown`` — detailed CEO approval report for Discord UX.
-    Both are returned so Phase 5C can choose which surface to display.
+    ``approval_session`` — pending in-memory CEO approval session (Phase 5C).
+    Both message fields are returned so Phase 5C Discord UX can choose which to display.
     """
     approval_report = build_approval_report(result)
+    store = session_store or get_default_session_store()
+    approval_session_payload: Optional[Dict[str, Any]] = None
+    if should_create_approval_session(approval_report):
+        approval_session = create_approval_session(
+            approval_report,
+            result,
+            requester_id="CEO",
+            channel_id="",
+            store=store,
+        )
+        approval_session_payload = approval_session.to_dict()
     return {
         "intent": {
             "raw_text": result.intent.raw_text,
@@ -112,6 +134,7 @@ def _format_tool_response(result: COOOrchestrationResult) -> Dict[str, Any]:
         "ceo_message": result.ceo_message,
         "next_actions": result.next_actions,
         "approval_report_markdown": approval_report.to_markdown(),
+        "approval_session": approval_session_payload,
     }
 
 
@@ -119,6 +142,7 @@ def coo_orchestrate(
     ceo_message: str,
     run_date: Optional[str] = None,
     orchestrator: Optional[COOOrchestrator] = None,
+    session_store: Optional[CEOApprovalSessionStore] = None,
 ) -> str:
     """Analyze CEO intent and produce plan/policy/skill selection (no execution)."""
     if not ceo_message or not ceo_message.strip():
@@ -126,7 +150,7 @@ def coo_orchestrate(
 
     engine = orchestrator or COOOrchestrator()
     result = engine.orchestrate(ceo_message.strip(), run_date=run_date)
-    return tool_result(_format_tool_response(result))
+    return tool_result(_format_tool_response(result, session_store=session_store))
 
 
 def check_coo_requirements() -> bool:

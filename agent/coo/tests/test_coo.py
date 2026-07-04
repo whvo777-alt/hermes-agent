@@ -1396,6 +1396,216 @@ class TestCEOApprovalReportStatusMapping(unittest.TestCase):
         self.assertNotIn("## CEO Approval Report", payload["ceo_message"])
 
 
+class TestCEOApprovalSession(unittest.TestCase):
+    def test_create_session_from_report_defaults_pending(self) -> None:
+        import subprocess
+
+        from agent.coo.approval_report import build_approval_report
+        from agent.coo.approval_session import (
+            CEOApprovalSessionStatus,
+            CEOApprovalSessionStore,
+            create_approval_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            orchestrated = COOOrchestrator().orchestrate(
+                "오늘 블로그 글 작성해서 보고해",
+                run_date="2026-07-04",
+            )
+        report = build_approval_report(orchestrated)
+        session = create_approval_session(report, orchestrated, store=store)
+
+        self.assertTrue(session.session_id)
+        self.assertEqual(session.status, CEOApprovalSessionStatus.PENDING)
+        self.assertEqual(session.task_kind, report.task_kind)
+        self.assertFalse(session.auto_apply)
+        self.assertTrue(session.review_required)
+        self.assertEqual(session.requester_id, "CEO")
+        self.assertEqual(session.channel_id, "")
+        self.assertTrue(session.expires_at)
+        self.assertIs(store.get(session.session_id), session)
+
+    def test_create_session_stores_custom_requester_and_channel(self) -> None:
+        from agent.coo.approval_report import build_approval_report
+        from agent.coo.approval_session import CEOApprovalSessionStore, create_approval_session
+
+        store = CEOApprovalSessionStore()
+        orchestrated = COOOrchestrator().orchestrate("???", run_date="2026-07-04")
+        report = build_approval_report(orchestrated)
+        session = create_approval_session(
+            report,
+            orchestrated,
+            requester_id="ceo-user-42",
+            channel_id="discord-chan-99",
+            store=store,
+        )
+
+        self.assertEqual(session.requester_id, "ceo-user-42")
+        self.assertEqual(session.channel_id, "discord-chan-99")
+
+    def test_wrong_requester_cannot_approve(self) -> None:
+        from agent.coo.approval_report import CEOApprovalReport, CEOApprovalReportStatus
+        from agent.coo.approval_session import (
+            CEOApprovalSessionStore,
+            approve_session,
+            create_approval_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report = CEOApprovalReport(
+            status=CEOApprovalReportStatus.READY,
+            task_kind="daily_brief",
+            run_date="2026-07-04",
+            runtime_status="selected",
+            worker_summary="test",
+        )
+        orchestrated = COOOrchestrator().orchestrate("오늘 상태 보고해", run_date="2026-07-04")
+        session = create_approval_session(
+            report,
+            orchestrated,
+            requester_id="CEO",
+            store=store,
+        )
+
+        with self.assertRaises(ValueError):
+            approve_session(
+                session.session_id,
+                reviewer="COO",
+                requester_id="COO",
+                store=store,
+            )
+
+    def test_not_started_report_skips_session_in_coo_orchestrate(self) -> None:
+        import subprocess
+
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from tools.coo_tools import coo_orchestrate
+
+        store = CEOApprovalSessionStore()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            raw = coo_orchestrate("???", run_date="2026-07-04", session_store=store)
+        payload = json.loads(raw)
+
+        self.assertIsNone(payload["approval_session"])
+        self.assertEqual(len(store.list_sessions()), 0)
+
+    def test_expire_pending_sessions_marks_overdue_as_expired(self) -> None:
+        from datetime import datetime, timezone
+
+        from agent.coo.approval_report import CEOApprovalReport, CEOApprovalReportStatus
+        from agent.coo.approval_session import (
+            CEOApprovalSessionStatus,
+            CEOApprovalSessionStore,
+            create_approval_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report = CEOApprovalReport(
+            status=CEOApprovalReportStatus.READY,
+            task_kind="daily_brief",
+            run_date="2026-07-04",
+            runtime_status="selected",
+            worker_summary="test",
+        )
+        orchestrated = COOOrchestrator().orchestrate("오늘 상태 보고해", run_date="2026-07-04")
+        session = create_approval_session(report, orchestrated, store=store)
+        session.expires_at = "2020-01-01T00:00:00+00:00"
+        store.save(session)
+
+        expired_count = store.expire_pending_sessions(
+            now=datetime(2026, 7, 5, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(expired_count, 1)
+        refreshed = store.get(session.session_id)
+        assert refreshed is not None
+        self.assertEqual(refreshed.status, CEOApprovalSessionStatus.EXPIRED)
+
+    def test_approve_session_transitions_to_approved_without_execution(self) -> None:
+        import subprocess
+
+        from agent.coo.approval_report import build_approval_report
+        from agent.coo.approval_session import (
+            CEOApprovalSessionStatus,
+            CEOApprovalSessionStore,
+            approve_session,
+            create_approval_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            orchestrated = COOOrchestrator().orchestrate(
+                "승인하고 발행해",
+                run_date="2026-07-04",
+            )
+        session = create_approval_session(
+            build_approval_report(orchestrated),
+            orchestrated,
+            store=store,
+        )
+        approved = approve_session(session.session_id, reviewer="CEO", store=store)
+
+        self.assertEqual(approved.status, CEOApprovalSessionStatus.APPROVED)
+        self.assertEqual(approved.reviewer, "CEO")
+        self.assertTrue(approved.approved_at)
+        self.assertEqual(approved.execution_ticket_id, "")
+        self.assertFalse(approved.execution_dispatched)
+        self.assertFalse(approved.publish_dispatched)
+
+    def test_reject_session_transitions_to_rejected(self) -> None:
+        from agent.coo.approval_report import CEOApprovalReport, CEOApprovalReportStatus
+        from agent.coo.approval_session import (
+            CEOApprovalSessionStatus,
+            CEOApprovalSessionStore,
+            create_approval_session,
+            reject_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report = CEOApprovalReport(
+            status=CEOApprovalReportStatus.READY,
+            task_kind="daily_brief",
+            run_date="2026-07-04",
+            runtime_status="selected",
+            worker_summary="test",
+        )
+        orchestrated = COOOrchestrator().orchestrate("???", run_date="2026-07-04")
+        session = create_approval_session(report, orchestrated, store=store)
+        rejected = reject_session(
+            session.session_id,
+            reviewer="CEO",
+            reason="Not ready",
+            store=store,
+        )
+
+        self.assertEqual(rejected.status, CEOApprovalSessionStatus.REJECTED)
+        self.assertEqual(rejected.rejection_reason, "Not ready")
+        self.assertTrue(rejected.rejected_at)
+
+    def test_coo_orchestrate_includes_approval_session(self) -> None:
+        import subprocess
+
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from tools.coo_tools import coo_orchestrate
+
+        store = CEOApprovalSessionStore()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            raw = coo_orchestrate(
+                "오늘 상태 보고해",
+                run_date="2026-07-04",
+                session_store=store,
+            )
+        payload = json.loads(raw)
+
+        self.assertIn("approval_session", payload)
+        self.assertIn("approval_report_markdown", payload)
+        self.assertEqual(payload["approval_session"]["status"], "pending")
+        self.assertFalse(payload["approval_session"]["auto_apply"])
+        self.assertTrue(payload["approval_session"]["review_required"])
+        self.assertEqual(len(store.list_sessions()), 1)
+
+
 class TestCooOrchestrateTool(unittest.TestCase):
     def test_registered_in_registry(self) -> None:
         import tools.coo_tools  # noqa: F401 — side-effect registration
@@ -1432,6 +1642,7 @@ class TestCooOrchestrateTool(unittest.TestCase):
             "runtime_status",
             "runtime_provider_results",
             "approval_report_markdown",
+            "approval_session",
         ):
             self.assertIn(key, payload)
 
