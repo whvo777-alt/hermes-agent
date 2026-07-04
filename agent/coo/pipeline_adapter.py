@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from agent.coo.execution_contract import (
     ExecutionBoundaryPolicy,
@@ -60,6 +60,7 @@ class PipelineAdapterResult:
     parameters: Dict[str, Any] = field(default_factory=dict)
     blocked_reason: str = ""
     root_valid: bool = False
+    warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -72,6 +73,7 @@ class PipelineAdapterResult:
             "parameters": dict(self.parameters),
             "blocked_reason": self.blocked_reason,
             "root_valid": self.root_valid,
+            "warnings": list(self.warnings),
         }
 
 
@@ -128,6 +130,11 @@ class PipelineAdapter:
         logger.warning(message)
         return message
 
+    def _warnings_from_override(self, override_warning: Optional[str]) -> List[str]:
+        if override_warning:
+            return [override_warning]
+        return []
+
     def plan(
         self,
         request: SkillExecutionRequest,
@@ -137,6 +144,7 @@ class PipelineAdapter:
         contract = evaluate_skill_execution(request, boundary)
         entrypoint = self._catalog_entrypoint(request.skill_id)
         override_warning = self._entrypoint_override_warning(request, entrypoint)
+        warnings = self._warnings_from_override(override_warning)
 
         if contract.status is SkillExecutionStatus.BLOCKED:
             return PipelineAdapterResult(
@@ -149,6 +157,7 @@ class PipelineAdapter:
                 parameters=dict(request.parameters),
                 blocked_reason=contract.blocked_reason,
                 root_valid=False,
+                warnings=warnings,
             )
 
         self._assert_repository_read_only()
@@ -165,6 +174,7 @@ class PipelineAdapter:
                 parameters=dict(request.parameters),
                 blocked_reason=root_error,
                 root_valid=False,
+                warnings=warnings,
             )
 
         summary = (
@@ -183,6 +193,7 @@ class PipelineAdapter:
             run_date=request.run_date,
             parameters=dict(request.parameters),
             root_valid=True,
+            warnings=warnings,
         )
 
     def dry_run(

@@ -672,6 +672,62 @@ class TestPipelineAdapter(unittest.TestCase):
         plan = adapter.plan(request)
         self.assertEqual(plan.entrypoint_hint, definition.entrypoint_hint)
         self.assertEqual(plan.entrypoint_hint, "node pipeline.js")
+        self.assertEqual(len(plan.warnings), 1)
+        self.assertIn("evil-override", plan.warnings[0])
+        self.assertIn("ignored", plan.warnings[0])
+
+    def test_entrypoint_override_warning_in_adapter_warnings_list(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionRequest,
+        )
+        from agent.coo.pipeline_adapter import (
+            PipelineAdapter,
+            PipelineAdapterConfig,
+            PipelineAdapterStatus,
+        )
+
+        adapter = PipelineAdapter(
+            PipelineAdapterConfig(pipeline_root="/opt/data/multi-content-pipeline")
+        )
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-warn-1",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.PLAN_ONLY,
+            entrypoint_hint="npm run evil-override",
+        )
+        result = adapter.plan(request)
+        self.assertEqual(result.status, PipelineAdapterStatus.PLANNED)
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("npm run evil-override", result.warnings[0])
+        self.assertIn("node pipeline.js", result.warnings[0])
+
+    def test_blocked_plan_preserves_entrypoint_override_warning(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionRequest,
+        )
+        from agent.coo.pipeline_adapter import (
+            PipelineAdapter,
+            PipelineAdapterStatus,
+        )
+
+        adapter = PipelineAdapter()
+        request = SkillExecutionRequest(
+            skill_id="publish_content",
+            worker_id="publisher_worker",
+            assignment_id="a-warn-blocked",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.DRY_RUN,
+            entrypoint_hint="npm run evil-override",
+        )
+        result = adapter.plan(request)
+        self.assertEqual(result.status, PipelineAdapterStatus.BLOCKED)
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("evil-override", result.warnings[0])
+        self.assertIn("Publish", result.blocked_reason)
 
     def test_repository2_read_only_false_raises_runtime_error(self) -> None:
         from agent.coo.execution_contract import (
@@ -703,6 +759,134 @@ class TestPipelineAdapter(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             adapter.dispatch(request)
+
+
+class TestExecutionProvider(unittest.TestCase):
+    def test_plan_delegates_to_pipeline_adapter(self) -> None:
+        import subprocess
+
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionRequest,
+        )
+        from agent.coo.execution_provider import ExecutionProvider
+        from agent.coo.pipeline_adapter import (
+            PipelineAdapterResult,
+            PipelineAdapterStatus,
+        )
+
+        mock_adapter = MagicMock()
+        mock_adapter.plan.return_value = PipelineAdapterResult(
+            status=PipelineAdapterStatus.PLANNED,
+            skill_id="create_content",
+            entrypoint_hint="node pipeline.js",
+            pipeline_root="/opt/data/multi-content-pipeline",
+            summary="Planned create_content via 'node pipeline.js' (no dispatch).",
+            run_date="2026-07-04",
+            parameters={"topic": "ai"},
+            root_valid=True,
+            warnings=["catalog entrypoint used"],
+        )
+
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-prov-1",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.PLAN_ONLY,
+            parameters={"topic": "ai"},
+        )
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            provider = ExecutionProvider(adapter=mock_adapter)
+            result = provider.plan(request)
+
+        mock_adapter.plan.assert_called_once_with(request, None)
+        self.assertEqual(result.provider_name, "pipeline")
+        self.assertEqual(result.adapter_status, PipelineAdapterStatus.PLANNED.value)
+        self.assertEqual(result.entrypoint, "node pipeline.js")
+        self.assertEqual(result.parameters, {"topic": "ai"})
+        self.assertTrue(result.dry_run)
+        self.assertEqual(result.skill_id, "create_content")
+        self.assertEqual(result.warnings, ["catalog entrypoint used"])
+
+    def test_provider_warnings_copy_adapter_warnings(self) -> None:
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionRequest,
+        )
+        from agent.coo.execution_provider import ExecutionProvider
+        from agent.coo.pipeline_adapter import (
+            PipelineAdapterResult,
+            PipelineAdapterStatus,
+        )
+
+        adapter_warnings = [
+            "request.entrypoint_hint 'npm run evil' ignored for create_content; "
+            "using catalog entrypoint 'node pipeline.js'."
+        ]
+        mock_adapter = MagicMock()
+        mock_adapter.plan.return_value = PipelineAdapterResult(
+            status=PipelineAdapterStatus.BLOCKED,
+            skill_id="publish_content",
+            entrypoint_hint="npm run preflight:publish",
+            pipeline_root="/opt/data/multi-content-pipeline",
+            summary="Blocked: publish_content",
+            blocked_reason="Publish skills are blocked",
+            warnings=adapter_warnings,
+        )
+
+        request = SkillExecutionRequest(
+            skill_id="publish_content",
+            worker_id="publisher_worker",
+            assignment_id="a-prov-warn",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.DRY_RUN,
+            entrypoint_hint="npm run evil",
+        )
+        provider = ExecutionProvider(adapter=mock_adapter)
+        result = provider.plan(request)
+
+        self.assertEqual(result.warnings, adapter_warnings)
+        result.warnings.append("mutated")
+        self.assertEqual(len(adapter_warnings), 1)
+
+    def test_plan_integration_no_subprocess(self) -> None:
+        import subprocess
+
+        from agent.coo.execution_contract import (
+            SkillExecutionMode,
+            SkillExecutionRequest,
+        )
+        from agent.coo.execution_provider import ExecutionProvider
+        from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
+
+        request = SkillExecutionRequest(
+            skill_id="create_content",
+            worker_id="draft_worker",
+            assignment_id="a-prov-2",
+            run_date="2026-07-04",
+            mode=SkillExecutionMode.PLAN_ONLY,
+            worker_mode="plan_only",
+        )
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            provider = ExecutionProvider(
+                adapter=PipelineAdapter(
+                    PipelineAdapterConfig(pipeline_root="/opt/data/multi-content-pipeline")
+                )
+            )
+            result = provider.plan(request)
+
+        self.assertEqual(result.provider_name, "pipeline")
+        self.assertEqual(result.entrypoint, "node pipeline.js")
+        self.assertTrue(result.dry_run)
+        self.assertFalse(result.parameters.get("auto_apply", False))
+
+    def test_provider_has_no_dispatch(self) -> None:
+        from agent.coo.execution_provider import ExecutionProvider
+
+        self.assertFalse(hasattr(ExecutionProvider, "dispatch"))
 
 
 class TestCooOrchestrateTool(unittest.TestCase):
