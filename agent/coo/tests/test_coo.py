@@ -18,9 +18,11 @@ from agent.coo.models import (
     RuntimeSnapshot,
     SkillInvocationStatus,
     TaskKind,
+    WorkerStatus,
 )
 from agent.coo.orchestrator import COOOrchestrator
 from agent.coo.skill_selection import SkillSelector
+from agent.coo.worker_manager import WorkerManager
 
 
 class TestIntentAnalyzer(unittest.TestCase):
@@ -171,6 +173,64 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIs(orchestrator._state_reader, pipeline_state_reader)
 
 
+class TestWorkerManager(unittest.TestCase):
+    def setUp(self) -> None:
+        self.manager = WorkerManager()
+
+    def test_worker_status_includes_cancelled(self) -> None:
+        self.assertIn("cancelled", {status.value for status in WorkerStatus})
+
+    def test_create_and_report_staffs_department_workers(self) -> None:
+        orchestrator = COOOrchestrator()
+        result = orchestrator.orchestrate(
+            "오늘 블로그 글 작성해서 보고해",
+            run_date="2026-07-04",
+        )
+        worker_ids = [assignment.worker_id for assignment in result.worker_assignments]
+        self.assertEqual(
+            worker_ids,
+            [
+                "research_worker",
+                "strategy_worker",
+                "draft_worker",
+                "quality_worker",
+                "approval_worker",
+                "reporting_worker",
+            ],
+        )
+        departments = [assignment.department_id for assignment in result.worker_assignments]
+        self.assertEqual(
+            departments,
+            ["research", "strategy", "writing", "quality", "approval", "reporting"],
+        )
+        for assignment in result.worker_assignments:
+            self.assertFalse(assignment.auto_apply)
+            self.assertTrue(assignment.review_required)
+
+    def test_approve_and_publish_staffs_approval_and_publisher(self) -> None:
+        orchestrator = COOOrchestrator()
+        result = orchestrator.orchestrate(
+            "승인하고 발행해",
+            run_date="2026-07-04",
+        )
+        worker_ids = [assignment.worker_id for assignment in result.worker_assignments]
+        self.assertEqual(worker_ids, ["approval_worker", "publisher_worker"])
+
+    def test_blocked_phase_produces_blocked_assignment(self) -> None:
+        orchestrator = COOOrchestrator()
+        result = orchestrator.orchestrate(
+            "승인하고 발행해",
+            run_date="2026-07-04",
+        )
+        publisher = next(
+            assignment
+            for assignment in result.worker_assignments
+            if assignment.worker_id == "publisher_worker"
+        )
+        self.assertEqual(publisher.status, WorkerStatus.BLOCKED)
+        self.assertIn(PlanPhase.PUBLISHER, publisher.phases)
+
+
 class TestCooOrchestrateTool(unittest.TestCase):
     def test_registered_in_registry(self) -> None:
         import tools.coo_tools  # noqa: F401 — side-effect registration
@@ -199,6 +259,7 @@ class TestCooOrchestrateTool(unittest.TestCase):
             "review_required",
             "auto_apply",
             "summary",
+            "worker_assignments",
         ):
             self.assertIn(key, payload)
 
@@ -206,6 +267,7 @@ class TestCooOrchestrateTool(unittest.TestCase):
         self.assertFalse(payload["auto_apply"])
         self.assertTrue(payload["review_required"])
         self.assertIsInstance(payload["policy_decisions"], list)
+        self.assertIsInstance(payload["worker_assignments"], list)
 
     def test_coo_toolset_resolves_coo_orchestrate(self) -> None:
         from toolsets import resolve_toolset

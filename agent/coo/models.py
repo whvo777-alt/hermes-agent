@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
+
+
+def _utc_now_iso() -> str:
+    """Return current UTC time as an ISO8601 string for audit timestamps."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 class TaskKind(str, Enum):
@@ -45,6 +51,19 @@ class SkillInvocationStatus(str, Enum):
     BLOCKED = "blocked"
     DEFERRED = "deferred"
     SKIPPED = "skipped"
+
+
+class WorkerStatus(str, Enum):
+    """Worker assignment lifecycle states (plan-only in Phase 3B)."""
+
+    PLANNED = "planned"
+    SELECTED = "selected"
+    WORKING = "working"
+    WAITING = "waiting"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -146,12 +165,57 @@ class SkillInvocation:
 
 
 @dataclass
+class WorkerAssignment:
+    """Plan-only worker staffing record produced by Worker Manager."""
+
+    assignment_id: str
+    worker_id: str
+    department_id: str
+    phases: List[PlanPhase]
+    status: WorkerStatus
+    skill_invocations: List[SkillInvocation] = field(default_factory=list)
+    requires_ceo_approval: bool = False
+    reason: str = ""
+    auto_apply: bool = False
+    review_required: bool = True
+    created_at: str = field(default_factory=_utc_now_iso)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "assignment_id": self.assignment_id,
+            "worker_id": self.worker_id,
+            "department_id": self.department_id,
+            "phases": [phase.value for phase in self.phases],
+            "status": self.status.value,
+            "skill_invocations": [
+                {
+                    "skill_id": skill.skill_id,
+                    "skill_name": skill.skill_name,
+                    "phase": skill.phase.value,
+                    "status": skill.status.value,
+                    "reason": skill.reason,
+                    "entrypoint_hint": skill.entrypoint_hint,
+                    "dry_run": skill.dry_run,
+                    "requires_ceo_approval": skill.requires_ceo_approval,
+                }
+                for skill in self.skill_invocations
+            ],
+            "requires_ceo_approval": self.requires_ceo_approval,
+            "reason": self.reason,
+            "auto_apply": self.auto_apply,
+            "review_required": self.review_required,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass
 class COOOrchestrationResult:
     intent: IntentResult
     state: PipelineState
     plan: ExecutionPlan
     policy: PolicyDecision
     skills: List[SkillInvocation]
+    worker_assignments: List[WorkerAssignment] = field(default_factory=list)
     ceo_message: str = ""
     next_actions: List[str] = field(default_factory=list)
 
@@ -228,6 +292,9 @@ class COOOrchestrationResult:
                     "requires_ceo_approval": skill.requires_ceo_approval,
                 }
                 for skill in self.skills
+            ],
+            "worker_assignments": [
+                assignment.to_dict() for assignment in self.worker_assignments
             ],
             "ceo_message": self.ceo_message,
             "next_actions": self.next_actions,

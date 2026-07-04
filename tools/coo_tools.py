@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from agent.coo.models import COOOrchestrationResult, SkillInvocation, SkillInvocationStatus
+from agent.coo.models import COOOrchestrationResult, SkillInvocation, SkillInvocationStatus, WorkerAssignment
 from agent.coo.orchestrator import COOOrchestrator
 from tools.registry import registry, tool_error, tool_result
 
@@ -35,6 +35,10 @@ def _skills_by_status(
     status: SkillInvocationStatus,
 ) -> List[Dict[str, Any]]:
     return [_skill_payload(skill) for skill in skills if skill.status is status]
+
+
+def _assignment_payload(assignment: WorkerAssignment) -> Dict[str, Any]:
+    return assignment.to_dict()
 
 
 def _format_tool_response(result: COOOrchestrationResult) -> Dict[str, Any]:
@@ -76,6 +80,9 @@ def _format_tool_response(result: COOOrchestrationResult) -> Dict[str, Any]:
         "review_required": _REVIEW_REQUIRED,
         "auto_apply": _AUTO_APPLY,
         "summary": result.plan.summary or result.policy.summary,
+        "worker_assignments": [
+            _assignment_payload(assignment) for assignment in result.worker_assignments
+        ],
         "ceo_message": result.ceo_message,
         "next_actions": result.next_actions,
     }

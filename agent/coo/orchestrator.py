@@ -11,6 +11,7 @@ from agent.coo.intent_analysis import IntentAnalyzer
 from agent.coo.models import COOOrchestrationResult, PolicyVerdict, SkillInvocationStatus, TaskKind
 from agent.coo.pipeline_state import PipelineStateReader
 from agent.coo.skill_selection import SkillSelector
+from agent.coo.worker_manager import WorkerManager
 
 
 class COOOrchestrator:
@@ -25,6 +26,7 @@ class COOOrchestrator:
         execution_policy: Optional[ExecutionPolicy] = None,
         skill_selector: Optional[SkillSelector] = None,
         pipeline_state_reader: Optional[PipelineStateReader] = None,
+        worker_manager: Optional[WorkerManager] = None,
     ) -> None:
         self._config = config or get_coo_config()
         self._intent = intent_analyzer or IntentAnalyzer()
@@ -32,6 +34,7 @@ class COOOrchestrator:
         self._policy = execution_policy or ExecutionPolicy(self._config)
         self._selector = skill_selector or SkillSelector()
         self._state_reader = pipeline_state_reader or PipelineStateReader(self._config)
+        self._worker_manager = worker_manager or WorkerManager()
 
     def orchestrate(
         self,
@@ -43,6 +46,7 @@ class COOOrchestrator:
         plan = self._planner.plan(intent)
         policy = self._policy.evaluate(plan, state)
         skills = self._selector.select(plan, policy)
+        worker_assignments = self._worker_manager.assign(plan, policy, skills)
         ceo_message_out = self._build_ceo_message(intent, plan, policy, skills, state)
         next_actions = self._build_next_actions(intent, policy, skills, state)
 
@@ -52,6 +56,7 @@ class COOOrchestrator:
             plan=plan,
             policy=policy,
             skills=skills,
+            worker_assignments=worker_assignments,
             ceo_message=ceo_message_out,
             next_actions=next_actions,
         )
