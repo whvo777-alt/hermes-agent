@@ -235,6 +235,12 @@ TOOLSETS = {
         "tools": ["clarify"],
         "includes": []
     },
+
+    "coo": {
+        "description": "Hermes COO orchestration planning",
+        "tools": ["coo_orchestrate"],
+        "includes": []
+    },
     
     "code_execution": {
         "description": "Run Python scripts that call tools programmatically (reduces LLM round trips)",
