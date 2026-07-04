@@ -38,6 +38,8 @@ class ExecutionProviderResult:
     dry_run: bool = True
     skill_id: str = ""
     summary: str = ""
+    worker_id: Optional[str] = None
+    assignment_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -50,6 +52,8 @@ class ExecutionProviderResult:
             "dry_run": self.dry_run,
             "skill_id": self.skill_id,
             "summary": self.summary,
+            "worker_id": self.worker_id,
+            "assignment_id": self.assignment_id,
         }
 
 
@@ -82,6 +86,8 @@ class ExecutionProvider:
         return _adapter_result_to_provider_result(
             adapter_result,
             provider_name=self._provider_name,
+            worker_id=request.worker_id,
+            assignment_id=request.assignment_id,
         )
 
 
@@ -89,6 +95,8 @@ def _adapter_result_to_provider_result(
     adapter_result: PipelineAdapterResult,
     *,
     provider_name: str,
+    worker_id: Optional[str] = None,
+    assignment_id: Optional[str] = None,
 ) -> ExecutionProviderResult:
     """Map adapter plan output to the worker-facing provider result."""
     return ExecutionProviderResult(
@@ -101,4 +109,6 @@ def _adapter_result_to_provider_result(
         dry_run=True,  # Phase 4B: plan-only — never dispatches
         skill_id=adapter_result.skill_id,
         summary=adapter_result.summary,
+        worker_id=worker_id,
+        assignment_id=assignment_id,
     )

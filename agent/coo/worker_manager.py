@@ -2,6 +2,9 @@
 
 COO delegates staffing here so it never addresses individual workers or
 skills directly. No Execution Engine invocation occurs in this module.
+
+Runtime dispatch uses ``SkillInvocation`` records from skill selection —
+never ``WorkerDefinition.skill_ids`` from the registry (planning capabilities only).
 """
 
 from __future__ import annotations
@@ -17,25 +20,13 @@ from agent.coo.models import (
     SkillInvocation,
     WorkerAssignment,
     WorkerStatus,
+    worker_status_rank,
 )
 from agent.coo.worker_interface import WorkerContext, WorkerExecutionMode, WorkerResult
 from agent.coo.worker_registry import instantiate_worker, worker_for_phase
 from agent.coo.execution_provider import ExecutionProvider
 from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
 
-
-# Phase status merge priority (highest wins when one assignment spans phases):
-# FAILED > CANCELLED > COMPLETED > BLOCKED > WAITING > WORKING > SELECTED > PLANNED
-_STATUS_RANK = {
-    WorkerStatus.PLANNED: 0,
-    WorkerStatus.SELECTED: 1,
-    WorkerStatus.WORKING: 2,
-    WorkerStatus.WAITING: 3,
-    WorkerStatus.BLOCKED: 4,
-    WorkerStatus.COMPLETED: 5,
-    WorkerStatus.CANCELLED: 6,
-    WorkerStatus.FAILED: 7,
-}
 
 _CEO_BOUNDARY_PHASES = frozenset({
     PlanPhase.APPROVAL_QUEUE,
@@ -205,7 +196,7 @@ class WorkerManager:
     def _merge_statuses(statuses: List[WorkerStatus]) -> WorkerStatus:
         if not statuses:
             return WorkerStatus.PLANNED
-        return max(statuses, key=lambda status: _STATUS_RANK[status])
+        return max(statuses, key=worker_status_rank)
 
     @staticmethod
     def _reason_for_assignment(

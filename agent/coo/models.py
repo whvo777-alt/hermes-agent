@@ -66,6 +66,24 @@ class WorkerStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+def worker_status_rank(status: WorkerStatus) -> int:
+    """Return merge priority for worker statuses (higher = more severe).
+
+    Priority: FAILED > CANCELLED > COMPLETED > BLOCKED > WAITING >
+    WORKING > SELECTED > PLANNED.
+    """
+    return {
+        WorkerStatus.PLANNED: 0,
+        WorkerStatus.SELECTED: 1,
+        WorkerStatus.WORKING: 2,
+        WorkerStatus.WAITING: 3,
+        WorkerStatus.BLOCKED: 4,
+        WorkerStatus.COMPLETED: 5,
+        WorkerStatus.CANCELLED: 6,
+        WorkerStatus.FAILED: 7,
+    }[status]
+
+
 @dataclass
 class IntentResult:
     raw_text: str

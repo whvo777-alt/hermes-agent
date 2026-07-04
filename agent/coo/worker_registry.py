@@ -27,8 +27,9 @@ class WorkerDefinition:
 
     ``skill_ids`` declares **planning capabilities** for documentation and future
     staffing — **not** runtime dispatch ids. Entries may not exist in
-    ``SKILL_CATALOG`` yet. Dispatch always uses ``SkillInvocation`` records
-    produced by skill selection, never ``WorkerDefinition.skill_ids`` directly.
+    ``SKILL_CATALOG`` yet and must not be added to the catalog solely to satisfy
+    this registry. Dispatch always uses ``SkillInvocation`` records produced by
+    skill selection, never ``WorkerDefinition.skill_ids`` directly.
     """
 
     worker_id: str

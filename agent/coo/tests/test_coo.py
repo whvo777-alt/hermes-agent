@@ -443,6 +443,61 @@ class TestWorkerInterface(unittest.TestCase):
         self.assertEqual(len(result.provider_results), 1)
         self.assertEqual(result.provider_results[0].skill_id, "create_content")
 
+    def test_provider_result_includes_worker_attribution(self) -> None:
+        import subprocess
+
+        from agent.coo.execution_provider import ExecutionProvider
+        from agent.coo.models import PolicyDecision, PolicyVerdict, SkillInvocation, SkillInvocationStatus, WorkerAssignment
+        from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
+
+        assignment = WorkerAssignment(
+            assignment_id="attr-test-1",
+            worker_id="dummy_worker",
+            department_id="writing",
+            phases=[PlanPhase.WRITER],
+            status=WorkerStatus.SELECTED,
+            skill_invocations=[
+                SkillInvocation(
+                    skill_id="create_content",
+                    skill_name="Create Content",
+                    phase=PlanPhase.WRITER,
+                    status=SkillInvocationStatus.SELECTED,
+                )
+            ],
+        )
+        plan = ExecutionPlanner().plan(
+            IntentAnalyzer().analyze("오늘 블로그 글 작성", run_date="2026-07-04")
+        )
+        policy = PolicyDecision(
+            verdict=PolicyVerdict.ALLOW,
+            auto_apply=False,
+            review_required=True,
+            requires_ceo_approval=False,
+            allowed_phases=[PlanPhase.WRITER],
+        )
+        provider = ExecutionProvider(
+            adapter=PipelineAdapter(
+                PipelineAdapterConfig(pipeline_root="/opt/data/multi-content-pipeline")
+            )
+        )
+        ctx = WorkerContext(
+            assignment=assignment,
+            plan=plan,
+            policy=policy,
+            skill_invocations=list(assignment.skill_invocations),
+            run_date="2026-07-04",
+            pipeline_root="/opt/data/multi-content-pipeline",
+            mode=WorkerExecutionMode.DRY_RUN,
+            execution_provider=provider,
+        )
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = DummyWorker().perform(ctx)
+
+        self.assertEqual(len(result.provider_results), 1)
+        self.assertEqual(result.provider_results[0].worker_id, "dummy_worker")
+        self.assertEqual(result.provider_results[0].assignment_id, "attr-test-1")
+
     def test_worker_manager_dry_run_includes_provider_results(self) -> None:
         import subprocess
 
@@ -488,6 +543,133 @@ class TestWorkerInterface(unittest.TestCase):
         self.assertEqual(len(results[0].provider_results), 1)
         self.assertEqual(results[0].provider_results[0].skill_id, "create_content")
         self.assertTrue(all(item.dry_run for item in results[0].provider_results))
+
+
+class TestWorkerRuntime(unittest.TestCase):
+    def test_create_and_report_sequences_workers_in_order(self) -> None:
+        import subprocess
+
+        from agent.coo.worker_runtime import WorkerRuntime
+
+        orchestrated = COOOrchestrator().orchestrate(
+            "오늘 블로그 글 작성해서 보고해",
+            run_date="2026-07-04",
+        )
+        expected_ids = [
+            "research_worker",
+            "strategy_worker",
+            "draft_worker",
+            "quality_worker",
+            "approval_worker",
+            "reporting_worker",
+        ]
+
+        runtime = WorkerRuntime()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = runtime.run(
+                orchestrated.worker_assignments,
+                orchestrated.plan,
+                orchestrated.policy,
+                orchestrated.state.pipeline_root,
+            )
+
+        self.assertEqual(
+            [worker_result.worker_id for worker_result in result.worker_results],
+            expected_ids,
+        )
+        self.assertTrue(result.dry_run)
+        self.assertIn("6 worker(s) sequenced", result.summary)
+
+    def test_blocked_worker_reflected_in_runtime_status(self) -> None:
+        import subprocess
+
+        from agent.coo.worker_runtime import WorkerRuntime, WorkerRuntimeStatus
+
+        orchestrated = COOOrchestrator().orchestrate(
+            "승인하고 발행해",
+            run_date="2026-07-04",
+        )
+
+        runtime = WorkerRuntime()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = runtime.run(
+                orchestrated.worker_assignments,
+                orchestrated.plan,
+                orchestrated.policy,
+                orchestrated.state.pipeline_root,
+            )
+
+        self.assertIn("publisher_worker", result.blocked_workers)
+        self.assertEqual(result.status, WorkerRuntimeStatus.BLOCKED)
+        self.assertGreater(result.status_counts.get("blocked", 0), 0)
+        self.assertIn("publisher_worker", result.summary)
+
+    def test_provider_results_included_in_runtime_result(self) -> None:
+        import subprocess
+
+        from agent.coo.models import PolicyDecision, PolicyVerdict, SkillInvocation, SkillInvocationStatus, WorkerAssignment
+        from agent.coo.worker_runtime import WorkerRuntime
+
+        plan = ExecutionPlanner().plan(
+            IntentAnalyzer().analyze("오늘 블로그 글 작성", run_date="2026-07-04")
+        )
+        policy = PolicyDecision(
+            verdict=PolicyVerdict.ALLOW,
+            auto_apply=False,
+            review_required=True,
+            requires_ceo_approval=False,
+            allowed_phases=[PlanPhase.WRITER],
+        )
+        assignment = WorkerAssignment(
+            assignment_id="runtime-draft-prov",
+            worker_id="draft_worker",
+            department_id="writing",
+            phases=[PlanPhase.WRITER],
+            status=WorkerStatus.SELECTED,
+            skill_invocations=[
+                SkillInvocation(
+                    skill_id="create_content",
+                    skill_name="Create Content",
+                    phase=PlanPhase.WRITER,
+                    status=SkillInvocationStatus.SELECTED,
+                )
+            ],
+        )
+
+        runtime = WorkerRuntime()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = runtime.run(
+                [assignment],
+                plan,
+                policy,
+                "/opt/data/multi-content-pipeline",
+            )
+
+        self.assertEqual(len(result.provider_results), 1)
+        self.assertEqual(result.provider_results[0].skill_id, "create_content")
+        self.assertIn("ExecutionProvider planned 1 skill(s)", result.summary)
+        self.assertEqual(result.provider_results[0].worker_id, "draft_worker")
+        self.assertEqual(result.provider_results[0].assignment_id, "runtime-draft-prov")
+
+    def test_worker_status_rank_shared_by_manager_and_runtime(self) -> None:
+        from agent.coo.models import WorkerStatus, worker_status_rank
+        from agent.coo.worker_manager import WorkerManager
+
+        statuses = [WorkerStatus.SELECTED, WorkerStatus.BLOCKED, WorkerStatus.WAITING]
+        expected = max(statuses, key=worker_status_rank)
+        self.assertEqual(WorkerManager._merge_statuses(statuses), expected)
+        self.assertGreater(worker_status_rank(WorkerStatus.FAILED), worker_status_rank(WorkerStatus.BLOCKED))
+        self.assertGreater(worker_status_rank(WorkerStatus.BLOCKED), worker_status_rank(WorkerStatus.WAITING))
+        self.assertGreater(worker_status_rank(WorkerStatus.WAITING), worker_status_rank(WorkerStatus.SELECTED))
+
+    def test_validate_worker_registry_returns_warnings_not_exceptions(self) -> None:
+        from agent.coo.worker_registry import validate_worker_registry
+
+        warnings = validate_worker_registry()
+        try:
+            self.assertIsInstance(warnings, list)
+        except Exception as exc:  # pragma: no cover - guard against future raises
+            self.fail(f"validate_worker_registry must not raise: {exc}")
 
 
 class TestExecutionContract(unittest.TestCase):
