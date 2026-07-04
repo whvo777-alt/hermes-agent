@@ -1606,6 +1606,179 @@ class TestCEOApprovalSession(unittest.TestCase):
         self.assertEqual(len(store.list_sessions()), 1)
 
 
+class TestGatewayApprovalBridge(unittest.TestCase):
+    def _ready_report_and_orchestration(self):
+        import subprocess
+
+        from agent.coo.approval_report import build_approval_report
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            orchestrated = COOOrchestrator().orchestrate(
+                "오늘 상태 보고해",
+                run_date="2026-07-04",
+            )
+        return build_approval_report(orchestrated), orchestrated
+
+    def test_create_gateway_session_stores_requester_and_channel(self) -> None:
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.gateway_approval import create_gateway_approval_session
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        payload = create_gateway_approval_session(
+            report,
+            orchestrated,
+            requester_id="discord-user-123",
+            channel_id="discord-channel-456",
+            store=store,
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["requester_id"], "discord-user-123")
+        self.assertEqual(payload["channel_id"], "discord-channel-456")
+        self.assertEqual(payload["status"], "pending")
+
+    def test_approve_gateway_session_succeeds_for_owner(self) -> None:
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.gateway_approval import (
+            approve_gateway_session,
+            create_gateway_approval_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        created = create_gateway_approval_session(
+            report,
+            orchestrated,
+            requester_id="discord-user-123",
+            channel_id="discord-channel-456",
+            store=store,
+        )
+        assert created is not None
+
+        approved = approve_gateway_session(
+            created["session_id"],
+            requester_id="discord-user-123",
+            store=store,
+        )
+
+        self.assertEqual(approved["status"], "approved")
+        self.assertEqual(approved["reviewer"], "discord-user-123")
+        self.assertEqual(approved["execution_ticket_id"], "")
+        self.assertFalse(approved["execution_dispatched"])
+        self.assertFalse(approved["publish_dispatched"])
+
+    def test_approve_gateway_session_rejects_other_requester(self) -> None:
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.gateway_approval import (
+            approve_gateway_session,
+            create_gateway_approval_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        created = create_gateway_approval_session(
+            report,
+            orchestrated,
+            requester_id="discord-user-123",
+            channel_id="discord-channel-456",
+            store=store,
+        )
+        assert created is not None
+
+        with self.assertRaises(ValueError):
+            approve_gateway_session(
+                created["session_id"],
+                requester_id="discord-user-999",
+                store=store,
+            )
+
+    def test_reject_gateway_session_succeeds_for_owner(self) -> None:
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.gateway_approval import (
+            create_gateway_approval_session,
+            reject_gateway_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        created = create_gateway_approval_session(
+            report,
+            orchestrated,
+            requester_id="discord-user-123",
+            channel_id="discord-channel-456",
+            store=store,
+        )
+        assert created is not None
+
+        rejected = reject_gateway_session(
+            created["session_id"],
+            requester_id="discord-user-123",
+            reason="Need more detail",
+            store=store,
+        )
+
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(rejected["rejection_reason"], "Need more detail")
+        self.assertEqual(rejected["execution_ticket_id"], "")
+        self.assertFalse(rejected["execution_dispatched"])
+        self.assertFalse(rejected["publish_dispatched"])
+
+    def test_expire_gateway_sessions_marks_overdue_pending(self) -> None:
+        from datetime import datetime, timezone
+
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.gateway_approval import (
+            create_gateway_approval_session,
+            expire_gateway_sessions,
+            get_gateway_approval_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        created = create_gateway_approval_session(
+            report,
+            orchestrated,
+            requester_id="discord-user-123",
+            channel_id="discord-channel-456",
+            store=store,
+        )
+        assert created is not None
+        session = store.get(created["session_id"])
+        assert session is not None
+        session.expires_at = "2020-01-01T00:00:00+00:00"
+        store.save(session)
+
+        expired_count = expire_gateway_sessions(
+            now=datetime(2026, 7, 5, tzinfo=timezone.utc),
+            store=store,
+        )
+
+        self.assertEqual(expired_count, 1)
+        refreshed = get_gateway_approval_session(created["session_id"], store=store)
+        assert refreshed is not None
+        self.assertEqual(refreshed["status"], "expired")
+
+    def test_create_gateway_session_skips_not_started_report(self) -> None:
+        from agent.coo.approval_report import build_approval_report
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.gateway_approval import create_gateway_approval_session
+
+        store = CEOApprovalSessionStore()
+        orchestrated = COOOrchestrator().orchestrate("???", run_date="2026-07-04")
+        report = build_approval_report(orchestrated)
+        payload = create_gateway_approval_session(
+            report,
+            orchestrated,
+            requester_id="discord-user-123",
+            channel_id="discord-channel-456",
+            store=store,
+        )
+
+        self.assertIsNone(payload)
+        self.assertEqual(len(store.list_sessions()), 0)
+
+
 class TestCooOrchestrateTool(unittest.TestCase):
     def test_registered_in_registry(self) -> None:
         import tools.coo_tools  # noqa: F401 — side-effect registration
