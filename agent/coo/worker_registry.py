@@ -7,9 +7,10 @@ WorkerManager → WorkerAssignment; COO never addresses individual workers.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Type
+from typing import Dict, List, Optional, Type
 
 from agent.coo.models import PlanPhase
+from agent.coo.skills_catalog import SKILL_CATALOG
 from agent.coo.worker_interface import BaseWorker
 
 
@@ -22,11 +23,19 @@ class DepartmentDefinition:
 
 @dataclass(frozen=True)
 class WorkerDefinition:
+    """Static worker metadata from the organizational chart.
+
+    ``skill_ids`` declares **planning capabilities** for documentation and future
+    staffing — **not** runtime dispatch ids. Entries may not exist in
+    ``SKILL_CATALOG`` yet. Dispatch always uses ``SkillInvocation`` records
+    produced by skill selection, never ``WorkerDefinition.skill_ids`` directly.
+    """
+
     worker_id: str
     name: str
     department_id: str
     phases: tuple[PlanPhase, ...]
-    skill_ids: tuple[str, ...] = ()
+    skill_ids: tuple[str, ...] = ()  # Planning capability — not runtime dispatch ids.
     read_only: bool = False
     requires_ceo_approval: bool = False
     worker_class: Optional[Type[BaseWorker]] = None
@@ -214,3 +223,40 @@ def instantiate_worker(worker_id: str) -> Optional[BaseWorker]:
     if definition.worker_class is not None:
         return definition.worker_class(definition)
     return RegistryWorker(definition)
+
+
+def validate_worker_registry() -> List[str]:
+    """Report registry vs catalog drift — returns warnings only, never raises.
+
+    Compares ``WorkerDefinition.skill_ids`` (planning capabilities) against
+    ``SKILL_CATALOG`` (runtime dispatch metadata). Future skills not yet in the
+    catalog are expected and reported as informational warnings.
+    """
+    warnings: List[str] = []
+    runtime_count = 0
+    future_count = 0
+
+    for worker_id, definition in WORKER_REGISTRY.items():
+        worker_future: List[str] = []
+        worker_runtime: List[str] = []
+        for skill_id in definition.skill_ids:
+            if skill_id in SKILL_CATALOG:
+                runtime_count += 1
+                worker_runtime.append(skill_id)
+            else:
+                future_count += 1
+                worker_future.append(skill_id)
+        if worker_future:
+            warnings.append(
+                f"{worker_id}: {len(worker_future)} future skill(s) not in SKILL_CATALOG: "
+                f"{', '.join(worker_future)}"
+            )
+
+    warnings.insert(
+        0,
+        (
+            f"Worker registry skill_ids summary: {runtime_count} runtime (in SKILL_CATALOG), "
+            f"{future_count} future (not in SKILL_CATALOG)."
+        ),
+    )
+    return warnings

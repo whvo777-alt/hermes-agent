@@ -184,6 +184,31 @@ class TestWorkerManager(unittest.TestCase):
     def setUp(self) -> None:
         self.manager = WorkerManager()
 
+    def test_worker_context_pipeline_root_is_legacy_documented(self) -> None:
+        doc = WorkerContext.__doc__ or ""
+        self.assertIn("ExecutionProvider", doc)
+        self.assertIn("legacy", doc.lower())
+        self.assertIn("Do not", doc)
+
+    def test_worker_definition_skill_ids_documentation(self) -> None:
+        from agent.coo.worker_registry import WorkerDefinition
+
+        doc = WorkerDefinition.__doc__ or ""
+        self.assertIn("planning", doc.lower())
+        self.assertIn("not", doc.lower())
+        self.assertIn("SKILL_CATALOG", doc)
+        self.assertIn("SkillInvocation", doc)
+
+    def test_validate_worker_registry_returns_warnings(self) -> None:
+        from agent.coo.worker_registry import validate_worker_registry
+
+        warnings = validate_worker_registry()
+        self.assertIsInstance(warnings, list)
+        self.assertGreater(len(warnings), 0)
+        self.assertIn("runtime", warnings[0].lower())
+        self.assertIn("future", warnings[0].lower())
+        self.assertTrue(any("future skill" in warning for warning in warnings[1:]))
+
     def test_worker_status_includes_cancelled(self) -> None:
         self.assertIn("cancelled", {status.value for status in WorkerStatus})
 
@@ -356,6 +381,113 @@ class TestWorkerInterface(unittest.TestCase):
                 mode=WorkerExecutionMode.EXECUTE,
             )
         self.assertIn("Phase 4", str(ctx.exception))
+
+    def test_perform_calls_execution_provider_plan(self) -> None:
+        from agent.coo.execution_provider import ExecutionProviderResult
+        from agent.coo.models import PolicyDecision, PolicyVerdict, SkillInvocation, SkillInvocationStatus, WorkerAssignment
+
+        mock_provider = MagicMock()
+        mock_provider.plan.return_value = ExecutionProviderResult(
+            provider_name="pipeline",
+            adapter_status="planned",
+            pipeline_root="/opt/data/multi-content-pipeline",
+            entrypoint="node pipeline.js",
+            skill_id="create_content",
+            summary="Planned create_content",
+        )
+
+        assignment = WorkerAssignment(
+            assignment_id="test-assignment-prov",
+            worker_id="dummy_worker",
+            department_id="writing",
+            phases=[PlanPhase.WRITER],
+            status=WorkerStatus.SELECTED,
+            skill_invocations=[
+                SkillInvocation(
+                    skill_id="create_content",
+                    skill_name="Create Content",
+                    phase=PlanPhase.WRITER,
+                    status=SkillInvocationStatus.SELECTED,
+                )
+            ],
+        )
+        plan = ExecutionPlanner().plan(
+            IntentAnalyzer().analyze("오늘 블로그 글 작성", run_date="2026-07-04")
+        )
+        policy = PolicyDecision(
+            verdict=PolicyVerdict.ALLOW,
+            auto_apply=False,
+            review_required=True,
+            requires_ceo_approval=False,
+            allowed_phases=[PlanPhase.WRITER],
+        )
+        ctx = WorkerContext(
+            assignment=assignment,
+            plan=plan,
+            policy=policy,
+            skill_invocations=list(assignment.skill_invocations),
+            run_date="2026-07-04",
+            pipeline_root="/opt/data/multi-content-pipeline",
+            mode=WorkerExecutionMode.DRY_RUN,
+            execution_provider=mock_provider,
+        )
+
+        worker = DummyWorker()
+        result = worker.perform(ctx)
+
+        mock_provider.plan.assert_called_once()
+        call_request = mock_provider.plan.call_args[0][0]
+        self.assertEqual(call_request.skill_id, "create_content")
+        self.assertEqual(call_request.worker_id, "dummy_worker")
+        self.assertEqual(call_request.mode.value, "dry_run")
+        self.assertEqual(len(result.provider_results), 1)
+        self.assertEqual(result.provider_results[0].skill_id, "create_content")
+
+    def test_worker_manager_dry_run_includes_provider_results(self) -> None:
+        import subprocess
+
+        from agent.coo.models import PolicyDecision, PolicyVerdict, SkillInvocation, SkillInvocationStatus, WorkerAssignment
+
+        plan = ExecutionPlanner().plan(
+            IntentAnalyzer().analyze("오늘 블로그 글 작성해서 보고해", run_date="2026-07-04")
+        )
+        policy = PolicyDecision(
+            verdict=PolicyVerdict.ALLOW,
+            auto_apply=False,
+            review_required=True,
+            requires_ceo_approval=False,
+            allowed_phases=[PlanPhase.WRITER],
+        )
+        assignment = WorkerAssignment(
+            assignment_id="test-draft-prov",
+            worker_id="draft_worker",
+            department_id="writing",
+            phases=[PlanPhase.WRITER],
+            status=WorkerStatus.SELECTED,
+            skill_invocations=[
+                SkillInvocation(
+                    skill_id="create_content",
+                    skill_name="Create Content",
+                    phase=PlanPhase.WRITER,
+                    status=SkillInvocationStatus.SELECTED,
+                )
+            ],
+        )
+
+        manager = WorkerManager()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            results = manager.dry_run(
+                [assignment],
+                plan,
+                policy,
+                "/opt/data/multi-content-pipeline",
+                mode=WorkerExecutionMode.DRY_RUN,
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(results[0].provider_results), 1)
+        self.assertEqual(results[0].provider_results[0].skill_id, "create_content")
+        self.assertTrue(all(item.dry_run for item in results[0].provider_results))
 
 
 class TestExecutionContract(unittest.TestCase):

@@ -20,6 +20,8 @@ from agent.coo.models import (
 )
 from agent.coo.worker_interface import WorkerContext, WorkerExecutionMode, WorkerResult
 from agent.coo.worker_registry import instantiate_worker, worker_for_phase
+from agent.coo.execution_provider import ExecutionProvider
+from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
 
 
 # Phase status merge priority (highest wins when one assignment spans phases):
@@ -126,6 +128,7 @@ class WorkerManager:
         pipeline_root: str,
         mode: WorkerExecutionMode = WorkerExecutionMode.PLAN_ONLY,
         prior_results: List[WorkerResult] | None = None,
+        execution_provider: ExecutionProvider | None = None,
     ) -> WorkerContext:
         """Build a WorkerContext for plan/perform calls (no execution)."""
         return WorkerContext(
@@ -137,6 +140,7 @@ class WorkerManager:
             pipeline_root=pipeline_root,
             mode=mode,
             prior_results=list(prior_results or []),
+            execution_provider=execution_provider,
             auto_apply=False,
             review_required=True,
         )
@@ -153,6 +157,9 @@ class WorkerManager:
         if mode is WorkerExecutionMode.EXECUTE:
             raise RuntimeError("EXECUTE mode is not available until Phase 4.")
 
+        provider = ExecutionProvider(
+            adapter=PipelineAdapter(PipelineAdapterConfig(pipeline_root=pipeline_root))
+        )
         results: List[WorkerResult] = []
         for assignment in assignments:
             worker = instantiate_worker(assignment.worker_id)
@@ -165,6 +172,7 @@ class WorkerManager:
                 pipeline_root,
                 mode=mode,
                 prior_results=results,
+                execution_provider=provider,
             )
             if mode is WorkerExecutionMode.PLAN_ONLY:
                 results.append(worker.plan(ctx))

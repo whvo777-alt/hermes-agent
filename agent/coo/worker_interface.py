@@ -19,6 +19,8 @@ from agent.coo.models import (
     WorkerAssignment,
     WorkerStatus,
 )
+from agent.coo.execution_contract import SkillExecutionMode, SkillExecutionRequest
+from agent.coo.execution_provider import ExecutionProvider, ExecutionProviderResult
 
 
 class WorkerExecutionMode(str, Enum):
@@ -40,16 +42,25 @@ class WorkerArtifactRef:
 
 @dataclass
 class WorkerContext:
-    """Turn-local snapshot passed to worker plan/perform methods."""
+    """Turn-local snapshot passed to worker plan/perform methods.
+
+    **Execution path:** use ``execution_provider`` only. ``ExecutionProvider``
+    (via ``PipelineAdapter``) owns pipeline configuration and ``pipeline_root``.
+
+    **Do not** read ``pipeline_root`` for dispatch — it is a legacy compatibility
+    field for pre-Phase-4C callers. Never combine ``pipeline_root`` with
+    ``execution_provider`` configuration; pick the provider path only.
+    """
 
     assignment: WorkerAssignment
     plan: ExecutionPlan
     policy: PolicyDecision
     skill_invocations: List[SkillInvocation]
     run_date: str
-    pipeline_root: str
+    pipeline_root: str  # Deprecated for execution path. ExecutionProvider owns pipeline configuration.
     mode: WorkerExecutionMode = WorkerExecutionMode.PLAN_ONLY
     prior_results: List["WorkerResult"] = field(default_factory=list)
+    execution_provider: Optional[ExecutionProvider] = None
     auto_apply: bool = False
     review_required: bool = True
 
@@ -71,6 +82,7 @@ class WorkerResult:
     review_required: bool = True
     auto_apply: bool = False
     reason: str = ""
+    provider_results: List[ExecutionProviderResult] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -102,6 +114,7 @@ class WorkerResult:
             "review_required": self.review_required,
             "auto_apply": self.auto_apply,
             "reason": self.reason,
+            "provider_results": [result.to_dict() for result in self.provider_results],
         }
 
 
@@ -130,8 +143,53 @@ class BaseWorker(ABC):
         """Pre-perform hook — override in Phase 4 for validation/setup."""
 
     def _do_perform(self, ctx: WorkerContext) -> WorkerResult:
-        """Core perform step. Phase 3C: dry-run only; no skill execution."""
-        return self._dry_run_result(ctx, action="perform")
+        """Core perform step. Phase 4C: provider plan only; no skill execution."""
+        if ctx.mode is WorkerExecutionMode.EXECUTE:
+            return self._dry_run_result(ctx, action="perform")
+
+        provider = ctx.execution_provider or ExecutionProvider()
+        provider_results = [
+            provider.plan(self._skill_execution_request_for(ctx, invocation))
+            for invocation in ctx.skill_invocations
+        ]
+
+        result = self._dry_run_result(ctx, action="perform")
+        result.provider_results = provider_results
+        if provider_results:
+            skill_ids = ", ".join(item.skill_id for item in provider_results)
+            result.summary = f"{result.summary} ExecutionProvider planned: {skill_ids}."
+        return result
+
+    @staticmethod
+    def _worker_mode_to_skill_mode(mode: WorkerExecutionMode) -> SkillExecutionMode:
+        if mode is WorkerExecutionMode.PLAN_ONLY:
+            return SkillExecutionMode.PLAN_ONLY
+        if mode is WorkerExecutionMode.DRY_RUN:
+            return SkillExecutionMode.DRY_RUN
+        return SkillExecutionMode.EXECUTE
+
+    @staticmethod
+    def _skill_execution_request(
+        ctx: WorkerContext,
+        invocation: SkillInvocation,
+        *,
+        worker_id: str,
+    ) -> SkillExecutionRequest:
+        """Build a contract request from worker context — no R2 paths on the request."""
+        return SkillExecutionRequest(
+            skill_id=invocation.skill_id,
+            worker_id=worker_id,
+            assignment_id=ctx.assignment.assignment_id,
+            run_date=ctx.run_date,
+            mode=BaseWorker._worker_mode_to_skill_mode(ctx.mode),
+            phase=invocation.phase,
+            auto_apply=False,
+            review_required=True,
+            worker_mode=ctx.mode.value,
+        )
+
+    def _skill_execution_request_for(self, ctx: WorkerContext, invocation: SkillInvocation) -> SkillExecutionRequest:
+        return BaseWorker._skill_execution_request(ctx, invocation, worker_id=self.worker_id)
 
     def _after_perform(self, ctx: WorkerContext, result: WorkerResult) -> WorkerResult:
         """Post-perform hook — override in Phase 4 for result normalization."""
