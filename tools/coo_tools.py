@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from agent.coo.approval_report import build_approval_report
 from agent.coo.models import COOOrchestrationResult, SkillInvocation, SkillInvocationStatus, WorkerAssignment
 from agent.coo.orchestrator import COOOrchestrator
 from tools.registry import registry, tool_error, tool_result
@@ -42,6 +43,13 @@ def _assignment_payload(assignment: WorkerAssignment) -> Dict[str, Any]:
 
 
 def _format_tool_response(result: COOOrchestrationResult) -> Dict[str, Any]:
+    """Build the coo_orchestrate tool payload.
+
+    ``ceo_message`` — short operational summary (plan/policy/runtime headline).
+    ``approval_report_markdown`` — detailed CEO approval report for Discord UX.
+    Both are returned so Phase 5C can choose which surface to display.
+    """
+    approval_report = build_approval_report(result)
     return {
         "intent": {
             "raw_text": result.intent.raw_text,
@@ -103,6 +111,7 @@ def _format_tool_response(result: COOOrchestrationResult) -> Dict[str, Any]:
         ],
         "ceo_message": result.ceo_message,
         "next_actions": result.next_actions,
+        "approval_report_markdown": approval_report.to_markdown(),
     }
 
 

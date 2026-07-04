@@ -1270,6 +1270,132 @@ class TestExecutionProvider(unittest.TestCase):
         self.assertFalse(hasattr(ExecutionProvider, "dispatch"))
 
 
+class TestCEOApprovalReport(unittest.TestCase):
+    def test_create_and_report_builds_approval_report(self) -> None:
+        import subprocess
+
+        from agent.coo.approval_report import CEOApprovalReportStatus, build_approval_report
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = COOOrchestrator().orchestrate(
+                "오늘 블로그 글 작성해서 보고해",
+                run_date="2026-07-04",
+            )
+
+        report = build_approval_report(result)
+        self.assertEqual(report.task_kind, TaskKind.CREATE_AND_REPORT.value)
+        self.assertEqual(report.run_date, "2026-07-04")
+        self.assertFalse(report.auto_apply)
+        self.assertTrue(report.review_required)
+        self.assertEqual(report.status, CEOApprovalReportStatus.READY)
+        self.assertEqual(report.runtime_status, "selected")
+        self.assertGreater(len(report.selected_workers), 0)
+        self.assertIn("sequenced", report.worker_summary)
+
+    def test_blocked_worker_approval_report(self) -> None:
+        import subprocess
+
+        from agent.coo.approval_report import CEOApprovalReportStatus, build_approval_report
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = COOOrchestrator().orchestrate("승인하고 발행해", run_date="2026-07-04")
+
+        report = build_approval_report(result)
+        self.assertEqual(report.status, CEOApprovalReportStatus.BLOCKED)
+        self.assertIn("publisher_worker", report.blocked_workers)
+        self.assertEqual(report.runtime_status, "blocked")
+
+    def test_approval_report_markdown_includes_worker_runtime_section(self) -> None:
+        import subprocess
+
+        from agent.coo.approval_report import build_approval_report
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = COOOrchestrator().orchestrate(
+                "오늘 블로그 글 작성해서 보고해",
+                run_date="2026-07-04",
+            )
+
+        markdown = build_approval_report(result).to_markdown()
+        self.assertIn("## CEO Approval Report", markdown)
+        self.assertIn("### Worker Runtime", markdown)
+        self.assertIn("Provider results:", markdown)
+        self.assertIn("auto_apply: `False`", markdown)
+        self.assertIn("review_required: `True`", markdown)
+
+    def test_safeguards_enforced_in_report(self) -> None:
+        from agent.coo.approval_report import build_approval_report
+
+        result = COOOrchestrator().orchestrate("???", run_date="2026-07-04")
+        report = build_approval_report(result)
+        self.assertFalse(report.auto_apply)
+        self.assertTrue(report.review_required)
+
+
+class TestCEOApprovalReportStatusMapping(unittest.TestCase):
+    def test_runtime_status_to_report_status_mapping(self) -> None:
+        from agent.coo.approval_report import CEOApprovalReportStatus, runtime_status_to_report_status
+        from agent.coo.worker_runtime import WorkerRuntimeStatus
+
+        self.assertEqual(
+            runtime_status_to_report_status(None),
+            CEOApprovalReportStatus.NOT_STARTED,
+        )
+        self.assertEqual(
+            runtime_status_to_report_status(WorkerRuntimeStatus.FAILED),
+            CEOApprovalReportStatus.BLOCKED,
+        )
+        self.assertEqual(
+            runtime_status_to_report_status(WorkerRuntimeStatus.WAITING),
+            CEOApprovalReportStatus.PENDING,
+        )
+        self.assertEqual(
+            runtime_status_to_report_status(WorkerRuntimeStatus.SELECTED),
+            CEOApprovalReportStatus.READY,
+        )
+
+    def test_build_approval_report_uses_runtime_status_mapping(self) -> None:
+        from agent.coo.approval_report import CEOApprovalReportStatus, build_approval_report
+        from agent.coo.worker_runtime import WorkerRuntimeResult, WorkerRuntimeStatus
+
+        orchestrated = COOOrchestrator().orchestrate("???", run_date="2026-07-04")
+        orchestrated.worker_runtime_result = WorkerRuntimeResult(
+            status=WorkerRuntimeStatus.FAILED,
+            run_date="2026-07-04",
+            summary="Simulated failed runtime.",
+        )
+        report = build_approval_report(orchestrated)
+        self.assertEqual(report.runtime_status, "failed")
+        self.assertEqual(report.status, CEOApprovalReportStatus.BLOCKED)
+
+        orchestrated.worker_runtime_result = WorkerRuntimeResult(
+            status=WorkerRuntimeStatus.WAITING,
+            run_date="2026-07-04",
+            summary="Simulated waiting runtime.",
+            waiting_workers=["approval_worker"],
+        )
+        report = build_approval_report(orchestrated)
+        self.assertEqual(report.runtime_status, "waiting")
+        self.assertEqual(report.status, CEOApprovalReportStatus.PENDING)
+
+    def test_coo_payload_keeps_distinct_ceo_message_and_approval_report(self) -> None:
+        import subprocess
+
+        from tools.coo_tools import coo_orchestrate
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            raw = coo_orchestrate("오늘 상태 보고해", run_date="2026-07-04")
+        payload = json.loads(raw)
+
+        self.assertIn("ceo_message", payload)
+        self.assertIn("approval_report_markdown", payload)
+        self.assertNotEqual(payload["ceo_message"], payload["approval_report_markdown"])
+        self.assertIn("**COO Plan**", payload["ceo_message"])
+        self.assertIn("## CEO Approval Report", payload["approval_report_markdown"])
+        self.assertIn("### Worker Runtime", payload["approval_report_markdown"])
+        self.assertNotIn("## CEO Approval Report", payload["ceo_message"])
+
+
 class TestCooOrchestrateTool(unittest.TestCase):
     def test_registered_in_registry(self) -> None:
         import tools.coo_tools  # noqa: F401 — side-effect registration
@@ -1305,6 +1431,7 @@ class TestCooOrchestrateTool(unittest.TestCase):
             "runtime_summary",
             "runtime_status",
             "runtime_provider_results",
+            "approval_report_markdown",
         ):
             self.assertIn(key, payload)
 
@@ -1315,6 +1442,8 @@ class TestCooOrchestrateTool(unittest.TestCase):
         self.assertIsInstance(payload["worker_assignments"], list)
         self.assertIsInstance(payload["runtime_provider_results"], list)
         self.assertIn("sequenced", payload["runtime_summary"])
+        self.assertIn("## CEO Approval Report", payload["approval_report_markdown"])
+        self.assertIn("### Worker Runtime", payload["approval_report_markdown"])
 
     def test_coo_toolset_resolves_coo_orchestrate(self) -> None:
         from toolsets import resolve_toolset
