@@ -83,6 +83,24 @@ def _format_tool_response(result: COOOrchestrationResult) -> Dict[str, Any]:
         "worker_assignments": [
             _assignment_payload(assignment) for assignment in result.worker_assignments
         ],
+        "runtime_summary": (
+            result.worker_runtime_result.summary
+            if result.worker_runtime_result is not None
+            else ""
+        ),
+        "runtime_status": (
+            result.worker_runtime_result.status.value
+            if result.worker_runtime_result is not None
+            else ""
+        ),
+        "runtime_provider_results": [
+            provider_result.to_dict()
+            for provider_result in (
+                result.worker_runtime_result.provider_results
+                if result.worker_runtime_result is not None
+                else []
+            )
+        ],
         "ceo_message": result.ceo_message,
         "next_actions": result.next_actions,
     }

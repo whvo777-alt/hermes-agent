@@ -157,6 +157,67 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(payload["policy"]["auto_apply"], False)
         self.assertEqual(payload["policy"]["review_required"], True)
         self.assertTrue(result.ceo_message)
+        self.assertIsNotNone(result.worker_runtime_result)
+        self.assertIsNotNone(payload["worker_runtime_result"])
+
+    def test_orchestrate_includes_worker_runtime_result(self) -> None:
+        import subprocess
+
+        orchestrator = COOOrchestrator()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = orchestrator.orchestrate(
+                "오늘 블로그 글 작성해서 보고해",
+                run_date="2026-07-04",
+            )
+
+        self.assertIsNotNone(result.worker_runtime_result)
+        self.assertTrue(result.worker_runtime_result.dry_run)
+        self.assertGreater(len(result.worker_runtime_result.worker_results), 0)
+        self.assertIn("sequenced", result.worker_runtime_result.summary)
+
+    def test_orchestrate_blocked_worker_reflected_in_runtime_status(self) -> None:
+        import subprocess
+
+        from agent.coo.worker_runtime import WorkerRuntimeStatus
+
+        orchestrator = COOOrchestrator()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = orchestrator.orchestrate("승인하고 발행해", run_date="2026-07-04")
+
+        self.assertIsNotNone(result.worker_runtime_result)
+        self.assertEqual(result.worker_runtime_result.status, WorkerRuntimeStatus.BLOCKED)
+        self.assertIn("publisher_worker", result.worker_runtime_result.blocked_workers)
+
+    def test_ceo_message_includes_worker_runtime_summary(self) -> None:
+        import subprocess
+
+        orchestrator = COOOrchestrator()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = orchestrator.orchestrate(
+                "오늘 블로그 글 작성해서 보고해",
+                run_date="2026-07-04",
+            )
+
+        self.assertIn("**Worker Runtime**:", result.ceo_message)
+        self.assertIn("sequenced", result.ceo_message)
+        self.assertIn("Provider results:", result.ceo_message)
+
+    def test_ceo_message_shows_blocked_workers(self) -> None:
+        import subprocess
+
+        orchestrator = COOOrchestrator()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = orchestrator.orchestrate("승인하고 발행해", run_date="2026-07-04")
+
+        self.assertIn("Blocked workers: publisher_worker", result.ceo_message)
+        self.assertIn("Status: `blocked`", result.ceo_message)
+
+    def test_ceo_message_runtime_not_started_without_assignments(self) -> None:
+        orchestrator = COOOrchestrator()
+        result = orchestrator.orchestrate("???", run_date="2026-07-04")
+
+        self.assertIsNone(result.worker_runtime_result)
+        self.assertIn("Worker Runtime**: not started", result.ceo_message)
 
     def test_accepts_optional_dependencies(self) -> None:
         intent_analyzer = MagicMock()
@@ -164,6 +225,8 @@ class TestOrchestrator(unittest.TestCase):
         execution_policy = MagicMock()
         skill_selector = MagicMock()
         pipeline_state_reader = MagicMock()
+        worker_manager = MagicMock()
+        worker_runtime = MagicMock()
 
         orchestrator = COOOrchestrator(
             intent_analyzer=intent_analyzer,
@@ -171,6 +234,8 @@ class TestOrchestrator(unittest.TestCase):
             execution_policy=execution_policy,
             skill_selector=skill_selector,
             pipeline_state_reader=pipeline_state_reader,
+            worker_manager=worker_manager,
+            worker_runtime=worker_runtime,
         )
 
         self.assertIs(orchestrator._intent, intent_analyzer)
@@ -178,6 +243,8 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIs(orchestrator._policy, execution_policy)
         self.assertIs(orchestrator._selector, skill_selector)
         self.assertIs(orchestrator._state_reader, pipeline_state_reader)
+        self.assertIs(orchestrator._worker_manager, worker_manager)
+        self.assertIs(orchestrator._worker_runtime, worker_runtime)
 
 
 class TestWorkerManager(unittest.TestCase):
@@ -1215,9 +1282,12 @@ class TestCooOrchestrateTool(unittest.TestCase):
         self.assertEqual(entry.schema["name"], "coo_orchestrate")
 
     def test_coo_orchestrate_returns_required_payload(self) -> None:
+        import subprocess
+
         from tools.coo_tools import coo_orchestrate
 
-        raw = coo_orchestrate("오늘 상태 보고해", run_date="2026-07-04")
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            raw = coo_orchestrate("오늘 상태 보고해", run_date="2026-07-04")
         payload = json.loads(raw)
 
         for key in (
@@ -1232,6 +1302,9 @@ class TestCooOrchestrateTool(unittest.TestCase):
             "auto_apply",
             "summary",
             "worker_assignments",
+            "runtime_summary",
+            "runtime_status",
+            "runtime_provider_results",
         ):
             self.assertIn(key, payload)
 
@@ -1240,6 +1313,8 @@ class TestCooOrchestrateTool(unittest.TestCase):
         self.assertTrue(payload["review_required"])
         self.assertIsInstance(payload["policy_decisions"], list)
         self.assertIsInstance(payload["worker_assignments"], list)
+        self.assertIsInstance(payload["runtime_provider_results"], list)
+        self.assertIn("sequenced", payload["runtime_summary"])
 
     def test_coo_toolset_resolves_coo_orchestrate(self) -> None:
         from toolsets import resolve_toolset

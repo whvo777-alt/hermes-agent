@@ -12,6 +12,7 @@ from agent.coo.models import COOOrchestrationResult, PolicyVerdict, SkillInvocat
 from agent.coo.pipeline_state import PipelineStateReader
 from agent.coo.skill_selection import SkillSelector
 from agent.coo.worker_manager import WorkerManager
+from agent.coo.worker_runtime import WorkerRuntime, WorkerRuntimeResult
 
 
 class COOOrchestrator:
@@ -27,6 +28,7 @@ class COOOrchestrator:
         skill_selector: Optional[SkillSelector] = None,
         pipeline_state_reader: Optional[PipelineStateReader] = None,
         worker_manager: Optional[WorkerManager] = None,
+        worker_runtime: Optional[WorkerRuntime] = None,
     ) -> None:
         self._config = config or get_coo_config()
         self._intent = intent_analyzer or IntentAnalyzer()
@@ -35,6 +37,7 @@ class COOOrchestrator:
         self._selector = skill_selector or SkillSelector()
         self._state_reader = pipeline_state_reader or PipelineStateReader(self._config)
         self._worker_manager = worker_manager or WorkerManager()
+        self._worker_runtime = worker_runtime or WorkerRuntime(self._worker_manager)
 
     def orchestrate(
         self,
@@ -47,7 +50,22 @@ class COOOrchestrator:
         policy = self._policy.evaluate(plan, state)
         skills = self._selector.select(plan, policy)
         worker_assignments = self._worker_manager.assign(plan, policy, skills)
-        ceo_message_out = self._build_ceo_message(intent, plan, policy, skills, state)
+        worker_runtime_result = None
+        if worker_assignments:
+            worker_runtime_result = self._worker_runtime.run(
+                worker_assignments,
+                plan,
+                policy,
+                state.pipeline_root,
+            )
+        ceo_message_out = self._build_ceo_message(
+            intent,
+            plan,
+            policy,
+            skills,
+            state,
+            worker_runtime_result,
+        )
         next_actions = self._build_next_actions(intent, policy, skills, state)
 
         return COOOrchestrationResult(
@@ -57,6 +75,7 @@ class COOOrchestrator:
             policy=policy,
             skills=skills,
             worker_assignments=worker_assignments,
+            worker_runtime_result=worker_runtime_result,
             ceo_message=ceo_message_out,
             next_actions=next_actions,
         )
@@ -68,12 +87,15 @@ class COOOrchestrator:
         policy,
         skills,
         state,
+        worker_runtime_result: Optional[WorkerRuntimeResult] = None,
     ) -> str:
         if intent.task_kind is TaskKind.UNKNOWN:
-            return (
+            lines = [
                 "요청을 업무(Task)로 변환하지 못했습니다. "
-                "예: '오늘 블로그 글 작성해서 보고해', '승인하고 발행해', '오늘 상태 보고해'"
-            )
+                "예: '오늘 블로그 글 작성해서 보고해', '승인하고 발행해', '오늘 상태 보고해'",
+            ]
+            lines.extend(self._worker_runtime_section(worker_runtime_result))
+            return "\n".join(lines)
 
         selected = [s for s in skills if s.status is SkillInvocationStatus.SELECTED]
         deferred = [s for s in skills if s.status is SkillInvocationStatus.DEFERRED]
@@ -111,7 +133,37 @@ class COOOrchestrator:
         if policy.requires_ceo_approval:
             lines.append("- **CEO approval boundary active** — no auto-approve or auto-publish.")
 
+        lines.extend(self._worker_runtime_section(worker_runtime_result))
         return "\n".join(lines)
+
+    @staticmethod
+    def _worker_runtime_section(
+        worker_runtime_result: Optional[WorkerRuntimeResult],
+    ) -> List[str]:
+        """Format Worker Runtime dry-run results for the CEO message."""
+        if worker_runtime_result is None:
+            return ["- **Worker Runtime**: not started (no worker assignments)."]
+
+        runtime = worker_runtime_result
+        lines = [
+            "- **Worker Runtime**:",
+            f"  - Status: `{runtime.status.value}`",
+            f"  - Summary: {runtime.summary}",
+        ]
+        if runtime.selected_workers:
+            lines.append(f"  - Selected workers: {', '.join(runtime.selected_workers)}")
+        else:
+            lines.append("  - Selected workers: (none)")
+        if runtime.waiting_workers:
+            lines.append(f"  - Waiting workers: {', '.join(runtime.waiting_workers)}")
+        else:
+            lines.append("  - Waiting workers: (none)")
+        if runtime.blocked_workers:
+            lines.append(f"  - Blocked workers: {', '.join(runtime.blocked_workers)}")
+        else:
+            lines.append("  - Blocked workers: (none)")
+        lines.append(f"  - Provider results: {len(runtime.provider_results)}")
+        return lines
 
     def _build_next_actions(
         self,

@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from agent.coo.worker_runtime import WorkerRuntimeResult
 
 
 def _utc_now_iso() -> str:
@@ -234,6 +237,7 @@ class COOOrchestrationResult:
     policy: PolicyDecision
     skills: List[SkillInvocation]
     worker_assignments: List[WorkerAssignment] = field(default_factory=list)
+    worker_runtime_result: Optional[WorkerRuntimeResult] = None
     ceo_message: str = ""
     next_actions: List[str] = field(default_factory=list)
 
@@ -314,6 +318,11 @@ class COOOrchestrationResult:
             "worker_assignments": [
                 assignment.to_dict() for assignment in self.worker_assignments
             ],
+            "worker_runtime_result": (
+                self.worker_runtime_result.to_dict()
+                if self.worker_runtime_result is not None
+                else None
+            ),
             "ceo_message": self.ceo_message,
             "next_actions": self.next_actions,
         }
