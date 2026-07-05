@@ -5313,6 +5313,52 @@ class DiscordAdapter(BasePlatformAdapter):
         except Exception as e:
             return SendResult(success=False, error=str(e))
 
+    async def send_coo_approval(
+        self,
+        chat_id: str,
+        session_payload: Dict[str, Any],
+        metadata: Optional[dict] = None,
+        content: str = "",
+    ) -> SendResult:
+        """Send a COO CEO approval embed with inert buttons — render only.
+
+        Uses ``plugins.platforms.discord.coo_approval`` UI builders. Does not
+        approve/reject sessions, create Execution Tickets, or touch Repository 2.
+        Unrelated to ``send_exec_approval`` and the legacy exec approval queue.
+        """
+        if not session_payload:
+            return SendResult(success=False, error="Missing COO approval session payload")
+        if not self._client or not DISCORD_AVAILABLE:
+            return SendResult(success=False, error="Not connected")
+
+        try:
+            from plugins.platforms.discord.coo_approval import prepare_coo_approval_render_items
+
+            embed, view = prepare_coo_approval_render_items(session_payload)
+            if isinstance(embed, dict):
+                return SendResult(success=False, error="Discord embed unavailable")
+
+            target_id = chat_id
+            if metadata and metadata.get("thread_id"):
+                target_id = metadata["thread_id"]
+
+            channel = self._client.get_channel(int(target_id))
+            if not channel:
+                channel = await self._client.fetch_channel(int(target_id))
+
+            send_kwargs: Dict[str, Any] = {"embed": embed}
+            if view is not None and not isinstance(view, dict):
+                send_kwargs["view"] = view
+            if content:
+                send_kwargs["content"] = content
+
+            msg = await channel.send(**send_kwargs)
+            return SendResult(success=True, message_id=str(msg.id))
+
+        except Exception as e:
+            logger.warning("[%s] send_coo_approval failed: %s", self.name, e)
+            return SendResult(success=False, error=str(e))
+
     async def send_slash_confirm(
         self, chat_id: str, title: str, message: str, session_key: str,
         confirm_id: str, metadata: Optional[dict] = None,

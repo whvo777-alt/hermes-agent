@@ -12,6 +12,7 @@ from agent.coo.orchestrator import COOOrchestrator
 import plugins.platforms.discord.coo_approval as coo_approval
 from plugins.platforms.discord.coo_approval import (
     _calculate_embed_size,
+    _EMBED_COLOR,
     build_coo_approval_components,
     build_coo_approval_embed_payload,
     build_coo_approval_session_payload,
@@ -62,6 +63,9 @@ def _make_fake_discord_module():
     fake.ButtonStyle = FakeButtonStyle
     fake.ui = types.SimpleNamespace(View=FakeView, Button=FakeButton)
     return fake
+
+
+_EXEC_APPROVAL_ORANGE = 0xE67E22
 
 
 def _sample_session_payload(**overrides: object) -> dict:
@@ -155,6 +159,12 @@ class TestDiscordCooApprovalUiPayload(unittest.TestCase):
         self.assertEqual(field_map["Report Status"], "ready")
         self.assertEqual(field_map["Runtime Status"], "selected")
         self.assertIn("Approval only", embed["footer"]["text"])
+
+    def test_embed_payload_color_distinct_from_exec_approval_orange(self) -> None:
+        embed = build_coo_approval_embed_payload(_sample_session_payload())
+
+        self.assertEqual(embed["color"], _EMBED_COLOR)
+        self.assertNotEqual(embed["color"], _EXEC_APPROVAL_ORANGE)
 
     def test_embed_payload_shows_execution_not_created_or_dispatched(self) -> None:
         embed = build_coo_approval_embed_payload(_sample_session_payload())
@@ -286,6 +296,80 @@ class TestDiscordCooApprovalUiObjects(unittest.TestCase):
         mock_approve.assert_not_called()
         mock_reject.assert_not_called()
         mock_get.assert_not_called()
+
+
+class TestDiscordCooApprovalRenderWiring(unittest.IsolatedAsyncioTestCase):
+    async def test_send_coo_approval_renders_embed_and_view(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from gateway.config import PlatformConfig
+        from plugins.platforms.discord.adapter import DiscordAdapter
+
+        adapter = DiscordAdapter(PlatformConfig(enabled=True, token="token"))
+        sent_msg = SimpleNamespace(id=4242)
+        channel = SimpleNamespace(send=AsyncMock(return_value=sent_msg))
+        adapter._client = SimpleNamespace(
+            get_channel=lambda _cid: channel,
+            fetch_channel=AsyncMock(),
+        )
+
+        session = _sample_session_payload()
+        fake_embed = object()
+        fake_view = object()
+
+        with patch("plugins.platforms.discord.adapter.DISCORD_AVAILABLE", True), patch.object(
+            coo_approval,
+            "prepare_coo_approval_render_items",
+            return_value=(fake_embed, fake_view),
+        ) as mock_prepare, patch(
+            "agent.coo.discord_approval_adapter.approve_discord_session"
+        ) as mock_approve, patch(
+            "agent.coo.discord_approval_adapter.reject_discord_session"
+        ) as mock_reject, patch(
+            "tools.approval.resolve_gateway_approval"
+        ) as mock_exec_approval:
+            result = await adapter.send_coo_approval("555", session)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.message_id, "4242")
+        mock_prepare.assert_called_once_with(session)
+        channel.send.assert_awaited_once()
+        kwargs = channel.send.await_args.kwargs
+        self.assertIs(kwargs["embed"], fake_embed)
+        self.assertIs(kwargs["view"], fake_view)
+        mock_approve.assert_not_called()
+        mock_reject.assert_not_called()
+        mock_exec_approval.assert_not_called()
+
+    async def test_send_coo_approval_rejects_missing_payload(self) -> None:
+        from gateway.config import PlatformConfig
+        from plugins.platforms.discord.adapter import DiscordAdapter
+
+        adapter = DiscordAdapter(PlatformConfig(enabled=True, token="token"))
+        adapter._client = object()
+
+        with patch("plugins.platforms.discord.adapter.DISCORD_AVAILABLE", True):
+            result = await adapter.send_coo_approval("555", {})
+
+        self.assertFalse(result.success)
+        self.assertIn("Missing COO approval session payload", result.error or "")
+
+    def test_send_coo_approval_wiring_does_not_modify_exec_approval(self) -> None:
+        import inspect
+
+        from plugins.platforms.discord.adapter import DiscordAdapter
+
+        exec_source = inspect.getsource(DiscordAdapter.send_exec_approval)
+        coo_source = inspect.getsource(DiscordAdapter.send_coo_approval)
+
+        self.assertIn("ExecApprovalView", exec_source)
+        self.assertIn("resolve_gateway_approval", exec_source)
+        self.assertIn("prepare_coo_approval_render_items", coo_source)
+        self.assertNotIn("from tools.approval import resolve_gateway_approval", coo_source)
+        self.assertNotIn("resolve_gateway_approval(", coo_source)
+        self.assertNotIn("ExecApprovalView", coo_source)
+        self.assertNotIn("approve_discord_session", coo_source)
 
 
 if __name__ == "__main__":

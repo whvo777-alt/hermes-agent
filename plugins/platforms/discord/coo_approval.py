@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 DiscordSnowflake = Union[str, int]
 
 _EMBED_TITLE = "Hermes COO Approval Required"
-_EMBED_COLOR = 0xE67E22  # warm orange — distinct from exec approval embeds
+_EMBED_COLOR = 0x3498DB  # COO approval blue — distinct from exec approval orange (0xE67E22)
 _EMBED_FOOTER_TEXT = "Approval only. No execution will be dispatched."
 # Discord hard limits (per-element) used by this builder.
 _FIELD_VALUE_MAX = 1024  # max chars per embed field value
@@ -369,3 +369,14 @@ def build_discord_view_from_components(component_payloads: List[Dict[str, Any]])
         button.callback = _make_inert_button_callback(button.custom_id)
         view.add_item(button)
     return view
+
+
+def prepare_coo_approval_render_items(
+    session_payload: Dict[str, Any],
+) -> tuple[Any, Any]:
+    """Build COO approval embed and inert view objects for Discord render wiring."""
+    embed_payload = build_coo_approval_embed_payload(session_payload)
+    component_payloads = build_coo_approval_components(session_payload)
+    embed = build_discord_embed_from_payload(embed_payload)
+    view = build_discord_view_from_components(component_payloads)
+    return embed, view
