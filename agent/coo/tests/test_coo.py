@@ -53,7 +53,7 @@ class TestExecutionPlanner(unittest.TestCase):
         self.analyzer = IntentAnalyzer()
 
     def test_create_plan_includes_publish_wait(self) -> None:
-        intent = self.analyzer.analyze("오늘 블로그 글 작성해서 보고해", run_date="2026-07-04")
+        intent = self.analyzer.analyze("블로그 글 작성해서 보고해", run_date="2026-07-04")
         plan = self.planner.plan(intent)
         phases = [step.phase for step in plan.steps]
         self.assertIn(PlanPhase.APPROVAL_QUEUE, phases)
@@ -1278,7 +1278,7 @@ class TestCEOApprovalReport(unittest.TestCase):
 
         with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
             result = COOOrchestrator().orchestrate(
-                "오늘 블로그 글 작성해서 보고해",
+                "블로그 글 작성해서 보고해",
                 run_date="2026-07-04",
             )
 
@@ -1312,7 +1312,7 @@ class TestCEOApprovalReport(unittest.TestCase):
 
         with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
             result = COOOrchestrator().orchestrate(
-                "오늘 블로그 글 작성해서 보고해",
+                "블로그 글 작성해서 보고해",
                 run_date="2026-07-04",
             )
 
@@ -1777,6 +1777,160 @@ class TestGatewayApprovalBridge(unittest.TestCase):
 
         self.assertIsNone(payload)
         self.assertEqual(len(store.list_sessions()), 0)
+
+
+class TestDiscordApprovalAdapter(unittest.TestCase):
+    def _ready_report_and_orchestration(self):
+        import subprocess
+
+        from agent.coo.approval_report import build_approval_report
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            orchestrated = COOOrchestrator().orchestrate(
+                "오늘 상태 보고해",
+                run_date="2026-07-04",
+            )
+        return build_approval_report(orchestrated), orchestrated
+
+    def test_create_discord_session_stores_user_and_channel_ids(self) -> None:
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.discord_approval_adapter import create_discord_approval_session
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        payload = create_discord_approval_session(
+            report,
+            orchestrated,
+            discord_user_id="987654321012345678",
+            discord_channel_id="111222333444555666",
+            store=store,
+        )
+
+        assert payload is not None
+        self.assertEqual(payload["requester_id"], "987654321012345678")
+        self.assertEqual(payload["channel_id"], "111222333444555666")
+        self.assertEqual(payload["status"], "pending")
+
+    def test_approve_discord_session_succeeds_for_owner(self) -> None:
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.discord_approval_adapter import (
+            approve_discord_session,
+            create_discord_approval_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        created = create_discord_approval_session(
+            report,
+            orchestrated,
+            discord_user_id="987654321012345678",
+            discord_channel_id="111222333444555666",
+            store=store,
+        )
+        assert created is not None
+
+        approved = approve_discord_session(
+            created["session_id"],
+            discord_user_id="987654321012345678",
+            store=store,
+        )
+
+        self.assertEqual(approved["status"], "approved")
+        self.assertEqual(approved["reviewer"], "987654321012345678")
+        self.assertEqual(approved["execution_ticket_id"], "")
+        self.assertFalse(approved["execution_dispatched"])
+        self.assertFalse(approved["publish_dispatched"])
+
+    def test_approve_discord_session_rejects_other_user(self) -> None:
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.discord_approval_adapter import (
+            approve_discord_session,
+            create_discord_approval_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        created = create_discord_approval_session(
+            report,
+            orchestrated,
+            discord_user_id="987654321012345678",
+            discord_channel_id="111222333444555666",
+            store=store,
+        )
+        assert created is not None
+
+        with self.assertRaises(ValueError):
+            approve_discord_session(
+                created["session_id"],
+                discord_user_id="000000000000000001",
+                store=store,
+            )
+
+    def test_reject_discord_session_succeeds_for_owner(self) -> None:
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.discord_approval_adapter import (
+            create_discord_approval_session,
+            reject_discord_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        created = create_discord_approval_session(
+            report,
+            orchestrated,
+            discord_user_id="987654321012345678",
+            discord_channel_id="111222333444555666",
+            store=store,
+        )
+        assert created is not None
+
+        rejected = reject_discord_session(
+            created["session_id"],
+            discord_user_id="987654321012345678",
+            reason="Need revision",
+            store=store,
+        )
+
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(rejected["rejection_reason"], "Need revision")
+        self.assertEqual(rejected["execution_ticket_id"], "")
+        self.assertFalse(rejected["execution_dispatched"])
+        self.assertFalse(rejected["publish_dispatched"])
+
+    def test_expire_discord_approval_sessions_marks_overdue_pending(self) -> None:
+        from datetime import datetime, timezone
+
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.discord_approval_adapter import (
+            create_discord_approval_session,
+            expire_discord_approval_sessions,
+        )
+        from agent.coo.gateway_approval import get_gateway_approval_session
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        created = create_discord_approval_session(
+            report,
+            orchestrated,
+            discord_user_id="987654321012345678",
+            discord_channel_id="111222333444555666",
+            store=store,
+        )
+        assert created is not None
+        session = store.get(created["session_id"])
+        assert session is not None
+        session.expires_at = "2020-01-01T00:00:00+00:00"
+        store.save(session)
+
+        expired_count = expire_discord_approval_sessions(
+            now=datetime(2026, 7, 5, tzinfo=timezone.utc),
+            store=store,
+        )
+
+        self.assertEqual(expired_count, 1)
+        refreshed = get_gateway_approval_session(created["session_id"], store=store)
+        assert refreshed is not None
+        self.assertEqual(refreshed["status"], "expired")
 
 
 class TestCooOrchestrateTool(unittest.TestCase):
