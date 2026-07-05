@@ -1811,6 +1811,41 @@ class TestDiscordApprovalAdapter(unittest.TestCase):
         self.assertEqual(payload["channel_id"], "111222333444555666")
         self.assertEqual(payload["status"], "pending")
 
+    def test_get_discord_approval_session_returns_created_session(self) -> None:
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.discord_approval_adapter import (
+            create_discord_approval_session,
+            get_discord_approval_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        report, orchestrated = self._ready_report_and_orchestration()
+        created = create_discord_approval_session(
+            report,
+            orchestrated,
+            discord_user_id="987654321012345678",
+            discord_channel_id="111222333444555666",
+            store=store,
+        )
+        assert created is not None
+
+        fetched = get_discord_approval_session(created["session_id"], store=store)
+
+        assert fetched is not None
+        self.assertEqual(fetched["session_id"], created["session_id"])
+        self.assertEqual(fetched["requester_id"], "987654321012345678")
+        self.assertEqual(fetched["channel_id"], "111222333444555666")
+        self.assertEqual(fetched["status"], "pending")
+
+    def test_get_discord_approval_session_returns_none_for_missing_id(self) -> None:
+        from agent.coo.approval_session import CEOApprovalSessionStore
+        from agent.coo.discord_approval_adapter import get_discord_approval_session
+
+        store = CEOApprovalSessionStore()
+        self.assertIsNone(
+            get_discord_approval_session("missing-session-id", store=store)
+        )
+
     def test_approve_discord_session_succeeds_for_owner(self) -> None:
         from agent.coo.approval_session import CEOApprovalSessionStore
         from agent.coo.discord_approval_adapter import (
@@ -1904,8 +1939,8 @@ class TestDiscordApprovalAdapter(unittest.TestCase):
         from agent.coo.discord_approval_adapter import (
             create_discord_approval_session,
             expire_discord_approval_sessions,
+            get_discord_approval_session,
         )
-        from agent.coo.gateway_approval import get_gateway_approval_session
 
         store = CEOApprovalSessionStore()
         report, orchestrated = self._ready_report_and_orchestration()
@@ -1928,7 +1963,7 @@ class TestDiscordApprovalAdapter(unittest.TestCase):
         )
 
         self.assertEqual(expired_count, 1)
-        refreshed = get_gateway_approval_session(created["session_id"], store=store)
+        refreshed = get_discord_approval_session(created["session_id"], store=store)
         assert refreshed is not None
         self.assertEqual(refreshed["status"], "expired")
 
