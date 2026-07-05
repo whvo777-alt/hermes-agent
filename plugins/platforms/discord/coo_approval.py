@@ -1,10 +1,13 @@
-"""Discord COO CEO approval handler entry point — Phase 6C-1/6C-2.
+"""Discord COO CEO approval handler entry point — Phase 6C-1/6C-2/6C-3.
 
-Prepares in-memory COO approval session payloads and pure-dict embed/component
-UI payloads for Discord handler wiring. Future handlers should call
-``build_coo_approval_session_payload()``, ``build_coo_approval_embed_payload()``,
-and ``build_coo_approval_components()`` — this module does not call the
-Discord API or render discord.py objects.
+Prepares in-memory COO approval session payloads, pure-dict embed/component UI
+payloads, and optional discord.py Embed/View objects for Discord handler wiring.
+
+This phase only builds Discord UI objects.
+Button callbacks are inert.
+No approval/rejection is executed here.
+No execution ticket is created.
+Repository2 is not touched.
 
 This module is for COO CEO approval sessions only.
 This module is unrelated to ``tools/approval.py`` ``resolve_gateway_approval()``.
@@ -13,16 +16,19 @@ This module is unrelated to ``tools/approval.py`` ``resolve_gateway_approval()``
 This module does not dispatch execution.
 This module does not create execution tickets.
 This module does not auto-approve or auto-publish.
-Button payloads are inert until Phase 6C-3 handler wiring.
+This module does not send Discord messages.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from agent.coo.approval_report import CEOApprovalReport
 from agent.coo.discord_approval_adapter import create_discord_approval_session
 from agent.coo.models import COOOrchestrationResult
+
+logger = logging.getLogger(__name__)
 
 DiscordSnowflake = Union[str, int]
 
@@ -38,9 +44,33 @@ _EMBED_TOTAL_MAX = 6000  # Discord aggregate embed character budget
 _INLINE_FIELD_VALUE_MAX = 256
 _CUSTOM_ID_MAX = 100
 _COO_APPROVAL_CUSTOM_ID_PREFIX = "coo_approval"
+_INERT_CALLBACK_MESSAGE = "Handler wiring pending."
+_VIEW_TIMEOUT_SECONDS = 3600.0
+
+_discord_module: Any = None
+_discord_import_checked = False
 
 if TYPE_CHECKING:
     from agent.coo.approval_session import CEOApprovalSessionStore
+
+
+def _get_discord_module() -> Any:
+    """Return the discord.py module when installed, otherwise ``None``."""
+    global _discord_module, _discord_import_checked
+    if not _discord_import_checked:
+        try:
+            import discord as discord_mod
+
+            _discord_module = discord_mod
+        except ImportError:
+            _discord_module = None
+        _discord_import_checked = True
+    return _discord_module
+
+
+def discord_ui_available() -> bool:
+    """Return whether discord.py is importable in the current environment."""
+    return _get_discord_module() is not None
 
 
 def normalize_discord_snowflake(value: DiscordSnowflake) -> str:
@@ -269,3 +299,73 @@ def build_coo_approval_components(session_payload: Dict[str, Any]) -> List[Dict[
             "custom_id": _build_coo_approval_custom_id("refresh", session_id),
         },
     ]
+
+
+def _map_button_style(discord_mod: Any, style_name: str) -> Any:
+    style_key = str(style_name or "secondary").lower()
+    style_map = {
+        "primary": discord_mod.ButtonStyle.primary,
+        "success": discord_mod.ButtonStyle.success,
+        "danger": discord_mod.ButtonStyle.danger,
+        "secondary": discord_mod.ButtonStyle.secondary,
+    }
+    return style_map.get(style_key, discord_mod.ButtonStyle.secondary)
+
+
+def _make_inert_button_callback(custom_id: str):
+    """Return an inert discord.py button callback — no approval side effects."""
+
+    async def _callback(interaction: Any) -> None:
+        logger.debug(
+            "COO approval button pressed (inert callback): custom_id=%s",
+            custom_id,
+        )
+        response = getattr(interaction, "response", None)
+        if response is not None and hasattr(response, "send_message"):
+            await response.send_message(_INERT_CALLBACK_MESSAGE, ephemeral=True)
+
+    return _callback
+
+
+def build_discord_embed_from_payload(embed_payload: Dict[str, Any]) -> Any:
+    """Build a discord.py ``Embed`` when available, otherwise return a dict fallback."""
+    discord_mod = _get_discord_module()
+    if discord_mod is None:
+        return {"_fallback": "embed", **dict(embed_payload)}
+
+    embed = discord_mod.Embed(
+        title=str(embed_payload.get("title") or ""),
+        description=str(embed_payload.get("description") or ""),
+        color=int(embed_payload.get("color") or 0),
+    )
+    for field in embed_payload.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        embed.add_field(
+            name=str(field.get("name") or ""),
+            value=str(field.get("value") or ""),
+            inline=bool(field.get("inline", False)),
+        )
+    footer = embed_payload.get("footer") or {}
+    if isinstance(footer, dict) and footer.get("text"):
+        embed.set_footer(text=str(footer["text"]))
+    return embed
+
+
+def build_discord_view_from_components(component_payloads: List[Dict[str, Any]]) -> Any:
+    """Build an inert discord.py ``View`` when available, otherwise dict fallback."""
+    discord_mod = _get_discord_module()
+    normalized = [dict(component) for component in component_payloads]
+    if discord_mod is None:
+        return {"_fallback": "view", "components": normalized}
+
+    view = discord_mod.ui.View(timeout=_VIEW_TIMEOUT_SECONDS)
+    for component in normalized:
+        button = discord_mod.ui.Button(
+            label=str(component.get("label") or "Button"),
+            style=_map_button_style(discord_mod, str(component.get("style") or "secondary")),
+            custom_id=str(component.get("custom_id") or ""),
+        )
+        button.callback = _make_inert_button_callback(button.custom_id)
+        view.add_item(button)
+    return view

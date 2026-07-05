@@ -2,19 +2,66 @@
 
 from __future__ import annotations
 
+import types
 import unittest
 from unittest.mock import patch
 
 from agent.coo.approval_report import build_approval_report
 from agent.coo.approval_session import CEOApprovalSessionStore
 from agent.coo.orchestrator import COOOrchestrator
+import plugins.platforms.discord.coo_approval as coo_approval
 from plugins.platforms.discord.coo_approval import (
     _calculate_embed_size,
     build_coo_approval_components,
     build_coo_approval_embed_payload,
     build_coo_approval_session_payload,
+    build_discord_embed_from_payload,
+    build_discord_view_from_components,
     normalize_discord_snowflake,
 )
+
+
+def _make_fake_discord_module():
+    class FakeButtonStyle:
+        primary = "primary"
+        success = "success"
+        danger = "danger"
+        secondary = "secondary"
+
+    class FakeEmbed:
+        def __init__(self, title="", description="", color=0):
+            self.title = title
+            self.description = description
+            self.color = color
+            self.fields = []
+            self.footer_text = None
+
+        def add_field(self, name="", value="", inline=False):
+            self.fields.append({"name": name, "value": value, "inline": inline})
+
+        def set_footer(self, text=""):
+            self.footer_text = text
+
+    class FakeButton:
+        def __init__(self, label="", style=None, custom_id=""):
+            self.label = label
+            self.style = style
+            self.custom_id = custom_id
+            self.callback = None
+
+    class FakeView:
+        def __init__(self, timeout=None):
+            self.timeout = timeout
+            self.children = []
+
+        def add_item(self, item):
+            self.children.append(item)
+
+    fake = types.SimpleNamespace()
+    fake.Embed = FakeEmbed
+    fake.ButtonStyle = FakeButtonStyle
+    fake.ui = types.SimpleNamespace(View=FakeView, Button=FakeButton)
+    return fake
 
 
 def _sample_session_payload(**overrides: object) -> dict:
@@ -178,6 +225,67 @@ class TestDiscordCooApprovalUiPayload(unittest.TestCase):
         embed = build_coo_approval_embed_payload(session)
 
         self.assertLessEqual(_calculate_embed_size(embed), 6000)
+
+
+class TestDiscordCooApprovalUiObjects(unittest.TestCase):
+    def test_build_discord_embed_falls_back_without_discord_py(self) -> None:
+        embed_payload = build_coo_approval_embed_payload(_sample_session_payload())
+        with patch.object(coo_approval, "_get_discord_module", return_value=None):
+            result = build_discord_embed_from_payload(embed_payload)
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result.get("_fallback"), "embed")
+        self.assertEqual(result.get("title"), embed_payload["title"])
+
+    def test_build_discord_view_falls_back_without_discord_py(self) -> None:
+        components = build_coo_approval_components(_sample_session_payload())
+        with patch.object(coo_approval, "_get_discord_module", return_value=None):
+            result = build_discord_view_from_components(components)
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result.get("_fallback"), "view")
+        self.assertEqual(len(result.get("components", [])), 3)
+        self.assertEqual(result["components"][0]["custom_id"], components[0]["custom_id"])
+
+    def test_build_discord_view_preserves_custom_ids_with_fake_discord(self) -> None:
+        components = build_coo_approval_components(_sample_session_payload())
+        fake_discord = _make_fake_discord_module()
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord):
+            view = build_discord_view_from_components(components)
+
+        self.assertEqual(len(view.children), 3)
+        custom_ids = [button.custom_id for button in view.children]
+        self.assertEqual(custom_ids, [component["custom_id"] for component in components])
+        for button in view.children:
+            self.assertTrue(callable(button.callback))
+
+    def test_build_discord_embed_creates_fake_embed_object(self) -> None:
+        embed_payload = build_coo_approval_embed_payload(_sample_session_payload())
+        fake_discord = _make_fake_discord_module()
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord):
+            embed = build_discord_embed_from_payload(embed_payload)
+
+        self.assertIsInstance(embed, fake_discord.Embed)
+        self.assertEqual(embed.title, embed_payload["title"])
+        self.assertEqual(len(embed.fields), len(embed_payload["fields"]))
+
+    def test_ui_builders_do_not_call_approval_session_handlers(self) -> None:
+        session = _sample_session_payload()
+        embed_payload = build_coo_approval_embed_payload(session)
+        components = build_coo_approval_components(session)
+        with patch.object(coo_approval, "_get_discord_module", return_value=None), patch(
+            "agent.coo.discord_approval_adapter.approve_discord_session"
+        ) as mock_approve, patch(
+            "agent.coo.discord_approval_adapter.reject_discord_session"
+        ) as mock_reject, patch(
+            "agent.coo.discord_approval_adapter.get_discord_approval_session"
+        ) as mock_get:
+            build_discord_embed_from_payload(embed_payload)
+            build_discord_view_from_components(components)
+
+        mock_approve.assert_not_called()
+        mock_reject.assert_not_called()
+        mock_get.assert_not_called()
 
 
 if __name__ == "__main__":
