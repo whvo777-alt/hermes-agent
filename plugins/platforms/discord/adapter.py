@@ -5319,8 +5319,9 @@ class DiscordAdapter(BasePlatformAdapter):
         session_payload: Dict[str, Any],
         metadata: Optional[dict] = None,
         content: str = "",
+        store: Any = None,
     ) -> SendResult:
-        """Send a COO CEO approval embed with inert buttons — render only.
+        """Send a COO CEO approval embed with action buttons — render only.
 
         Uses ``plugins.platforms.discord.coo_approval`` UI builders. Does not
         approve/reject sessions, create Execution Tickets, or touch Repository 2.
@@ -5334,7 +5335,7 @@ class DiscordAdapter(BasePlatformAdapter):
         try:
             from plugins.platforms.discord.coo_approval import prepare_coo_approval_render_items
 
-            embed, view = prepare_coo_approval_render_items(session_payload)
+            embed, view = prepare_coo_approval_render_items(session_payload, store=store)
             if isinstance(embed, dict):
                 return SendResult(success=False, error="Discord embed unavailable")
 

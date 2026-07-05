@@ -16,7 +16,9 @@ from plugins.platforms.discord.coo_approval import (
     _EMBED_COLOR,
     _ERR_NOT_ALLOWED,
     _ERR_SESSION_NOT_FOUND,
+    _is_terminal_approval_status,
     _make_coo_approval_button_callback,
+    _should_disable_coo_approval_buttons,
     build_coo_approval_components,
     build_coo_approval_embed_payload,
     build_coo_approval_session_payload,
@@ -26,6 +28,7 @@ from plugins.platforms.discord.coo_approval import (
     execute_coo_approval_button_action,
     normalize_discord_snowflake,
     parse_coo_approval_custom_id,
+    prepare_coo_approval_render_items,
 )
 
 
@@ -51,10 +54,11 @@ def _make_fake_discord_module():
             self.footer_text = text
 
     class FakeButton:
-        def __init__(self, label="", style=None, custom_id=""):
+        def __init__(self, label="", style=None, custom_id="", disabled=False):
             self.label = label
             self.style = style
             self.custom_id = custom_id
+            self.disabled = disabled
             self.callback = None
 
     class FakeView:
@@ -103,7 +107,7 @@ def _seed_session_in_store(
     **overrides: object,
 ) -> dict:
     from agent.coo.approval_report import CEOApprovalReport, CEOApprovalReportStatus
-    from agent.coo.approval_session import create_approval_session
+    from agent.coo.approval_session import CEOApprovalSessionStatus, create_approval_session
 
     report = CEOApprovalReport(
         status=CEOApprovalReportStatus.READY,
@@ -123,7 +127,10 @@ def _seed_session_in_store(
         store=store,
     )
     for key, value in overrides.items():
-        setattr(session, key, value)
+        if key == "status" and isinstance(value, str):
+            setattr(session, key, CEOApprovalSessionStatus(value))
+        else:
+            setattr(session, key, value)
     store.save(session)
     return session.to_dict()
 
@@ -387,7 +394,7 @@ class TestDiscordCooApprovalRenderWiring(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(result.message_id, "4242")
-        mock_prepare.assert_called_once_with(session)
+        mock_prepare.assert_called_once_with(session, store=None)
         channel.send.assert_awaited_once()
         kwargs = channel.send.await_args.kwargs
         self.assertIs(kwargs["embed"], fake_embed)
@@ -611,6 +618,220 @@ class TestDiscordCooApprovalButtonCallbacks(unittest.IsolatedAsyncioTestCase):
         args, kwargs = interaction.response.send_message.await_args
         self.assertEqual(args[0], _ERR_NOT_ALLOWED)
         self.assertTrue(kwargs.get("ephemeral"))
+
+
+class TestDiscordCooApprovalButtonDisablePolicy(unittest.TestCase):
+    def test_is_terminal_approval_status(self) -> None:
+        for status in ("approved", "rejected", "expired", "cancelled", "APPROVED"):
+            self.assertTrue(_is_terminal_approval_status(status))
+        self.assertFalse(_is_terminal_approval_status("pending"))
+        self.assertFalse(_is_terminal_approval_status(""))
+
+    def test_pending_components_not_disabled(self) -> None:
+        components = build_coo_approval_components(_sample_session_payload(status="pending"))
+        for button in components:
+            self.assertFalse(button.get("disabled", False))
+
+    def test_approved_components_disabled(self) -> None:
+        components = build_coo_approval_components(_sample_session_payload(status="approved"))
+        self.assertTrue(_should_disable_coo_approval_buttons(_sample_session_payload(status="approved")))
+        self.assertTrue(all(button.get("disabled") for button in components))
+
+    def test_rejected_components_disabled(self) -> None:
+        components = build_coo_approval_components(_sample_session_payload(status="rejected"))
+        self.assertTrue(all(button.get("disabled") for button in components))
+
+    def test_expired_components_disabled(self) -> None:
+        components = build_coo_approval_components(_sample_session_payload(status="expired"))
+        self.assertTrue(all(button.get("disabled") for button in components))
+
+    def test_cancelled_components_disabled(self) -> None:
+        components = build_coo_approval_components(_sample_session_payload(status="cancelled"))
+        self.assertTrue(all(button.get("disabled") for button in components))
+
+    def test_view_builder_applies_disabled_flag(self) -> None:
+        components = build_coo_approval_components(_sample_session_payload(status="approved"))
+        fake_discord = _make_fake_discord_module()
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord):
+            view = build_discord_view_from_components(components)
+
+        self.assertTrue(all(button.disabled for button in view.children))
+
+    def test_execute_approve_rejects_terminal_session(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store, status="approved")
+
+        with self.assertRaises(ValueError):
+            execute_coo_approval_button_action(
+                action="approve",
+                session_id=seeded["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+
+class TestDiscordCooApprovalStoreInjection(unittest.IsolatedAsyncioTestCase):
+    async def test_send_coo_approval_forwards_custom_store(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from gateway.config import PlatformConfig
+        from plugins.platforms.discord.adapter import DiscordAdapter
+
+        adapter = DiscordAdapter(PlatformConfig(enabled=True, token="token"))
+        sent_msg = SimpleNamespace(id=4242)
+        channel = SimpleNamespace(send=AsyncMock(return_value=sent_msg))
+        adapter._client = SimpleNamespace(
+            get_channel=lambda _cid: channel,
+            fetch_channel=AsyncMock(),
+        )
+
+        session = _sample_session_payload()
+        custom_store = CEOApprovalSessionStore()
+        fake_embed = object()
+        fake_view = object()
+
+        with patch("plugins.platforms.discord.adapter.DISCORD_AVAILABLE", True), patch.object(
+            coo_approval,
+            "prepare_coo_approval_render_items",
+            return_value=(fake_embed, fake_view),
+        ) as mock_prepare:
+            result = await adapter.send_coo_approval("555", session, store=custom_store)
+
+        self.assertTrue(result.success)
+        mock_prepare.assert_called_once_with(session, store=custom_store)
+
+    def test_prepare_render_items_propagates_store_to_view(self) -> None:
+        store = CEOApprovalSessionStore()
+        session = _sample_session_payload()
+        fake_discord = _make_fake_discord_module()
+
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord):
+            _embed, view = prepare_coo_approval_render_items(session, store=store)
+
+        self.assertEqual(len(view.children), 3)
+        for button in view.children:
+            self.assertTrue(callable(button.callback))
+
+    def test_store_none_uses_default_adapter_store(self) -> None:
+        from agent.coo.approval_session import get_default_session_store
+
+        store = get_default_session_store()
+        store.clear()
+        seeded = _seed_session_in_store(store)
+        result = execute_coo_approval_button_action(
+            action="refresh",
+            session_id=seeded["session_id"],
+            discord_user_id="987654321012345678",
+            store=None,
+        )
+
+        self.assertEqual(result["session_id"], seeded["session_id"])
+        store.clear()
+
+
+class TestDiscordCooApprovalInteractionViewRefresh(unittest.IsolatedAsyncioTestCase):
+    def _mock_interaction(self, user_id: int = 987654321012345678):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        return SimpleNamespace(
+            user=SimpleNamespace(id=user_id),
+            response=SimpleNamespace(
+                is_done=lambda: False,
+                send_message=AsyncMock(),
+                edit_message=AsyncMock(),
+            ),
+            message=SimpleNamespace(edit=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+
+    async def test_approve_callback_updates_view_with_disabled_buttons(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        custom_id = f"coo_approval:approve:{seeded['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord):
+            await callback(interaction)
+
+        edit_kwargs = interaction.response.edit_message.await_args.kwargs
+        self.assertIn("view", edit_kwargs)
+        self.assertIn("embed", edit_kwargs)
+        self.assertTrue(all(button.disabled for button in edit_kwargs["view"].children))
+
+    async def test_reject_callback_updates_view_with_disabled_buttons(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        custom_id = f"coo_approval:reject:{seeded['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord):
+            await callback(interaction)
+
+        edit_kwargs = interaction.response.edit_message.await_args.kwargs
+        self.assertIn("view", edit_kwargs)
+        self.assertTrue(all(button.disabled for button in edit_kwargs["view"].children))
+
+    async def test_refresh_callback_reflects_terminal_disabled_buttons(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store, status="approved")
+        custom_id = f"coo_approval:refresh:{seeded['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord):
+            await callback(interaction)
+
+        edit_kwargs = interaction.response.edit_message.await_args.kwargs
+        self.assertTrue(all(button.disabled for button in edit_kwargs["view"].children))
+
+    async def test_terminal_reclick_does_not_mutate_session(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store, status="approved")
+        custom_id = f"coo_approval:approve:{seeded['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord), patch(
+            "agent.coo.discord_approval_adapter.approve_discord_session"
+        ) as mock_approve, patch(
+            "tools.approval.resolve_gateway_approval"
+        ) as mock_exec_approval:
+            await callback(interaction)
+
+        mock_approve.assert_not_called()
+        mock_exec_approval.assert_not_called()
+        interaction.response.send_message.assert_awaited_once()
+        args, kwargs = interaction.response.send_message.await_args
+        self.assertIn("already approved", args[0].lower())
+        self.assertTrue(kwargs.get("ephemeral"))
+
+    async def test_approve_callback_preserves_execution_block(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        custom_id = f"coo_approval:approve:{seeded['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord), patch(
+            "tools.approval.resolve_gateway_approval"
+        ) as mock_exec_approval:
+            await callback(interaction)
+
+        mock_exec_approval.assert_not_called()
+        updated = store.get(seeded["session_id"])
+        assert updated is not None
+        self.assertEqual(updated.execution_ticket_id, "")
+        self.assertFalse(updated.execution_dispatched)
+        self.assertFalse(updated.publish_dispatched)
 
 
 if __name__ == "__main__":
