@@ -13,6 +13,7 @@ import plugins.platforms.discord.coo_approval as coo_approval
 from plugins.platforms.discord.coo_approval import (
     _calculate_embed_size,
     _EMBED_COLOR,
+    _COO_APPROVAL_VIEW_TIMEOUT_SECONDS,
     build_coo_approval_components,
     build_coo_approval_embed_payload,
     build_coo_approval_session_payload,
@@ -268,6 +269,17 @@ class TestDiscordCooApprovalUiObjects(unittest.TestCase):
         self.assertEqual(custom_ids, [component["custom_id"] for component in components])
         for button in view.children:
             self.assertTrue(callable(button.callback))
+
+    def test_coo_approval_view_timeout_matches_session_ttl(self) -> None:
+        self.assertEqual(_COO_APPROVAL_VIEW_TIMEOUT_SECONDS, 86400)
+
+    def test_build_discord_view_uses_session_ttl_timeout(self) -> None:
+        components = build_coo_approval_components(_sample_session_payload())
+        fake_discord = _make_fake_discord_module()
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord):
+            view = build_discord_view_from_components(components)
+
+        self.assertEqual(view.timeout, _COO_APPROVAL_VIEW_TIMEOUT_SECONDS)
 
     def test_build_discord_embed_creates_fake_embed_object(self) -> None:
         embed_payload = build_coo_approval_embed_payload(_sample_session_payload())

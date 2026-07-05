@@ -17,6 +17,11 @@ This module does not dispatch execution.
 This module does not create execution tickets.
 This module does not auto-approve or auto-publish.
 This module does not send Discord messages.
+
+Approval Session TTL is 24 hours (``agent/coo/approval_session.py``).
+COO approval View timeout intentionally matches the session TTL.
+Persistent views (``timeout=None``) are deferred until restart-safe handler
+registration is designed.
 """
 
 from __future__ import annotations
@@ -45,7 +50,9 @@ _INLINE_FIELD_VALUE_MAX = 256
 _CUSTOM_ID_MAX = 100
 _COO_APPROVAL_CUSTOM_ID_PREFIX = "coo_approval"
 _INERT_CALLBACK_MESSAGE = "Handler wiring pending."
-_VIEW_TIMEOUT_SECONDS = 3600.0
+# Matches CEO approval session TTL (24 hours). Not ``timeout=None`` — persistent
+# views require bot-restart-safe custom_id registration (deferred to a later phase).
+_COO_APPROVAL_VIEW_TIMEOUT_SECONDS = 24 * 60 * 60
 
 _discord_module: Any = None
 _discord_import_checked = False
@@ -359,7 +366,7 @@ def build_discord_view_from_components(component_payloads: List[Dict[str, Any]])
     if discord_mod is None:
         return {"_fallback": "view", "components": normalized}
 
-    view = discord_mod.ui.View(timeout=_VIEW_TIMEOUT_SECONDS)
+    view = discord_mod.ui.View(timeout=_COO_APPROVAL_VIEW_TIMEOUT_SECONDS)
     for component in normalized:
         button = discord_mod.ui.Button(
             label=str(component.get("label") or "Button"),
