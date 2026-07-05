@@ -1,13 +1,10 @@
-"""Discord COO CEO approval handler entry point — Phase 6C-1/6C-2/6C-3.
+"""Discord COO CEO approval handler — Phase 6C-1 through 6C-5.
 
 Prepares in-memory COO approval session payloads, pure-dict embed/component UI
 payloads, and optional discord.py Embed/View objects for Discord handler wiring.
 
-This phase only builds Discord UI objects.
-Button callbacks are inert.
-No approval/rejection is executed here.
-No execution ticket is created.
-Repository2 is not touched.
+Button callbacks update Approval Session state only (approve/reject/refresh).
+No execution ticket is created. Repository2 is not touched.
 
 This module is for COO CEO approval sessions only.
 This module is unrelated to ``tools/approval.py`` ``resolve_gateway_approval()``.
@@ -15,8 +12,8 @@ This module is unrelated to ``tools/approval.py`` ``resolve_gateway_approval()``
 ``DiscordAdapter.send_exec_approval()`` and ``ExecApprovalView``.
 This module does not dispatch execution.
 This module does not create execution tickets.
-This module does not auto-approve or auto-publish.
-This module does not send Discord messages.
+This module does not auto-approve or auto-publish at the pipeline layer.
+This module does not send Discord messages except via button interaction responses.
 
 Approval Session TTL is 24 hours (``agent/coo/approval_session.py``).
 COO approval View timeout intentionally matches the session TTL.
@@ -38,7 +35,7 @@ logger = logging.getLogger(__name__)
 DiscordSnowflake = Union[str, int]
 
 _EMBED_TITLE = "Hermes COO Approval Required"
-_EMBED_COLOR = 0x3498DB  # COO approval blue — distinct from exec approval orange (0xE67E22)
+_EMBED_COLOR = 0x1ABC9C  # COO approval teal — distinct from exec approval orange/green/blue/purple
 _EMBED_FOOTER_TEXT = "Approval only. No execution will be dispatched."
 # Discord hard limits (per-element) used by this builder.
 _FIELD_VALUE_MAX = 1024  # max chars per embed field value
@@ -49,7 +46,11 @@ _EMBED_TOTAL_MAX = 6000  # Discord aggregate embed character budget
 _INLINE_FIELD_VALUE_MAX = 256
 _CUSTOM_ID_MAX = 100
 _COO_APPROVAL_CUSTOM_ID_PREFIX = "coo_approval"
-_INERT_CALLBACK_MESSAGE = "Handler wiring pending."
+_ALLOWED_COO_APPROVAL_ACTIONS = frozenset({"approve", "reject", "refresh"})
+_ERR_SESSION_NOT_FOUND = "Approval session not found."
+_ERR_NOT_ALLOWED = "You are not allowed to approve this session."
+_ERR_SESSION_EXPIRED = "Approval session expired."
+_ERR_GENERIC = "Unable to process approval action."
 # Matches CEO approval session TTL (24 hours). Not ``timeout=None`` — persistent
 # views require bot-restart-safe custom_id registration (deferred to a later phase).
 _COO_APPROVAL_VIEW_TIMEOUT_SECONDS = 24 * 60 * 60
@@ -283,6 +284,105 @@ def _build_coo_approval_custom_id(action: str, session_id: str) -> str:
     return custom_id
 
 
+def parse_coo_approval_custom_id(custom_id: str) -> Dict[str, str]:
+    """Parse ``coo_approval:<action>:<session_id>`` button custom IDs."""
+    parts = str(custom_id or "").split(":", 2)
+    if len(parts) != 3:
+        raise ValueError(f"Invalid COO approval custom_id: {custom_id!r}")
+    prefix, action, session_id = parts
+    if prefix != _COO_APPROVAL_CUSTOM_ID_PREFIX:
+        raise ValueError(f"Invalid COO approval custom_id prefix: {prefix!r}")
+    if action not in _ALLOWED_COO_APPROVAL_ACTIONS:
+        raise ValueError(f"Invalid COO approval action: {action!r}")
+    if not session_id.strip():
+        raise ValueError("COO approval custom_id missing session_id")
+    return {"prefix": prefix, "action": action, "session_id": session_id}
+
+
+def coo_approval_error_message(exc: Exception) -> str:
+    """Map approval-session exceptions to user-facing ephemeral messages."""
+    if isinstance(exc, KeyError):
+        return _ERR_SESSION_NOT_FOUND
+    if isinstance(exc, ValueError):
+        text = str(exc).lower()
+        if "not authorized" in text:
+            return _ERR_NOT_ALLOWED
+        if "expired" in text:
+            return _ERR_SESSION_EXPIRED
+        if "cannot approve" in text or "cannot reject" in text:
+            if "expired" in text:
+                return _ERR_SESSION_EXPIRED
+            return "Approval session is no longer pending."
+    return _ERR_GENERIC
+
+
+def execute_coo_approval_button_action(
+    *,
+    action: str,
+    session_id: str,
+    discord_user_id: DiscordSnowflake,
+    store: Optional["CEOApprovalSessionStore"] = None,
+) -> Dict[str, Any]:
+    """Run approve/reject/refresh against the in-memory approval session store."""
+    from agent.coo.discord_approval_adapter import (
+        approve_discord_session,
+        get_discord_approval_session,
+        reject_discord_session,
+    )
+
+    normalized_action = str(action).strip().lower()
+    if normalized_action not in _ALLOWED_COO_APPROVAL_ACTIONS:
+        raise ValueError(f"Invalid COO approval action: {action!r}")
+
+    user_id = normalize_discord_snowflake(discord_user_id)
+
+    if normalized_action == "refresh":
+        session = get_discord_approval_session(session_id, store=store)
+        if session is None:
+            raise KeyError(session_id)
+        return session
+
+    existing = get_discord_approval_session(session_id, store=store)
+    if existing is None:
+        raise KeyError(session_id)
+    if existing.get("status") == "expired":
+        raise ValueError(f"Cannot {normalized_action} expired session {session_id}")
+
+    if normalized_action == "approve":
+        return approve_discord_session(session_id, user_id, store=store)
+    return reject_discord_session(session_id, user_id, reason="", store=store)
+
+
+async def _respond_coo_approval_ephemeral(interaction: Any, message: str) -> None:
+    response = getattr(interaction, "response", None)
+    if response is None or not hasattr(response, "send_message"):
+        return
+    if hasattr(response, "is_done") and response.is_done():
+        followup = getattr(interaction, "followup", None)
+        if followup is not None and hasattr(followup, "send"):
+            await followup.send(message, ephemeral=True)
+        return
+    await response.send_message(message, ephemeral=True)
+
+
+async def _try_update_interaction_embed(interaction: Any, session_payload: Dict[str, Any]) -> bool:
+    embed_payload = build_coo_approval_embed_payload(session_payload)
+    embed = build_discord_embed_from_payload(embed_payload)
+    if isinstance(embed, dict):
+        return False
+    response = getattr(interaction, "response", None)
+    if response is None:
+        return False
+    if hasattr(response, "is_done") and not response.is_done() and hasattr(response, "edit_message"):
+        await response.edit_message(embed=embed)
+        return True
+    message = getattr(interaction, "message", None)
+    if message is not None and hasattr(message, "edit"):
+        await message.edit(embed=embed)
+        return True
+    return False
+
+
 def build_coo_approval_components(session_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Build pure-dict Discord button payloads for COO approval interactions."""
     session_id = _require_session_id(session_payload)
@@ -319,17 +419,39 @@ def _map_button_style(discord_mod: Any, style_name: str) -> Any:
     return style_map.get(style_key, discord_mod.ButtonStyle.secondary)
 
 
-def _make_inert_button_callback(custom_id: str):
-    """Return an inert discord.py button callback — no approval side effects."""
+def _make_coo_approval_button_callback(
+    custom_id: str,
+    store: Optional["CEOApprovalSessionStore"] = None,
+):
+    """Return a discord.py button callback that updates approval session state only."""
 
     async def _callback(interaction: Any) -> None:
-        logger.debug(
-            "COO approval button pressed (inert callback): custom_id=%s",
-            custom_id,
-        )
-        response = getattr(interaction, "response", None)
-        if response is not None and hasattr(response, "send_message"):
-            await response.send_message(_INERT_CALLBACK_MESSAGE, ephemeral=True)
+        try:
+            parsed = parse_coo_approval_custom_id(custom_id)
+            user = getattr(interaction, "user", None)
+            if user is None or not getattr(user, "id", None):
+                await _respond_coo_approval_ephemeral(interaction, _ERR_GENERIC)
+                return
+
+            session_payload = execute_coo_approval_button_action(
+                action=parsed["action"],
+                session_id=parsed["session_id"],
+                discord_user_id=user.id,
+                store=store,
+            )
+            updated = await _try_update_interaction_embed(interaction, session_payload)
+            if not updated:
+                status = session_payload.get("status", "unknown")
+                await _respond_coo_approval_ephemeral(
+                    interaction,
+                    f"Session status: {status}",
+                )
+        except Exception as exc:
+            logger.warning("COO approval button action failed: %s", exc)
+            await _respond_coo_approval_ephemeral(
+                interaction,
+                coo_approval_error_message(exc),
+            )
 
     return _callback
 
@@ -359,8 +481,11 @@ def build_discord_embed_from_payload(embed_payload: Dict[str, Any]) -> Any:
     return embed
 
 
-def build_discord_view_from_components(component_payloads: List[Dict[str, Any]]) -> Any:
-    """Build an inert discord.py ``View`` when available, otherwise dict fallback."""
+def build_discord_view_from_components(
+    component_payloads: List[Dict[str, Any]],
+    store: Optional["CEOApprovalSessionStore"] = None,
+) -> Any:
+    """Build a discord.py ``View`` with COO approval button callbacks when available."""
     discord_mod = _get_discord_module()
     normalized = [dict(component) for component in component_payloads]
     if discord_mod is None:
@@ -373,17 +498,18 @@ def build_discord_view_from_components(component_payloads: List[Dict[str, Any]])
             style=_map_button_style(discord_mod, str(component.get("style") or "secondary")),
             custom_id=str(component.get("custom_id") or ""),
         )
-        button.callback = _make_inert_button_callback(button.custom_id)
+        button.callback = _make_coo_approval_button_callback(button.custom_id, store=store)
         view.add_item(button)
     return view
 
 
 def prepare_coo_approval_render_items(
     session_payload: Dict[str, Any],
+    store: Optional["CEOApprovalSessionStore"] = None,
 ) -> tuple[Any, Any]:
-    """Build COO approval embed and inert view objects for Discord render wiring."""
+    """Build COO approval embed and view objects for Discord render wiring."""
     embed_payload = build_coo_approval_embed_payload(session_payload)
     component_payloads = build_coo_approval_components(session_payload)
     embed = build_discord_embed_from_payload(embed_payload)
-    view = build_discord_view_from_components(component_payloads)
+    view = build_discord_view_from_components(component_payloads, store=store)
     return embed, view

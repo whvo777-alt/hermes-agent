@@ -12,14 +12,20 @@ from agent.coo.orchestrator import COOOrchestrator
 import plugins.platforms.discord.coo_approval as coo_approval
 from plugins.platforms.discord.coo_approval import (
     _calculate_embed_size,
-    _EMBED_COLOR,
     _COO_APPROVAL_VIEW_TIMEOUT_SECONDS,
+    _EMBED_COLOR,
+    _ERR_NOT_ALLOWED,
+    _ERR_SESSION_NOT_FOUND,
+    _make_coo_approval_button_callback,
     build_coo_approval_components,
     build_coo_approval_embed_payload,
     build_coo_approval_session_payload,
     build_discord_embed_from_payload,
     build_discord_view_from_components,
+    coo_approval_error_message,
+    execute_coo_approval_button_action,
     normalize_discord_snowflake,
+    parse_coo_approval_custom_id,
 )
 
 
@@ -66,7 +72,12 @@ def _make_fake_discord_module():
     return fake
 
 
-_EXEC_APPROVAL_ORANGE = 0xE67E22
+_EXEC_APPROVAL_FORBIDDEN_COLORS = (
+    0xE67E22,  # orange
+    0x2ECC71,  # green
+    0x3498DB,  # blue
+    0x9B59B6,  # purple
+)
 
 
 def _sample_session_payload(**overrides: object) -> dict:
@@ -85,6 +96,36 @@ def _sample_session_payload(**overrides: object) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def _seed_session_in_store(
+    store: CEOApprovalSessionStore,
+    **overrides: object,
+) -> dict:
+    from agent.coo.approval_report import CEOApprovalReport, CEOApprovalReportStatus
+    from agent.coo.approval_session import create_approval_session
+
+    report = CEOApprovalReport(
+        status=CEOApprovalReportStatus.READY,
+        task_kind="daily_brief",
+        run_date="2026-07-04",
+        runtime_status="selected",
+        worker_summary="test",
+    )
+    orchestrated = COOOrchestrator().orchestrate("???", run_date="2026-07-04")
+    requester_id = str(overrides.pop("requester_id", "987654321012345678"))
+    channel_id = str(overrides.pop("channel_id", "111222333444555666"))
+    session = create_approval_session(
+        report,
+        orchestrated,
+        requester_id=requester_id,
+        channel_id=channel_id,
+        store=store,
+    )
+    for key, value in overrides.items():
+        setattr(session, key, value)
+    store.save(session)
+    return session.to_dict()
 
 
 class TestDiscordCooApprovalEntryPoint(unittest.TestCase):
@@ -161,11 +202,12 @@ class TestDiscordCooApprovalUiPayload(unittest.TestCase):
         self.assertEqual(field_map["Runtime Status"], "selected")
         self.assertIn("Approval only", embed["footer"]["text"])
 
-    def test_embed_payload_color_distinct_from_exec_approval_orange(self) -> None:
+    def test_embed_payload_color_distinct_from_exec_approval_colors(self) -> None:
         embed = build_coo_approval_embed_payload(_sample_session_payload())
 
         self.assertEqual(embed["color"], _EMBED_COLOR)
-        self.assertNotEqual(embed["color"], _EXEC_APPROVAL_ORANGE)
+        for forbidden_color in _EXEC_APPROVAL_FORBIDDEN_COLORS:
+            self.assertNotEqual(embed["color"], forbidden_color)
 
     def test_embed_payload_shows_execution_not_created_or_dispatched(self) -> None:
         embed = build_coo_approval_embed_payload(_sample_session_payload())
@@ -382,6 +424,193 @@ class TestDiscordCooApprovalRenderWiring(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("resolve_gateway_approval(", coo_source)
         self.assertNotIn("ExecApprovalView", coo_source)
         self.assertNotIn("approve_discord_session", coo_source)
+
+
+class TestDiscordCooApprovalCustomIdParse(unittest.TestCase):
+    def test_parse_valid_custom_id(self) -> None:
+        session_id = "11111111-2222-3333-4444-555555555555"
+        parsed = parse_coo_approval_custom_id(f"coo_approval:approve:{session_id}")
+
+        self.assertEqual(parsed["prefix"], "coo_approval")
+        self.assertEqual(parsed["action"], "approve")
+        self.assertEqual(parsed["session_id"], session_id)
+
+    def test_parse_rejects_invalid_custom_id(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_coo_approval_custom_id("exec:approve:123")
+        with self.assertRaises(ValueError):
+            parse_coo_approval_custom_id("coo_approval:launch:123")
+        with self.assertRaises(ValueError):
+            parse_coo_approval_custom_id("coo_approval:approve:")
+
+
+class TestDiscordCooApprovalButtonActions(unittest.TestCase):
+    def test_execute_approve_updates_session_without_execution(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        result = execute_coo_approval_button_action(
+            action="approve",
+            session_id=seeded["session_id"],
+            discord_user_id="987654321012345678",
+            store=store,
+        )
+
+        self.assertEqual(result["status"], "approved")
+        self.assertEqual(result["execution_ticket_id"], "")
+        self.assertFalse(result["execution_dispatched"])
+        self.assertFalse(result["publish_dispatched"])
+
+    def test_execute_reject_updates_session(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        result = execute_coo_approval_button_action(
+            action="reject",
+            session_id=seeded["session_id"],
+            discord_user_id="987654321012345678",
+            store=store,
+        )
+
+        self.assertEqual(result["status"], "rejected")
+
+    def test_execute_refresh_returns_session_snapshot(self) -> None:
+        from agent.coo.discord_approval_adapter import get_discord_approval_session
+
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        result = execute_coo_approval_button_action(
+            action="refresh",
+            session_id=seeded["session_id"],
+            discord_user_id="987654321012345678",
+            store=store,
+        )
+
+        self.assertEqual(result["session_id"], seeded["session_id"])
+        self.assertEqual(
+            result,
+            get_discord_approval_session(seeded["session_id"], store=store),
+        )
+
+    def test_execute_approve_rejects_wrong_requester(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+
+        with self.assertRaises(ValueError):
+            execute_coo_approval_button_action(
+                action="approve",
+                session_id=seeded["session_id"],
+                discord_user_id="000000000000000001",
+                store=store,
+            )
+
+        self.assertEqual(
+            coo_approval_error_message(ValueError("Requester '1' is not authorized")),
+            _ERR_NOT_ALLOWED,
+        )
+
+    def test_execute_missing_session_raises_key_error(self) -> None:
+        store = CEOApprovalSessionStore()
+
+        with self.assertRaises(KeyError):
+            execute_coo_approval_button_action(
+                action="refresh",
+                session_id="missing-session",
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+        self.assertEqual(coo_approval_error_message(KeyError("missing")), _ERR_SESSION_NOT_FOUND)
+
+
+class TestDiscordCooApprovalButtonCallbacks(unittest.IsolatedAsyncioTestCase):
+    def _mock_interaction(self, user_id: int = 987654321012345678):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        return SimpleNamespace(
+            user=SimpleNamespace(id=user_id),
+            response=SimpleNamespace(
+                is_done=lambda: False,
+                send_message=AsyncMock(),
+                edit_message=AsyncMock(),
+            ),
+            message=SimpleNamespace(edit=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+
+    async def test_approve_callback_calls_adapter_and_updates_embed(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        custom_id = f"coo_approval:approve:{seeded['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord), patch(
+            "agent.coo.discord_approval_adapter.approve_discord_session",
+            wraps=__import__(
+                "agent.coo.discord_approval_adapter",
+                fromlist=["approve_discord_session"],
+            ).approve_discord_session,
+        ) as mock_approve, patch(
+            "tools.approval.resolve_gateway_approval"
+        ) as mock_exec_approval:
+            await callback(interaction)
+
+        mock_approve.assert_called_once()
+        mock_exec_approval.assert_not_called()
+        interaction.response.edit_message.assert_awaited()
+
+    async def test_reject_callback_calls_adapter(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        custom_id = f"coo_approval:reject:{seeded['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord), patch(
+            "agent.coo.discord_approval_adapter.reject_discord_session",
+            wraps=__import__(
+                "agent.coo.discord_approval_adapter",
+                fromlist=["reject_discord_session"],
+            ).reject_discord_session,
+        ) as mock_reject:
+            await callback(interaction)
+
+        mock_reject.assert_called_once()
+
+    async def test_refresh_callback_calls_get_session(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        custom_id = f"coo_approval:refresh:{seeded['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord), patch(
+            "agent.coo.discord_approval_adapter.get_discord_approval_session",
+            wraps=__import__(
+                "agent.coo.discord_approval_adapter",
+                fromlist=["get_discord_approval_session"],
+            ).get_discord_approval_session,
+        ) as mock_get:
+            await callback(interaction)
+
+        mock_get.assert_called()
+
+    async def test_wrong_requester_gets_ephemeral_error(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        custom_id = f"coo_approval:approve:{seeded['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction(user_id=1)
+
+        await callback(interaction)
+
+        interaction.response.send_message.assert_awaited_once()
+        args, kwargs = interaction.response.send_message.await_args
+        self.assertEqual(args[0], _ERR_NOT_ALLOWED)
+        self.assertTrue(kwargs.get("ephemeral"))
 
 
 if __name__ == "__main__":
