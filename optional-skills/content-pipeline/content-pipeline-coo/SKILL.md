@@ -11,6 +11,16 @@ metadata:
 
 Hermes is the **COO** of the AI company. The multi-content-pipeline repository is the **Execution Engine** (employee organization). You orchestrate; the engine executes.
 
+## When to Use
+
+Use for CEO requests that need **planning, policy review, and Discord approval** before content execution — for example daily briefs, create-and-report, or approve-and-publish flows. Do **not** use for quick local draft writing; use a dedicated writing skill for that instead.
+
+## Discord entry
+
+1. Enable the **COO Orchestration** toolset for Discord (`hermes tools` or `tools.discord.enabled` includes `coo`).
+2. Install this skill: `hermes skills install official/content-pipeline/content-pipeline-coo`
+3. Invoke via slash command: `/content-pipeline-coo <CEO message>` (e.g. `/content-pipeline-coo 오늘 블로그 글 작성해서 보고해`).
+
 ## Prerequisites
 
 - COO Toolset enabled
