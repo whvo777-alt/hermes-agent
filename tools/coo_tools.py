@@ -51,6 +51,30 @@ def _resolve_approval_session_identity(
     return resolved_requester or _DEFAULT_REQUESTER_ID, resolved_channel
 
 
+def _resolve_ceo_message(ceo_message: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Resolve the effective CEO message for orchestration.
+
+    Priority:
+    1. Explicit non-empty ``ceo_message`` from the tool call.
+    2. Gateway session user instruction (``HERMES_SESSION_USER_MESSAGE``).
+    3. Error when neither is available.
+    """
+    explicit = str(ceo_message or "").strip()
+    if explicit:
+        return explicit, None
+
+    try:
+        from gateway.session_context import get_session_env
+
+        fallback = get_session_env("HERMES_SESSION_USER_MESSAGE", "").strip()
+        if fallback:
+            return fallback, None
+    except ImportError:
+        pass
+
+    return None, "ceo_message is required"
+
+
 def _skill_payload(skill: SkillInvocation) -> Dict[str, Any]:
     return {
         "skill_id": skill.skill_id,
@@ -180,11 +204,12 @@ def coo_orchestrate(
     channel_id: Optional[str] = None,
 ) -> str:
     """Analyze CEO intent and produce plan/policy/skill selection (no execution)."""
-    if not ceo_message or not ceo_message.strip():
-        return tool_error("ceo_message is required")
+    resolved_message, error = _resolve_ceo_message(ceo_message)
+    if error:
+        return tool_error(error)
 
     engine = orchestrator or COOOrchestrator()
-    result = engine.orchestrate(ceo_message.strip(), run_date=run_date)
+    result = engine.orchestrate(resolved_message, run_date=run_date)
     return tool_result(
         _format_tool_response(
             result,

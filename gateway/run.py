@@ -11042,6 +11042,24 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         except Exception as _ts_err:
             logger.debug("Message timestamp injection failed (non-fatal): %s", _ts_err)
 
+        # Bind the user instruction for tool fallbacks (e.g. coo_orchestrate when
+        # the model omits ceo_message). Use timestamp-stripped persist content,
+        # not message_text, which may include gateway.message_timestamps prefix.
+        try:
+            from gateway.session_context import (
+                inbound_message_for_session_user_binding,
+                resolve_session_user_message,
+                set_session_user_message,
+            )
+
+            _clean_inbound = inbound_message_for_session_user_binding(
+                persist_user_message=persist_user_message,
+                message_text=message_text,
+            )
+            set_session_user_message(resolve_session_user_message(_clean_inbound))
+        except Exception:
+            logger.debug("Failed to bind session user message for tool fallback", exc_info=True)
+
         # Bind this gateway run generation to the adapter's active-session
         # event so deferred post-delivery callbacks can be released by the
         # same run that registered them.

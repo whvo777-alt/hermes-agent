@@ -33,7 +33,7 @@ Use for CEO requests that need **planning, policy review, and Discord approval**
 
 For any CEO request about content creation, approval, publishing, or daily status:
 
-1. Call the **`coo_orchestrate`** tool with the CEO's exact message.
+1. Call the **`coo_orchestrate`** tool with the CEO's exact message in **`ceo_message`** — never leave it empty or omit it. Pass the user's real request verbatim, e.g. `ceo_message="오늘 블로그 글 작성해서 보고해"`. If you only have the slash invocation, use the text after the command (not the command name alone).
 2. Read the returned `formatted_report`, `policy`, and `skills`.
 3. **Do not bypass COO** by running pipeline commands directly unless COO selected the skill and policy allows it.
 4. **Never auto-approve** or **auto-publish**. `autoApply=false` and `reviewRequired=true` are fixed.

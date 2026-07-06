@@ -83,6 +83,10 @@ _SESSION_ID: ContextVar = ContextVar("HERMES_SESSION_ID", default=_UNSET)
 # so background-process notifications stay inside the originating Telegram
 # private-chat topic (those lanes route only with thread id + reply anchor).
 _SESSION_MESSAGE_ID: ContextVar = ContextVar("HERMES_SESSION_MESSAGE_ID", default=_UNSET)
+# Original user instruction for the current inbound turn (skill-expanded messages
+# are reduced to the CEO/user instruction). Used by coo_orchestrate when the
+# model omits ceo_message.
+_SESSION_USER_MESSAGE: ContextVar = ContextVar("HERMES_SESSION_USER_MESSAGE", default=_UNSET)
 
 _SESSION_PROFILE: ContextVar = ContextVar("HERMES_SESSION_PROFILE", default=_UNSET)
 
@@ -124,6 +128,7 @@ _VAR_MAP = {
     "HERMES_SESSION_KEY": _SESSION_KEY,
     "HERMES_SESSION_ID": _SESSION_ID,
     "HERMES_SESSION_MESSAGE_ID": _SESSION_MESSAGE_ID,
+    "HERMES_SESSION_USER_MESSAGE": _SESSION_USER_MESSAGE,
     "HERMES_SESSION_PROFILE": _SESSION_PROFILE,
     "HERMES_CRON_AUTO_DELIVER_PLATFORM": _CRON_AUTO_DELIVER_PLATFORM,
     "HERMES_CRON_AUTO_DELIVER_CHAT_ID": _CRON_AUTO_DELIVER_CHAT_ID,
@@ -157,6 +162,7 @@ def set_session_vars(
     session_key: str = "",
     session_id: str = "",
     message_id: str = "",
+    user_message: str = "",
     profile: str = "",
     cwd: str = "",
     async_delivery: bool = True,
@@ -192,6 +198,7 @@ def set_session_vars(
         _SESSION_KEY.set(session_key),
         _SESSION_ID.set(session_id),
         _SESSION_MESSAGE_ID.set(message_id),
+        _SESSION_USER_MESSAGE.set(user_message),
         _SESSION_PROFILE.set(profile),
         _SESSION_ASYNC_DELIVERY.set(bool(async_delivery)),
     ]
@@ -226,6 +233,7 @@ def clear_session_vars(tokens: list) -> None:
         _SESSION_KEY,
         _SESSION_ID,
         _SESSION_MESSAGE_ID,
+        _SESSION_USER_MESSAGE,
         _SESSION_PROFILE,
     ):
         var.set("")
@@ -288,6 +296,40 @@ def reset_session_vars() -> None:
         clear_session_cwd()
     except Exception:
         pass
+
+
+def set_session_user_message(user_message: str) -> None:
+    """Bind the current turn's user instruction for tool fallbacks (e.g. COO)."""
+    _SESSION_USER_MESSAGE.set(user_message or "")
+
+
+def inbound_message_for_session_user_binding(
+    *,
+    persist_user_message: str | None,
+    message_text: str | None,
+) -> str:
+    """Return the clean inbound text used to derive ``HERMES_SESSION_USER_MESSAGE``.
+
+    ``persist_user_message`` is timestamp-stripped transcript content; when
+    present it must win over ``message_text``, which may carry a rendered
+    ``gateway.message_timestamps`` prefix for the model.
+    """
+    if persist_user_message is not None:
+        return persist_user_message
+    return message_text or ""
+
+
+def resolve_session_user_message(clean_message: str) -> str:
+    """Derive the user instruction bound for tool fallbacks (e.g. coo_orchestrate)."""
+    from agent.skill_commands import extract_user_instruction_from_skill_message
+
+    user_instruction = extract_user_instruction_from_skill_message(clean_message or "")
+    if user_instruction is None:
+        return ""
+    bare = user_instruction.strip()
+    if bare.startswith("/") and " " not in bare:
+        return ""
+    return bare
 
 
 def get_session_env(name: str, default: str = "") -> str:

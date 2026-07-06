@@ -166,5 +166,78 @@ class TestCooToolsGatewayApprovalIdentity(unittest.TestCase):
         self.assertEqual(result["status"], "approved")
 
 
+class TestCooOrchestrateCeoMessageFallback(unittest.TestCase):
+    def test_explicit_ceo_message_unchanged(self) -> None:
+        store = CEOApprovalSessionStore()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            raw = coo_orchestrate(
+                "오늘 상태 보고해",
+                run_date="2026-07-04",
+                session_store=store,
+            )
+
+        payload = json.loads(raw)
+        self.assertEqual(payload["intent"]["task_kind"], "daily_brief")
+        self.assertIsNotNone(payload["approval_session"])
+
+    def test_empty_ceo_message_uses_gateway_user_message_fallback(self) -> None:
+        from gateway.session_context import clear_session_vars, set_session_vars
+
+        store = CEOApprovalSessionStore()
+        tokens = set_session_vars(
+            platform="discord",
+            user_id="987654321012345678",
+            chat_id="111222333444555666",
+            user_message="오늘 블로그 글 작성해서 보고해",
+        )
+        try:
+            with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+                raw = coo_orchestrate(
+                    "",
+                    run_date="2026-07-04",
+                    session_store=store,
+                )
+        finally:
+            clear_session_vars(tokens)
+
+        payload = json.loads(raw)
+        self.assertEqual(payload["intent"]["task_kind"], "create_and_report")
+        session = payload["approval_session"]
+        self.assertIsNotNone(session)
+        self.assertEqual(session["execution_ticket_id"], "")
+        self.assertFalse(session["execution_dispatched"])
+        self.assertFalse(session["publish_dispatched"])
+
+    def test_empty_ceo_message_without_context_still_errors(self) -> None:
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            raw = coo_orchestrate("")
+
+        payload = json.loads(raw)
+        self.assertIn("error", payload)
+        self.assertEqual(payload["error"], "ceo_message is required")
+        self.assertNotIn("approval_session", payload)
+
+    def test_explicit_ceo_message_overrides_gateway_fallback(self) -> None:
+        from gateway.session_context import clear_session_vars, set_session_vars
+
+        store = CEOApprovalSessionStore()
+        tokens = set_session_vars(
+            platform="discord",
+            user_message="승인하고 발행해",
+        )
+        try:
+            with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+                raw = coo_orchestrate(
+                    "오늘 상태 보고해",
+                    run_date="2026-07-04",
+                    session_store=store,
+                )
+        finally:
+            clear_session_vars(tokens)
+
+        payload = json.loads(raw)
+        self.assertEqual(payload["intent"]["task_kind"], "daily_brief")
+
+
 if __name__ == "__main__":
     unittest.main()
