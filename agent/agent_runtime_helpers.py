@@ -2454,6 +2454,18 @@ def sanitize_api_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]
             "Pre-call sanitizer: added %d stub tool result(s)",
             len(missing_results),
         )
+
+    from agent.tool_dispatch_helpers import coerce_message_content_for_api
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        if "content" not in msg:
+            continue
+        coerced = coerce_message_content_for_api(msg.get("content"))
+        if coerced is not msg.get("content"):
+            msg["content"] = coerced
+
     return messages
 
 

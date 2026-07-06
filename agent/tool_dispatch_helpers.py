@@ -175,6 +175,24 @@ def _paths_overlap(left: Path, right: Path) -> bool:
     return left_parts[:common_len] == right_parts[:common_len]
 
 
+def coerce_message_content_for_api(content: Any) -> Any:
+    """Ensure ``message.content`` is API-wire-safe: str, None, or content-parts list.
+
+    OpenAI-compatible chat APIs reject plain dict ``content``. Tool handlers
+    should return JSON strings, but parsed payloads (or SessionDB round-trips
+    that decode ``\\x00json:`` rows) can leak dicts back into history.
+    """
+    if content is None or isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return content
+    if isinstance(content, dict):
+        if _is_multimodal_tool_result(content):
+            return _multimodal_text_summary(content)
+        return json.dumps(content, ensure_ascii=False, default=str)
+    return str(content)
+
+
 def _is_multimodal_tool_result(value: Any) -> bool:
     """True if the value is a multimodal tool result envelope.
 
@@ -378,6 +396,7 @@ def make_tool_result_message(name: str, content: Any, tool_call_id: str) -> dict
     The outer list itself is rebuilt rather than returned by identity, so
     callers should compare by value, not by ``is``.
     """
+    content = coerce_message_content_for_api(content)
     wrapped = _maybe_wrap_untrusted(name, content)
     return {
         "role": "tool",
@@ -492,6 +511,7 @@ __all__ = [
     "_should_parallelize_tool_batch",
     "_extract_parallel_scope_path",
     "_paths_overlap",
+    "coerce_message_content_for_api",
     "_is_multimodal_tool_result",
     "_multimodal_text_summary",
     "_append_subdir_hint_to_multimodal",

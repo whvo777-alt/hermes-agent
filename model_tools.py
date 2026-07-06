@@ -1222,6 +1222,12 @@ def handle_function_call(
         except Exception as _hook_err:
             logger.debug("transform_tool_result hook error: %s", _hook_err)
 
+        from agent.tool_dispatch_helpers import (
+            _is_multimodal_tool_result,
+            coerce_message_content_for_api,
+        )
+        if isinstance(result, dict) and not _is_multimodal_tool_result(result):
+            result = coerce_message_content_for_api(result)
         return result
 
     except Exception as e:
