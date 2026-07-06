@@ -17584,6 +17584,61 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             agent.tool_start_callback = (
                 voice_ack_callback if _voice_ack_guild[0] is not None else None
             )
+
+            def _coo_approval_tool_complete_callback(
+                _tool_call_id: str,
+                function_name: str,
+                _display_args: Any,
+                function_result: Any,
+            ) -> None:
+                from gateway.coo_approval_dispatch import maybe_dispatch_coo_approval_after_tool
+
+                maybe_dispatch_coo_approval_after_tool(
+                    tool_name=function_name,
+                    function_result=function_result,
+                    adapter=_status_adapter,
+                    chat_id=_status_chat_id,
+                    metadata=_status_thread_metadata,
+                    store=None,
+                    loop=_loop_for_step,
+                    run_still_current=_run_still_current,
+                )
+
+            _coo_approval_tool_complete_callback._coo_approval_dispatch = True  # type: ignore[attr-defined]
+
+            _existing_tool_complete_callback = agent.tool_complete_callback
+            _chained_tool_complete_callback = (
+                _existing_tool_complete_callback
+                if _existing_tool_complete_callback is not None
+                and not getattr(_existing_tool_complete_callback, "_coo_approval_dispatch", False)
+                else None
+            )
+
+            def _tool_complete_callback(
+                tool_call_id: str,
+                function_name: str,
+                display_args: Any,
+                function_result: Any,
+            ) -> None:
+                if _chained_tool_complete_callback is not None:
+                    try:
+                        _chained_tool_complete_callback(
+                            tool_call_id,
+                            function_name,
+                            display_args,
+                            function_result,
+                        )
+                    except Exception as exc:
+                        logger.debug("tool_complete_callback chain failed: %s", exc)
+                _coo_approval_tool_complete_callback(
+                    tool_call_id,
+                    function_name,
+                    display_args,
+                    function_result,
+                )
+
+            _tool_complete_callback._coo_approval_dispatch = True  # type: ignore[attr-defined]
+            agent.tool_complete_callback = _tool_complete_callback
             agent.step_callback = _step_callback_sync if _hooks_ref.loaded_hooks else None
             agent.stream_delta_callback = _stream_delta_cb
             agent.interim_assistant_callback = _interim_assistant_cb if _want_interim_messages else None

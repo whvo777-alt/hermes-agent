@@ -22,6 +22,33 @@ from tools.registry import registry, tool_error, tool_result
 # Non-negotiable safeguards — enforced at the tool boundary regardless of policy output.
 _AUTO_APPLY = False
 _REVIEW_REQUIRED = True
+_DEFAULT_REQUESTER_ID = "CEO"
+
+
+def _resolve_approval_session_identity(
+    requester_id: Optional[str] = None,
+    channel_id: Optional[str] = None,
+) -> tuple[str, str]:
+    """Resolve approval-session owner/channel from explicit args or gateway context."""
+    resolved_requester = str(requester_id or "").strip()
+    resolved_channel = str(channel_id or "").strip()
+
+    if not resolved_requester or not resolved_channel:
+        try:
+            from gateway.session_context import get_session_env
+        except ImportError:
+            get_session_env = None  # type: ignore[assignment,misc]
+
+        if get_session_env is not None:
+            if not resolved_requester:
+                resolved_requester = get_session_env("HERMES_SESSION_USER_ID", "").strip()
+            if not resolved_channel:
+                resolved_channel = (
+                    get_session_env("HERMES_SESSION_THREAD_ID", "").strip()
+                    or get_session_env("HERMES_SESSION_CHAT_ID", "").strip()
+                )
+
+    return resolved_requester or _DEFAULT_REQUESTER_ID, resolved_channel
 
 
 def _skill_payload(skill: SkillInvocation) -> Dict[str, Any]:
@@ -52,6 +79,8 @@ def _format_tool_response(
     result: COOOrchestrationResult,
     *,
     session_store: Optional[CEOApprovalSessionStore] = None,
+    requester_id: Optional[str] = None,
+    channel_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the coo_orchestrate tool payload.
 
@@ -64,11 +93,15 @@ def _format_tool_response(
     store = session_store or get_default_session_store()
     approval_session_payload: Optional[Dict[str, Any]] = None
     if should_create_approval_session(approval_report):
+        effective_requester_id, effective_channel_id = _resolve_approval_session_identity(
+            requester_id,
+            channel_id,
+        )
         approval_session = create_approval_session(
             approval_report,
             result,
-            requester_id="CEO",
-            channel_id="",
+            requester_id=effective_requester_id,
+            channel_id=effective_channel_id,
             store=store,
         )
         approval_session_payload = approval_session.to_dict()
@@ -143,6 +176,8 @@ def coo_orchestrate(
     run_date: Optional[str] = None,
     orchestrator: Optional[COOOrchestrator] = None,
     session_store: Optional[CEOApprovalSessionStore] = None,
+    requester_id: Optional[str] = None,
+    channel_id: Optional[str] = None,
 ) -> str:
     """Analyze CEO intent and produce plan/policy/skill selection (no execution)."""
     if not ceo_message or not ceo_message.strip():
@@ -150,7 +185,14 @@ def coo_orchestrate(
 
     engine = orchestrator or COOOrchestrator()
     result = engine.orchestrate(ceo_message.strip(), run_date=run_date)
-    return tool_result(_format_tool_response(result, session_store=session_store))
+    return tool_result(
+        _format_tool_response(
+            result,
+            session_store=session_store,
+            requester_id=requester_id,
+            channel_id=channel_id,
+        )
+    )
 
 
 def check_coo_requirements() -> bool:
@@ -195,6 +237,8 @@ def _handle_coo_orchestrate(args: Dict[str, Any], **kwargs: Any) -> str:
     return coo_orchestrate(
         ceo_message=args.get("ceo_message", ""),
         run_date=args.get("run_date"),
+        requester_id=kwargs.get("requester_id"),
+        channel_id=kwargs.get("channel_id"),
     )
 
 
