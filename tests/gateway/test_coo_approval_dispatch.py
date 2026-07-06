@@ -82,7 +82,7 @@ class TestScheduleCooApprovalDiscordRender(unittest.IsolatedAsyncioTestCase):
 
         def fake_schedule(coro, target_loop, **kwargs):
             scheduled.append((coro, target_loop, kwargs))
-            return None
+            return object()
 
         with patch("gateway.coo_approval_dispatch.safe_schedule_threadsafe", side_effect=fake_schedule):
             schedule_coo_approval_discord_render(
@@ -125,7 +125,9 @@ class TestScheduleCooApprovalDiscordRender(unittest.IsolatedAsyncioTestCase):
         class Adapter:
             send_coo_approval = AsyncMock()
 
-        with patch("gateway.coo_approval_dispatch.safe_schedule_threadsafe") as mock_schedule:
+        with patch("gateway.coo_approval_dispatch.safe_schedule_threadsafe") as mock_schedule, self.assertLogs(
+            "gateway.coo_approval_dispatch", level="INFO"
+        ) as logs:
             schedule_coo_approval_discord_render(
                 adapter=Adapter(),
                 chat_id="chat-123",
@@ -135,9 +137,111 @@ class TestScheduleCooApprovalDiscordRender(unittest.IsolatedAsyncioTestCase):
             )
 
         mock_schedule.assert_not_called()
+        self.assertIn("run_still_current=false", "\n".join(logs.output))
+
+    async def test_logs_success_after_send_coo_approval(self) -> None:
+        loop = asyncio.get_running_loop()
+
+        class Adapter:
+            send_coo_approval = AsyncMock(return_value=SimpleNamespace(success=True))
+
+        adapter = Adapter()
+        scheduled: list = []
+
+        def fake_schedule(coro, target_loop, **kwargs):
+            scheduled.append(coro)
+            return object()
+
+        with patch(
+            "gateway.coo_approval_dispatch.safe_schedule_threadsafe",
+            side_effect=fake_schedule,
+        ):
+            with self.assertLogs("gateway.coo_approval_dispatch", level="INFO") as logs:
+                schedule_coo_approval_discord_render(
+                    adapter=adapter,
+                    chat_id="chat-123",
+                    session_payload=_sample_session_payload(),
+                    loop=loop,
+                )
+                self.assertEqual(len(scheduled), 1)
+                await scheduled[0]
+
+        joined = "\n".join(logs.output)
+        self.assertIn("COO approval Discord render scheduled", joined)
+        self.assertIn("COO approval Discord render success", joined)
 
 
 class TestMaybeDispatchCooApprovalAfterTool(unittest.IsolatedAsyncioTestCase):
+    async def test_logs_skip_when_tool_name_not_coo_orchestrate(self) -> None:
+        loop = asyncio.get_running_loop()
+
+        class Adapter:
+            send_coo_approval = AsyncMock()
+
+        with self.assertLogs("gateway.coo_approval_dispatch", level="DEBUG") as logs:
+            maybe_dispatch_coo_approval_after_tool(
+                tool_name="terminal",
+                function_result=_coo_tool_result_with_session(),
+                adapter=Adapter(),
+                chat_id="555",
+                loop=loop,
+            )
+
+        joined = "\n".join(logs.output)
+        self.assertIn("tool_name=terminal", joined)
+        self.assertIn("not coo_orchestrate", joined)
+
+    async def test_logs_skip_when_approval_session_missing(self) -> None:
+        loop = asyncio.get_running_loop()
+
+        class Adapter:
+            send_coo_approval = AsyncMock()
+
+        with self.assertLogs("gateway.coo_approval_dispatch", level="INFO") as logs:
+            maybe_dispatch_coo_approval_after_tool(
+                tool_name="coo_orchestrate",
+                function_result=_coo_tool_result_without_session(),
+                adapter=Adapter(),
+                chat_id="555",
+                loop=loop,
+            )
+
+        joined = "\n".join(logs.output)
+        self.assertIn("approval_session_found=False", joined)
+        self.assertIn("approval_session missing/null/empty", joined)
+
+    async def test_logs_scheduled_when_session_present(self) -> None:
+        loop = asyncio.get_running_loop()
+
+        class Adapter:
+            send_coo_approval = AsyncMock(return_value=SimpleNamespace(success=True))
+
+        adapter = Adapter()
+        captured: list = []
+
+        def fake_schedule(coro, target_loop, **kwargs):
+            captured.append(coro)
+            return object()
+
+        with patch(
+            "gateway.coo_approval_dispatch.safe_schedule_threadsafe",
+            side_effect=fake_schedule,
+        ), self.assertLogs("gateway.coo_approval_dispatch", level="INFO") as logs:
+            maybe_dispatch_coo_approval_after_tool(
+                tool_name="coo_orchestrate",
+                function_result=_coo_tool_result_with_session(),
+                adapter=adapter,
+                chat_id="555",
+                loop=loop,
+            )
+            self.assertEqual(len(captured), 1)
+            await captured[0]
+
+        joined = "\n".join(logs.output)
+        self.assertIn("approval_session_found=True", joined)
+        self.assertIn("session_id=11111111", joined)
+        self.assertIn("COO approval Discord render scheduled", joined)
+
     async def test_dispatches_only_for_coo_orchestrate_with_session(self) -> None:
         loop = asyncio.get_running_loop()
         session = _sample_session_payload()
@@ -151,7 +255,7 @@ class TestMaybeDispatchCooApprovalAfterTool(unittest.IsolatedAsyncioTestCase):
 
         def fake_schedule(coro, target_loop, **kwargs):
             captured.append(coro)
-            return None
+            return object()
 
         with patch("gateway.coo_approval_dispatch.safe_schedule_threadsafe", side_effect=fake_schedule):
             maybe_dispatch_coo_approval_after_tool(
@@ -205,7 +309,7 @@ class TestMaybeDispatchCooApprovalAfterTool(unittest.IsolatedAsyncioTestCase):
 
         def fake_schedule(coro, target_loop, **kwargs):
             captured.append(coro)
-            return None
+            return object()
 
         with patch("gateway.coo_approval_dispatch.safe_schedule_threadsafe", side_effect=fake_schedule), patch(
             "subprocess.run", side_effect=AssertionError("no subprocess")
