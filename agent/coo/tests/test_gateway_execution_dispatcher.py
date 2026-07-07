@@ -245,13 +245,21 @@ class TestGatewayExecutionDispatcherBridge(unittest.TestCase):
         self.assertFalse(hasattr(gateway_execution_dispatcher_mod, "run"))
         self.assertFalse(hasattr(gateway_execution_dispatcher_mod, "dispatch_now"))
 
-    def test_discord_coo_approval_does_not_import_gateway_execution_dispatcher(self) -> None:
+    def test_discord_coo_approval_only_lazy_imports_gateway_execution_dispatcher(self) -> None:
         discord_path = (
             Path(__file__).resolve().parents[3]
             / "plugins/platforms/discord/coo_approval.py"
         )
         source = discord_path.read_text(encoding="utf-8")
-        self.assertNotIn("gateway_execution_dispatcher", source)
+        for line in source.splitlines():
+            if line.startswith("from agent.coo.gateway_execution_dispatcher import"):
+                self.fail(
+                    "gateway_execution_dispatcher must be imported lazily inside functions"
+                )
+            if line.startswith("import agent.coo.gateway_execution_dispatcher"):
+                self.fail(
+                    "gateway_execution_dispatcher must be imported lazily inside functions"
+                )
 
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@
 Prepares in-memory COO approval session payloads, pure-dict embed/component UI
 payloads, and optional discord.py Embed/View objects for Discord handler wiring.
 
-Button callbacks update Approval Session state only (approve/reject/refresh).
-No execution ticket is created. Repository2 is not touched.
+Button callbacks update Approval Session state (approve/reject/refresh/prepare_plan).
+Prepare Plan creates a dispatch plan only — no Repository2 execution.
 
 This module is for COO CEO approval sessions only.
 This module is unrelated to ``tools/approval.py`` ``resolve_gateway_approval()``.
@@ -36,7 +36,8 @@ DiscordSnowflake = Union[str, int]
 
 _EMBED_TITLE = "Hermes COO Approval Required"
 _EMBED_COLOR = 0x1ABC9C  # COO approval teal — distinct from exec approval orange/green/blue/purple
-_EMBED_FOOTER_TEXT = "Approval only. No execution will be dispatched."
+_EMBED_FOOTER_TEXT = "Plan only. No execution or publish is dispatched."
+_EMBED_FOOTER_TEXT_NO_PLAN = "Approval only. No execution will be dispatched."
 # Discord hard limits (per-element) used by this builder.
 _FIELD_VALUE_MAX = 1024  # max chars per embed field value
 _DESCRIPTION_MAX = 3500  # stays under Discord's 4096 description cap with headroom
@@ -46,7 +47,8 @@ _EMBED_TOTAL_MAX = 6000  # Discord aggregate embed character budget
 _INLINE_FIELD_VALUE_MAX = 256
 _CUSTOM_ID_MAX = 100
 _COO_APPROVAL_CUSTOM_ID_PREFIX = "coo_approval"
-_ALLOWED_COO_APPROVAL_ACTIONS = frozenset({"approve", "reject", "refresh"})
+_ALLOWED_COO_APPROVAL_ACTIONS = frozenset({"approve", "reject", "refresh", "prepare_plan"})
+_PREPARE_PLAN_EPHEMERAL = "Plan Ready — Not Executed"
 _ERR_SESSION_NOT_FOUND = "Approval session not found."
 _ERR_NOT_ALLOWED = "You are not allowed to approve this session."
 _ERR_SESSION_EXPIRED = "Approval session expired."
@@ -112,6 +114,48 @@ def _execution_ticket_label(session_payload: Dict[str, Any]) -> str:
 
 def _dispatch_label(session_payload: Dict[str, Any], key: str) -> str:
     return "Dispatched" if bool(session_payload.get(key)) else "Not dispatched"
+
+
+def _format_skill_list(skills: List[str]) -> str:
+    if not skills:
+        return "(none)"
+    return ", ".join(f"`{skill_id}`" for skill_id in skills)
+
+
+def _format_excluded_skills(
+    excluded: List[str],
+    exclusion_reasons: Dict[str, str],
+) -> str:
+    if not excluded:
+        return "(none)"
+    parts: List[str] = []
+    for skill_id in excluded:
+        reason = exclusion_reasons.get(skill_id, "")
+        if reason:
+            parts.append(f"`{skill_id}` — {reason}")
+        else:
+            parts.append(f"`{skill_id}`")
+    return _truncate(", ".join(parts), _FIELD_VALUE_MAX)
+
+
+def _lookup_dispatch_plan_for_session(
+    session_payload: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Best-effort dispatch plan lookup for embed rendering."""
+    ticket_id = str(session_payload.get("execution_ticket_id") or "").strip()
+    if not ticket_id:
+        return None
+    try:
+        from agent.coo.gateway_execution_dispatcher import get_dispatch_plan_for_gateway_ticket
+
+        return get_dispatch_plan_for_gateway_ticket(ticket_id)
+    except Exception as exc:
+        logger.warning(
+            "COO approval dispatch plan lookup failed for ticket %s: %s",
+            ticket_id[:64],
+            exc,
+        )
+        return None
 
 
 def _calculate_embed_size(embed_payload: Dict[str, Any]) -> int:
@@ -187,9 +231,15 @@ def build_coo_approval_session_payload(
     )
 
 
-def build_coo_approval_embed_payload(session_payload: Dict[str, Any]) -> Dict[str, Any]:
+def build_coo_approval_embed_payload(
+    session_payload: Dict[str, Any],
+    plan_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Build a pure-dict Discord embed payload for a COO approval session."""
     session_id = _require_session_id(session_payload)
+    plan = plan_payload if plan_payload is not None else _lookup_dispatch_plan_for_session(
+        session_payload
+    )
     task_kind = _truncate(session_payload.get("task_kind", ""), 128)
     run_date = _truncate(session_payload.get("run_date", ""), 64)
     status = _truncate(session_payload.get("status", ""), 64)
@@ -264,13 +314,60 @@ def build_coo_approval_embed_payload(session_payload: Dict[str, Any]) -> Dict[st
             },
         ]
     )
+    if plan:
+        fields.extend(
+            [
+                {
+                    "name": "Plan Status",
+                    "value": "Plan Ready — Not Executed",
+                    "inline": False,
+                },
+                {
+                    "name": "Dispatchable",
+                    "value": _truncate(
+                        _format_skill_list(list(plan.get("dispatchable_skills") or [])),
+                        _FIELD_VALUE_MAX,
+                    ),
+                    "inline": False,
+                },
+                {
+                    "name": "Preview Only",
+                    "value": _truncate(
+                        _format_skill_list(list(plan.get("preview_only_skills") or [])),
+                        _FIELD_VALUE_MAX,
+                    ),
+                    "inline": False,
+                },
+                {
+                    "name": "Excluded",
+                    "value": _format_excluded_skills(
+                        list(plan.get("excluded_skills") or []),
+                        dict(plan.get("exclusion_reasons") or {}),
+                    ),
+                    "inline": False,
+                },
+                {
+                    "name": "Requested By",
+                    "value": _truncate(plan.get("requested_by", ""), _INLINE_FIELD_VALUE_MAX)
+                    or "unknown",
+                    "inline": True,
+                },
+                {
+                    "name": "Requested At",
+                    "value": _truncate(plan.get("requested_at", ""), _INLINE_FIELD_VALUE_MAX)
+                    or "unknown",
+                    "inline": True,
+                },
+            ]
+        )
 
+    footer_text = _EMBED_FOOTER_TEXT if plan else _EMBED_FOOTER_TEXT_NO_PLAN
     embed_payload = {
         "title": _EMBED_TITLE,
         "description": description,
         "color": _EMBED_COLOR,
         "fields": fields,
-        "footer": {"text": _EMBED_FOOTER_TEXT},
+        "footer": {"text": footer_text},
     }
     return _enforce_embed_total_length(embed_payload)
 
@@ -325,6 +422,14 @@ def _should_disable_coo_approval_buttons(session_payload: Dict[str, Any]) -> boo
     return _is_terminal_approval_status(str(session_payload.get("status") or ""))
 
 
+def _should_disable_prepare_plan_button(session_payload: Dict[str, Any]) -> bool:
+    status = str(session_payload.get("status") or "").strip().lower()
+    ticket_id = str(session_payload.get("execution_ticket_id") or "").strip()
+    if status != "approved":
+        return True
+    return not ticket_id
+
+
 def _terminal_status_message(status: str) -> str:
     normalized = str(status or "closed").strip().lower()
     return f"Approval session is already {normalized}."
@@ -355,6 +460,34 @@ def execute_coo_approval_button_action(
         if session is None:
             raise KeyError(session_id)
         return session
+
+    if normalized_action == "prepare_plan":
+        existing = get_discord_approval_session(session_id, store=store)
+        if existing is None:
+            raise KeyError(session_id)
+        owner = str(existing.get("requester_id") or "")
+        if str(user_id) != owner:
+            raise ValueError(
+                f"Requester {user_id!r} is not authorized for session {session_id} "
+                f"(owner: {owner!r})"
+            )
+        if _should_disable_prepare_plan_button(existing):
+            raise ValueError(
+                f"Cannot prepare plan for session {session_id} in status {existing.get('status')}"
+            )
+        from agent.coo.gateway_execution_dispatcher import (
+            create_dispatch_plan_for_gateway_session,
+        )
+
+        create_dispatch_plan_for_gateway_session(
+            session_id,
+            requester_id=user_id,
+            reason="discord prepare plan",
+        )
+        refreshed = get_discord_approval_session(session_id, store=store)
+        if refreshed is None:
+            raise KeyError(session_id)
+        return refreshed
 
     existing = get_discord_approval_session(session_id, store=store)
     if existing is None:
@@ -434,25 +567,32 @@ def _coo_approval_button_component(
 def build_coo_approval_components(session_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Build pure-dict Discord button payloads for COO approval interactions."""
     session_id = _require_session_id(session_payload)
-    disabled = _should_disable_coo_approval_buttons(session_payload)
+    terminal_disabled = _should_disable_coo_approval_buttons(session_payload)
+    prepare_plan_disabled = _should_disable_prepare_plan_button(session_payload)
     return [
         _coo_approval_button_component(
             label="Approve",
             style="success",
             custom_id=_build_coo_approval_custom_id("approve", session_id),
-            disabled=disabled,
+            disabled=terminal_disabled,
         ),
         _coo_approval_button_component(
             label="Reject",
             style="danger",
             custom_id=_build_coo_approval_custom_id("reject", session_id),
-            disabled=disabled,
+            disabled=terminal_disabled,
         ),
         _coo_approval_button_component(
             label="Refresh",
             style="secondary",
             custom_id=_build_coo_approval_custom_id("refresh", session_id),
-            disabled=disabled,
+            disabled=terminal_disabled,
+        ),
+        _coo_approval_button_component(
+            label="Prepare Plan",
+            style="primary",
+            custom_id=_build_coo_approval_custom_id("prepare_plan", session_id),
+            disabled=prepare_plan_disabled,
         ),
     ]
 
@@ -505,7 +645,9 @@ def _make_coo_approval_button_callback(
                 session_payload,
                 store=store,
             )
-            if not updated:
+            if parsed["action"] == "prepare_plan":
+                await _respond_coo_approval_ephemeral(interaction, _PREPARE_PLAN_EPHEMERAL)
+            elif not updated:
                 status = session_payload.get("status", "unknown")
                 await _respond_coo_approval_ephemeral(
                     interaction,
