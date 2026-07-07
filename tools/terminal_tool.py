@@ -2331,17 +2331,35 @@ def terminal_tool(
         except Exception:
             pass
 
+        effective_cwd = _resolve_command_cwd(
+            workdir=workdir,
+            env=env,
+            default_cwd=cwd,
+        )
+        from tools.repository2_terminal_guard import check_repository2_terminal_block
+
+        repository2_block = check_repository2_terminal_block(command, effective_cwd)
+        if repository2_block:
+            logger.warning(
+                "Blocked Repository2 terminal execution "
+                "(effective_cwd=%s, workdir=%s, command=%s)",
+                effective_cwd[:200],
+                (workdir or "")[:200],
+                _safe_command_preview(command),
+            )
+            return json.dumps({
+                "output": "",
+                "exit_code": 1,
+                "error": repository2_block,
+                "status": "blocked",
+            }, ensure_ascii=False)
+
         if background:
             # Spawn a tracked background process via the process registry.
             # For local backends: uses subprocess.Popen with output buffering.
             # For non-local backends: runs inside the sandbox via env.execute().
             from tools.process_registry import process_registry
 
-            effective_cwd = _resolve_command_cwd(
-                workdir=workdir,
-                env=env,
-                default_cwd=cwd,
-            )
             try:
                 if env_type == "local":
                     proc_session = process_registry.spawn_local(
@@ -2584,11 +2602,7 @@ def terminal_tool(
             
             while retry_count <= max_retries:
                 try:
-                    command_cwd = _resolve_command_cwd(
-                        workdir=workdir,
-                        env=env,
-                        default_cwd=cwd,
-                    )
+                    command_cwd = effective_cwd
                     execute_kwargs = {
                         "timeout": effective_timeout,
                         "cwd": command_cwd,

@@ -182,16 +182,24 @@ class COOOrchestrator:
         selected = [s.skill_id for s in skills if s.status is SkillInvocationStatus.SELECTED]
         if selected:
             actions.append(
-                "Invoke selected Execution Engine skills in order: " + ", ".join(selected)
+                "Future dispatcher may invoke selected Execution Engine skills "
+                "(plan-only until CEO Approval): "
+                + ", ".join(selected)
             )
         else:
-            actions.append("Do not invoke Execution Engine until policy blockers are resolved.")
+            actions.append(
+                "Do not invoke Execution Engine via terminal until policy "
+                "blockers are resolved and CEO approves."
+            )
 
         if policy.requires_ceo_approval:
             actions.append("Present approval report to CEO before any publish step.")
 
         if intent.task_kind is TaskKind.CREATE_AND_REPORT:
-            actions.append("After create_content, deliver CEO report and wait at publish_wait.")
+            actions.append(
+                "After CEO Approval, a future dispatcher may run create_content; "
+                "until then deliver the COO plan report and wait at publish_wait."
+            )
         elif intent.task_kind is TaskKind.APPROVE_AND_PUBLISH:
             if state.approvals.approved == 0:
                 actions.append("CEO must approve queue items before publish_content can run.")
