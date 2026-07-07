@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from agent.coo.execution_ticket import ExecutionTicket, ExecutionTicketStatus, mark_dispatch_pending
 from agent.coo.skills_catalog import (
@@ -95,6 +95,51 @@ class ExecutionDispatchPlan:
             "created_at": self.created_at,
             "notes": list(self.notes),
         }
+
+
+_DEFAULT_PLAN_STORE: Optional["ExecutionDispatchPlanStore"] = None
+
+
+class ExecutionDispatchPlanStore:
+    """Process-local in-memory dispatch plan store — no file persistence."""
+
+    def __init__(self) -> None:
+        self._plans: Dict[str, ExecutionDispatchPlan] = {}
+        self._by_ticket: Dict[str, str] = {}
+
+    def save(self, plan: ExecutionDispatchPlan) -> None:
+        existing_plan_id = self._by_ticket.get(plan.ticket_id)
+        if existing_plan_id is not None and existing_plan_id != plan.plan_id:
+            raise ValueError(
+                f"Dispatch plan already exists for ticket {plan.ticket_id}: "
+                f"{existing_plan_id}"
+            )
+        self._plans[plan.plan_id] = plan
+        self._by_ticket[plan.ticket_id] = plan.plan_id
+
+    def get(self, plan_id: str) -> Optional[ExecutionDispatchPlan]:
+        return self._plans.get(plan_id)
+
+    def get_by_ticket(self, ticket_id: str) -> Optional[ExecutionDispatchPlan]:
+        plan_id = self._by_ticket.get(ticket_id)
+        if plan_id is None:
+            return None
+        return self._plans.get(plan_id)
+
+    def list_plans(self) -> List[ExecutionDispatchPlan]:
+        return list(self._plans.values())
+
+    def clear(self) -> None:
+        self._plans.clear()
+        self._by_ticket.clear()
+
+
+def get_default_dispatch_plan_store() -> ExecutionDispatchPlanStore:
+    """Return the module-level in-memory dispatch plan store."""
+    global _DEFAULT_PLAN_STORE
+    if _DEFAULT_PLAN_STORE is None:
+        _DEFAULT_PLAN_STORE = ExecutionDispatchPlanStore()
+    return _DEFAULT_PLAN_STORE
 
 
 def _assert_ticket_created(ticket: ExecutionTicket) -> None:
