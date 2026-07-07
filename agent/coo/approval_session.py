@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from agent.coo.approval_report import CEOApprovalReport, CEOApprovalReportStatus
-from agent.coo.models import COOOrchestrationResult
+from agent.coo.models import COOOrchestrationResult, SkillInvocationStatus
 
 _SESSION_TTL = timedelta(hours=24)
 
@@ -45,6 +45,34 @@ def _default_expires_at(created_at: str) -> str:
     return (_parse_iso8601(created_at) + _SESSION_TTL).isoformat()
 
 
+def _extract_selected_skill_ids(orchestration_result: COOOrchestrationResult) -> List[str]:
+    """Collect catalog skill_ids from runtime provider results or skill selection."""
+    skill_ids: List[str] = []
+    seen: set[str] = set()
+
+    runtime = orchestration_result.worker_runtime_result
+    if runtime is not None:
+        for provider_result in runtime.provider_results:
+            skill_id = provider_result.skill_id
+            if not skill_id or skill_id in seen:
+                continue
+            seen.add(skill_id)
+            skill_ids.append(skill_id)
+        if skill_ids:
+            return skill_ids
+
+    for invocation in orchestration_result.skills:
+        if invocation.status is not SkillInvocationStatus.SELECTED:
+            continue
+        skill_id = invocation.skill_id
+        if not skill_id or skill_id in seen or skill_id == "none":
+            continue
+        seen.add(skill_id)
+        skill_ids.append(skill_id)
+
+    return skill_ids
+
+
 @dataclass
 class CEOApprovalSession:
     """In-memory CEO approval session — no execution side effects."""
@@ -64,6 +92,7 @@ class CEOApprovalSession:
     blocked_workers: List[str] = field(default_factory=list)
     waiting_workers: List[str] = field(default_factory=list)
     selected_workers: List[str] = field(default_factory=list)
+    selected_skill_ids: List[str] = field(default_factory=list)
     provider_result_count: int = 0
     reviewer: str = ""
     rejection_reason: str = ""
@@ -91,6 +120,7 @@ class CEOApprovalSession:
             "blocked_workers": list(self.blocked_workers),
             "waiting_workers": list(self.waiting_workers),
             "selected_workers": list(self.selected_workers),
+            "selected_skill_ids": list(self.selected_skill_ids),
             "provider_result_count": self.provider_result_count,
             "reviewer": self.reviewer,
             "rejection_reason": self.rejection_reason,
@@ -178,6 +208,7 @@ def create_approval_session(
         blocked_workers=list(report.blocked_workers),
         waiting_workers=list(report.waiting_workers),
         selected_workers=list(report.selected_workers),
+        selected_skill_ids=_extract_selected_skill_ids(orchestration_result),
         provider_result_count=report.provider_result_count,
         created_at=created_at,
     )
