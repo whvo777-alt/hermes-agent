@@ -28,8 +28,8 @@ class ExecutionTicketStatus(str, Enum):
     """Lifecycle status for an execution ticket."""
 
     CREATED = "created"
-    DISPATCH_PENDING = "dispatch_pending"  # future reserved
-    DISPATCHED = "dispatched"  # future reserved — no reachable path in Phase 7B
+    DISPATCH_PENDING = "dispatch_pending"  # reached when a dispatch plan is created
+    DISPATCHED = "dispatched"  # future reserved — no reachable path until execution Phase
     CANCELLED = "cancelled"
 
 
@@ -230,3 +230,13 @@ def create_ticket_from_approval_session(
     )
     ticket_store.save(ticket)
     return ticket
+
+
+def mark_dispatch_pending(ticket: ExecutionTicket) -> None:
+    """Transition a ticket from CREATED to DISPATCH_PENDING — no execution flags."""
+    if ticket.status is not ExecutionTicketStatus.CREATED:
+        raise ValueError(
+            f"Cannot mark ticket {ticket.ticket_id} dispatch pending "
+            f"from status {ticket.status.value}"
+        )
+    ticket.status = ExecutionTicketStatus.DISPATCH_PENDING
