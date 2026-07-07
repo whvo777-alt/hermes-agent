@@ -3,9 +3,8 @@
 Thin adapter so the Discord Gateway can create, inspect, approve, reject,
 and expire CEO approval sessions without importing session internals.
 
-This module does not dispatch execution.
-This module does not create execution tickets.
-This module is an approval-session bridge for Gateway runtime only.
+Approval success creates an execution ticket via the ticket bridge — record
+only; no Repository 2 execution, no publish, no dispatch.
 """
 
 from __future__ import annotations
@@ -21,6 +20,11 @@ from agent.coo.approval_session import (
     get_default_session_store,
     reject_session,
     should_create_approval_session,
+)
+from agent.coo.execution_ticket import (
+    ExecutionTicketStore,
+    create_ticket_from_approval_session,
+    get_default_ticket_store,
 )
 from agent.coo.models import COOOrchestrationResult
 
@@ -64,22 +68,54 @@ def get_gateway_approval_session(
     return session.to_dict()
 
 
+def create_ticket_for_gateway_session(
+    session_id: str,
+    *,
+    session_store: Optional[CEOApprovalSessionStore] = None,
+    ticket_store: Optional[ExecutionTicketStore] = None,
+) -> Dict[str, Any]:
+    """Create or return an execution ticket for an approved session — no dispatch."""
+    store = session_store or get_default_session_store()
+    session = store.get(session_id)
+    if session is None:
+        raise KeyError(f"Approval session not found: {session_id}")
+
+    tickets = ticket_store or get_default_ticket_store()
+    ticket = create_ticket_from_approval_session(session, store=tickets)
+
+    if session.execution_ticket_id != ticket.ticket_id:
+        session.execution_ticket_id = ticket.ticket_id
+        store.save(session)
+
+    return ticket.to_dict()
+
+
 def approve_gateway_session(
     session_id: str,
     *,
     requester_id: str,
     reviewer: Optional[str] = None,
     store: Optional[CEOApprovalSessionStore] = None,
+    ticket_store: Optional[ExecutionTicketStore] = None,
 ) -> Dict[str, Any]:
-    """Approve a pending session — record only; no execution or publish."""
+    """Approve a pending session and create an execution ticket — no dispatch."""
     actor = reviewer or requester_id
-    session = approve_session(
+    session_store = store or get_default_session_store()
+    approve_session(
         session_id,
         reviewer=actor,
         requester_id=requester_id,
-        store=store,
+        store=session_store,
     )
-    return session.to_dict()
+    create_ticket_for_gateway_session(
+        session_id,
+        session_store=session_store,
+        ticket_store=ticket_store,
+    )
+    refreshed = session_store.get(session_id)
+    if refreshed is None:
+        raise KeyError(f"Approval session not found: {session_id}")
+    return refreshed.to_dict()
 
 
 def reject_gateway_session(

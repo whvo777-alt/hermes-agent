@@ -1664,7 +1664,7 @@ class TestGatewayApprovalBridge(unittest.TestCase):
 
         self.assertEqual(approved["status"], "approved")
         self.assertEqual(approved["reviewer"], "discord-user-123")
-        self.assertEqual(approved["execution_ticket_id"], "")
+        self.assertTrue(approved["execution_ticket_id"])
         self.assertFalse(approved["execution_dispatched"])
         self.assertFalse(approved["publish_dispatched"])
 
@@ -1872,7 +1872,7 @@ class TestDiscordApprovalAdapter(unittest.TestCase):
 
         self.assertEqual(approved["status"], "approved")
         self.assertEqual(approved["reviewer"], "987654321012345678")
-        self.assertEqual(approved["execution_ticket_id"], "")
+        self.assertTrue(approved["execution_ticket_id"])
         self.assertFalse(approved["execution_dispatched"])
         self.assertFalse(approved["publish_dispatched"])
 

@@ -106,7 +106,7 @@ class TestCooToolsGatewayApprovalIdentity(unittest.TestCase):
             store=store,
         )
         self.assertEqual(approved["status"], "approved")
-        self.assertEqual(approved["execution_ticket_id"], "")
+        self.assertTrue(approved["execution_ticket_id"])
         self.assertFalse(approved["execution_dispatched"])
         self.assertFalse(approved["publish_dispatched"])
 

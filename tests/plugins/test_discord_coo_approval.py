@@ -463,7 +463,7 @@ class TestDiscordCooApprovalButtonActions(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "approved")
-        self.assertEqual(result["execution_ticket_id"], "")
+        self.assertTrue(result["execution_ticket_id"])
         self.assertFalse(result["execution_dispatched"])
         self.assertFalse(result["publish_dispatched"])
 
@@ -829,7 +829,7 @@ class TestDiscordCooApprovalInteractionViewRefresh(unittest.IsolatedAsyncioTestC
         mock_exec_approval.assert_not_called()
         updated = store.get(seeded["session_id"])
         assert updated is not None
-        self.assertEqual(updated.execution_ticket_id, "")
+        self.assertTrue(updated.execution_ticket_id)
         self.assertFalse(updated.execution_dispatched)
         self.assertFalse(updated.publish_dispatched)
 

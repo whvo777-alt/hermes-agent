@@ -8,7 +8,6 @@ This module is for COO CEO approval sessions.
 This module is unrelated to ``tools/approval.py`` ``resolve_gateway_approval()``.
 ``resolve_gateway_approval`` is the legacy/general exec approval queue.
 This module does not dispatch execution.
-This module does not create execution tickets.
 This module is an approval-session bridge for Discord runtime only.
 """
 
