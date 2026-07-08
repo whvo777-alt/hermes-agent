@@ -257,27 +257,66 @@ class TestExecutionRuntimeDryRun(unittest.TestCase):
         self.assertIs(store.get(run.run_id), run)
         self.assertIs(store.get_by_request(request.request_id), run)
 
-    def test_dispatchable_results_are_synthetic_dry_run(self) -> None:
+    def test_dispatchable_results_use_adapter_dry_run(self) -> None:
         request, ticket, plan = self._request_and_context()
 
-        run = start_dry_run(request, ticket, plan, run_store=ExecutionRunStore())
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            run = start_dry_run(request, ticket, plan, run_store=ExecutionRunStore())
 
         self.assertEqual(len(run.dispatchable_results), len(request.dispatchable_skills))
         for result in run.dispatchable_results:
             self.assertTrue(result["dry_run"])
-            self.assertEqual(result["status"], "planned")
+            self.assertEqual(result["source"], "pipeline_adapter_dry_run")
             self.assertIn(result["skill_id"], request.dispatchable_skills)
+            self.assertIn("adapter_status", result)
+            self.assertIn("summary", result)
+            self.assertIn("entrypoint_hint", result)
 
-    def test_preview_results_are_synthetic_dry_run(self) -> None:
+    def test_preview_results_use_adapter_dry_run(self) -> None:
         request, ticket, plan = self._request_and_context()
 
-        run = start_dry_run(request, ticket, plan, run_store=ExecutionRunStore())
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            run = start_dry_run(request, ticket, plan, run_store=ExecutionRunStore())
 
         self.assertEqual(len(run.preview_results), len(request.preview_only_skills))
         for result in run.preview_results:
             self.assertTrue(result["dry_run"])
-            self.assertEqual(result["status"], "preview_planned")
+            self.assertEqual(result["source"], "pipeline_adapter_dry_run")
             self.assertIn(result["skill_id"], request.preview_only_skills)
+            self.assertTrue(result["status"].startswith("preview_"))
+
+    def test_start_dry_run_rejects_publish_content_in_dispatchable(self) -> None:
+        ticket = _manual_ticket()
+        plan = _manual_plan(
+            ticket,
+            dispatchable_skills=["create_content", "publish_content"],
+            preview_only_skills=["approval_review"],
+            excluded_skills=[],
+        )
+        request = ExecutionRequest(
+            request_id=str(uuid.uuid4()),
+            plan_id=plan.plan_id,
+            ticket_id=ticket.ticket_id,
+            approval_session_id=ticket.approval_session_id,
+            requested_by=ticket.requester_id,
+            requested_at="2026-07-07T00:00:00+00:00",
+            mode=ExecutionRunMode.DRY_RUN,
+            dispatchable_skills=["create_content", "publish_content"],
+            preview_only_skills=["approval_review"],
+            excluded_skills=[],
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            start_dry_run(request, ticket, plan, run_store=ExecutionRunStore())
+
+        self.assertIn("publish", str(ctx.exception).lower())
+
+    def test_run_notes_mark_adapter_dry_run(self) -> None:
+        request, ticket, plan = self._request_and_context()
+
+        run = start_dry_run(request, ticket, plan, run_store=ExecutionRunStore())
+
+        self.assertIn("Phase 8E adapter dry-run", run.notes[0])
 
     def test_blocked_skills_contains_excluded(self) -> None:
         request, ticket, plan = self._request_and_context()
@@ -359,7 +398,7 @@ class TestExecutionRuntimeDryRun(unittest.TestCase):
         with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
             start_dry_run(request, ticket, plan, run_store=ExecutionRunStore())
 
-    def test_no_adapter_dispatch_import_or_call(self) -> None:
+    def test_no_adapter_dispatch_call(self) -> None:
         import agent.coo.execution_runtime as runtime_mod
         import agent.coo.pipeline_adapter as pipeline_adapter_mod
 
@@ -374,11 +413,7 @@ class TestExecutionRuntimeDryRun(unittest.TestCase):
             pipeline_adapter_mod.PipelineAdapter,
             "dispatch",
             side_effect=AssertionError("dispatch must not be called"),
-        ), patch.object(
-            pipeline_adapter_mod.PipelineAdapter,
-            "dry_run",
-            side_effect=AssertionError("dry_run deferred to Phase 8C"),
-        ):
+        ), patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
             start_dry_run(request, ticket, plan, run_store=ExecutionRunStore())
 
     def test_execution_runtime_has_no_execute_function(self) -> None:

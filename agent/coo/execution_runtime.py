@@ -1,8 +1,9 @@
-"""Execution Runtime — dry-run foundation (Phase 8B).
+"""Execution Runtime — dry-run foundation (Phase 8B/8E).
 
 Creates execution requests and dry-run runs from dispatch plans. Record-only:
 no Repository 2 execution, no publish, no subprocess, no terminal, no adapter
-dispatch. PipelineAdapter.dry_run() integration is deferred to Phase 8C.
+dispatch. Skill dry-run results come from PipelineAdapter.dry_run() via
+runtime_skill_adapter (Phase 8E).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from agent.coo.execution_dispatcher import (
     ExecutionDispatchPlan,
 )
 from agent.coo.execution_ticket import ExecutionTicket, ExecutionTicketStatus
+from agent.coo.runtime_skill_adapter import dry_run_skill, to_preview_result
 from agent.coo.skills_catalog import RISK_CATEGORY_PUBLISH, get_skill
 
 _DEFAULT_RUN_STORE: Optional["ExecutionRunStore"] = None
@@ -81,7 +83,7 @@ class ExecutionRequest:
 
 @dataclass
 class ExecutionRun:
-    """Dry-run execution run — synthetic skill results only in Phase 8B."""
+    """Dry-run execution run — adapter-backed skill results (Phase 8E)."""
 
     run_id: str
     request_id: str
@@ -293,20 +295,19 @@ def create_execution_request_from_plan(
     )
 
 
-def _synthetic_dispatchable_result(skill_id: str) -> Dict[str, Any]:
-    return {
-        "skill_id": skill_id,
-        "dry_run": True,
-        "status": "planned",
-    }
-
-
-def _synthetic_preview_result(skill_id: str) -> Dict[str, Any]:
-    return {
-        "skill_id": skill_id,
-        "dry_run": True,
-        "status": "preview_planned",
-    }
+def _aggregate_run_summary(
+    dispatchable_results: List[Dict[str, Any]],
+    preview_results: List[Dict[str, Any]],
+    blocked_skills: List[str],
+) -> str:
+    summaries: List[str] = []
+    for result in dispatchable_results + preview_results:
+        summary = str(result.get("summary", "")).strip()
+        if summary:
+            summaries.append(summary)
+    if blocked_skills:
+        summaries.append(f"{len(blocked_skills)} skill(s) blocked")
+    return "; ".join(summaries) if summaries else "Dry-run completed (no skills)"
 
 
 def start_dry_run(
@@ -315,7 +316,7 @@ def start_dry_run(
     plan: ExecutionDispatchPlan,
     run_store: Optional[ExecutionRunStore] = None,
 ) -> ExecutionRun:
-    """Start a synthetic dry-run — no adapter dispatch, no subprocess, no R2 mutation."""
+    """Start an adapter-backed dry-run — dry_run() only, no dispatch, no R2 mutation."""
     if request.mode is not ExecutionRunMode.DRY_RUN:
         raise ValueError(
             f"Cannot start dry run for request {request.request_id} "
@@ -351,26 +352,31 @@ def start_dry_run(
 
     started_at = _utc_now_iso()
     dispatchable_results = [
-        _synthetic_dispatchable_result(skill_id)
+        dry_run_skill(
+            skill_id,
+            run_date=plan.run_date,
+            ticket_id=ticket.ticket_id,
+        )
         for skill_id in request.dispatchable_skills
     ]
     preview_results = [
-        _synthetic_preview_result(skill_id)
+        to_preview_result(
+            dry_run_skill(
+                skill_id,
+                run_date=plan.run_date,
+                ticket_id=ticket.ticket_id,
+            )
+        )
         for skill_id in request.preview_only_skills
     ]
     blocked_skills = list(request.excluded_skills)
     finished_at = _utc_now_iso()
 
-    summary_parts: List[str] = []
-    if dispatchable_results:
-        summary_parts.append(
-            f"{len(dispatchable_results)} dispatchable skill(s) dry-run planned"
-        )
-    if preview_results:
-        summary_parts.append(f"{len(preview_results)} preview skill(s) dry-run planned")
-    if blocked_skills:
-        summary_parts.append(f"{len(blocked_skills)} skill(s) blocked")
-    summary = "; ".join(summary_parts) if summary_parts else "Dry-run completed (no skills)"
+    summary = _aggregate_run_summary(
+        dispatchable_results,
+        preview_results,
+        blocked_skills,
+    )
 
     run = ExecutionRun(
         run_id=str(uuid.uuid4()),
@@ -389,7 +395,7 @@ def start_dry_run(
         blocked_skills=blocked_skills,
         summary=summary,
         repository2_touched=False,
-        notes=["Phase 8B synthetic dry-run — no adapter dispatch"],
+        notes=["Phase 8E adapter dry-run — no subprocess"],
     )
     store.save(run)
     return run
