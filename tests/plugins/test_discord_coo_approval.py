@@ -19,6 +19,7 @@ from plugins.platforms.discord.coo_approval import (
     _is_terminal_approval_status,
     _make_coo_approval_button_callback,
     _should_disable_coo_approval_buttons,
+    _should_disable_dry_run_preview_button,
     _should_disable_prepare_plan_button,
     build_coo_approval_components,
     build_coo_approval_embed_payload,
@@ -225,18 +226,20 @@ class TestDiscordCooApprovalUiPayload(unittest.TestCase):
         self.assertEqual(field_map["Execution"], "Not dispatched")
         self.assertEqual(field_map["Publish"], "Not dispatched")
 
-    def test_components_include_approve_reject_refresh_prepare_plan_with_prefix(self) -> None:
+    def test_components_include_all_buttons_with_prefix(self) -> None:
         session = _sample_session_payload()
         components = build_coo_approval_components(session)
 
-        self.assertEqual(len(components), 4)
+        self.assertEqual(len(components), 5)
         labels = [button["label"] for button in components]
-        self.assertEqual(labels, ["Approve", "Reject", "Refresh", "Prepare Plan"])
+        self.assertEqual(
+            labels,
+            ["Approve", "Reject", "Refresh", "Prepare Plan", "Dry Run Preview"],
+        )
         for button in components:
             self.assertTrue(button["custom_id"].startswith("coo_approval:"))
             self.assertIn(session["session_id"], button["custom_id"])
             label_lower = button["label"].lower()
-            self.assertNotIn("run", label_lower)
             self.assertNotIn("execute", label_lower)
             self.assertNotIn("dispatch", label_lower)
 
@@ -255,6 +258,10 @@ class TestDiscordCooApprovalUiPayload(unittest.TestCase):
         self.assertEqual(
             components[3]["custom_id"],
             f"coo_approval:prepare_plan:{session['session_id']}",
+        )
+        self.assertEqual(
+            components[4]["custom_id"],
+            f"coo_approval:dry_run_preview:{session['session_id']}",
         )
 
     def test_components_builder_requires_session_id(self) -> None:
@@ -313,7 +320,7 @@ class TestDiscordCooApprovalUiObjects(unittest.TestCase):
 
         self.assertIsInstance(result, dict)
         self.assertEqual(result.get("_fallback"), "view")
-        self.assertEqual(len(result.get("components", [])), 4)
+        self.assertEqual(len(result.get("components", [])), 5)
         self.assertEqual(result["components"][0]["custom_id"], components[0]["custom_id"])
 
     def test_build_discord_view_preserves_custom_ids_with_fake_discord(self) -> None:
@@ -322,7 +329,7 @@ class TestDiscordCooApprovalUiObjects(unittest.TestCase):
         with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord):
             view = build_discord_view_from_components(components)
 
-        self.assertEqual(len(view.children), 4)
+        self.assertEqual(len(view.children), 5)
         custom_ids = [button.custom_id for button in view.children]
         self.assertEqual(custom_ids, [component["custom_id"] for component in components])
         for button in view.children:
@@ -457,6 +464,14 @@ class TestDiscordCooApprovalCustomIdParse(unittest.TestCase):
 
         self.assertEqual(parsed["prefix"], "coo_approval")
         self.assertEqual(parsed["action"], "prepare_plan")
+        self.assertEqual(parsed["session_id"], session_id)
+
+    def test_parse_dry_run_preview_custom_id(self) -> None:
+        session_id = "11111111-2222-3333-4444-555555555555"
+        parsed = parse_coo_approval_custom_id(f"coo_approval:dry_run_preview:{session_id}")
+
+        self.assertEqual(parsed["prefix"], "coo_approval")
+        self.assertEqual(parsed["action"], "dry_run_preview")
         self.assertEqual(parsed["session_id"], session_id)
 
     def test_parse_rejects_invalid_custom_id(self) -> None:
@@ -665,6 +680,44 @@ class TestDiscordCooApprovalButtonDisablePolicy(unittest.TestCase):
         self.assertTrue(by_label["Reject"]["disabled"])
         self.assertTrue(by_label["Refresh"]["disabled"])
         self.assertFalse(by_label["Prepare Plan"].get("disabled", False))
+        self.assertTrue(by_label["Dry Run Preview"].get("disabled", False))
+
+    def test_approved_with_ticket_and_plan_enables_dry_run_preview(self) -> None:
+        session = _sample_session_payload(
+            status="approved",
+            execution_ticket_id="ticket-abc",
+        )
+        plan = {
+            "dispatchable_skills": ["create_content"],
+            "preview_only_skills": ["approval_review"],
+            "excluded_skills": ["publish_content"],
+        }
+        with patch.object(
+            coo_approval,
+            "_lookup_dispatch_plan_for_session",
+            return_value=plan,
+        ):
+            components = build_coo_approval_components(session)
+            by_label = {button["label"]: button for button in components}
+            self.assertFalse(_should_disable_dry_run_preview_button(session))
+
+        self.assertFalse(by_label["Dry Run Preview"].get("disabled", False))
+
+    def test_approved_without_plan_disables_dry_run_preview(self) -> None:
+        session = _sample_session_payload(
+            status="approved",
+            execution_ticket_id="ticket-abc",
+        )
+        with patch.object(
+            coo_approval,
+            "_lookup_dispatch_plan_for_session",
+            return_value=None,
+        ):
+            components = build_coo_approval_components(session)
+            by_label = {button["label"]: button for button in components}
+
+        self.assertTrue(_should_disable_dry_run_preview_button(session))
+        self.assertTrue(by_label["Dry Run Preview"].get("disabled", False))
 
     def test_approved_without_ticket_disables_prepare_plan(self) -> None:
         components = build_coo_approval_components(
@@ -674,6 +727,7 @@ class TestDiscordCooApprovalButtonDisablePolicy(unittest.TestCase):
 
         self.assertTrue(_should_disable_prepare_plan_button(_sample_session_payload(status="approved")))
         self.assertTrue(by_label["Prepare Plan"]["disabled"])
+        self.assertTrue(by_label["Dry Run Preview"].get("disabled", False))
 
     def test_pending_prepare_plan_disabled(self) -> None:
         components = build_coo_approval_components(_sample_session_payload(status="pending"))
@@ -681,6 +735,7 @@ class TestDiscordCooApprovalButtonDisablePolicy(unittest.TestCase):
 
         self.assertTrue(_should_disable_prepare_plan_button(_sample_session_payload(status="pending")))
         self.assertTrue(by_label["Prepare Plan"]["disabled"])
+        self.assertTrue(by_label["Dry Run Preview"].get("disabled", False))
 
     def test_rejected_components_disabled(self) -> None:
         components = build_coo_approval_components(_sample_session_payload(status="rejected"))
@@ -778,7 +833,7 @@ class TestDiscordCooApprovalStoreInjection(unittest.IsolatedAsyncioTestCase):
         with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord):
             _embed, view = prepare_coo_approval_render_items(session, store=store)
 
-        self.assertEqual(len(view.children), 4)
+        self.assertEqual(len(view.children), 5)
         for button in view.children:
             self.assertTrue(callable(button.callback))
 
@@ -834,6 +889,7 @@ class TestDiscordCooApprovalInteractionViewRefresh(unittest.IsolatedAsyncioTestC
         self.assertTrue(by_label["Reject"].disabled)
         self.assertTrue(by_label["Refresh"].disabled)
         self.assertFalse(by_label["Prepare Plan"].disabled)
+        self.assertTrue(by_label["Dry Run Preview"].disabled)
 
     async def test_reject_callback_updates_view_with_disabled_buttons(self) -> None:
         store = CEOApprovalSessionStore()
@@ -1145,6 +1201,361 @@ class TestDiscordCooApprovalPreparePlanCallbacks(unittest.IsolatedAsyncioTestCas
             await callback(interaction)
 
         mock_create_plan.assert_not_called()
+        interaction.response.send_message.assert_awaited_once()
+        args, kwargs = interaction.response.send_message.await_args
+        self.assertEqual(args[0], _ERR_NOT_ALLOWED)
+        self.assertTrue(kwargs.get("ephemeral"))
+
+
+class TestDiscordCooApprovalDryRunPreview(unittest.TestCase):
+    def setUp(self) -> None:
+        from agent.coo.execution_dispatcher import get_default_dispatch_plan_store
+        from agent.coo.execution_runtime import get_default_execution_run_store
+        from agent.coo.execution_ticket import get_default_ticket_store
+
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+        get_default_execution_run_store().clear()
+
+    def test_embed_shows_run_fields_when_run_payload_provided(self) -> None:
+        run = {
+            "dispatchable_results": [
+                {"skill_id": "create_content", "dry_run": True, "status": "planned"}
+            ],
+            "preview_results": [
+                {"skill_id": "approval_review", "dry_run": True, "status": "preview_planned"}
+            ],
+            "blocked_skills": ["publish_content"],
+            "summary": "1 dispatchable skill(s) dry-run planned",
+            "finished_at": "2026-07-08T12:00:00Z",
+        }
+        session = _sample_session_payload(
+            status="approved",
+            execution_ticket_id="ticket-abc",
+        )
+        embed = build_coo_approval_embed_payload(session, run_payload=run)
+        field_map = {field["name"]: field["value"] for field in embed["fields"]}
+
+        self.assertEqual(field_map["Dry Run Status"], "Dry Run Preview — Not Executed")
+        self.assertIn("create_content", field_map["Dispatchable Results"])
+        self.assertIn("approval_review", field_map["Preview Results"])
+        self.assertIn("publish_content", field_map["Blocked Skills"])
+        self.assertIn("dry-run planned", field_map["Run Summary"])
+        self.assertEqual(field_map["Run At"], "2026-07-08T12:00:00Z")
+        self.assertEqual(field_map["Execution"], "Not dispatched")
+        self.assertEqual(field_map["Publish"], "Not dispatched")
+        self.assertIn("Dry run preview only", embed["footer"]["text"])
+
+    def test_execute_dry_run_preview_calls_gateway_runtime_bridge(self) -> None:
+        import subprocess
+
+        from agent.coo.execution_dispatcher import get_default_dispatch_plan_store
+        from agent.coo.execution_runtime import get_default_execution_run_store
+        from agent.coo.execution_ticket import get_default_ticket_store
+        from agent.coo.gateway_execution_dispatcher import create_dispatch_plan_for_gateway_session
+        from agent.coo.gateway_execution_runtime import start_dry_run_for_gateway_session
+        from agent.coo.gateway_approval import approve_gateway_session
+
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+        get_default_execution_run_store().clear()
+
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            approved = approve_gateway_session(
+                seeded["session_id"],
+                reviewer="987654321012345678",
+                requester_id="987654321012345678",
+                store=store,
+            )
+            create_dispatch_plan_for_gateway_session(
+                approved["session_id"],
+                requester_id="987654321012345678",
+            )
+
+        with patch.object(
+            subprocess,
+            "run",
+            side_effect=AssertionError("no subprocess"),
+        ), patch(
+            "agent.coo.gateway_execution_runtime.start_dry_run_for_gateway_session",
+            wraps=start_dry_run_for_gateway_session,
+        ) as mock_start_dry_run:
+            result = execute_coo_approval_button_action(
+                action="dry_run_preview",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+        mock_start_dry_run.assert_called_once_with(
+            approved["session_id"],
+            requester_id="987654321012345678",
+            reason="discord dry run preview",
+        )
+        self.assertEqual(result["status"], "approved")
+        self.assertFalse(result["execution_dispatched"])
+        self.assertFalse(result["publish_dispatched"])
+
+    def test_execute_dry_run_preview_rejects_wrong_requester(self) -> None:
+        import subprocess
+
+        from agent.coo.execution_dispatcher import get_default_dispatch_plan_store
+        from agent.coo.execution_ticket import get_default_ticket_store
+        from agent.coo.gateway_execution_dispatcher import create_dispatch_plan_for_gateway_session
+        from agent.coo.gateway_approval import approve_gateway_session
+
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            approved = approve_gateway_session(
+                seeded["session_id"],
+                reviewer="987654321012345678",
+                requester_id="987654321012345678",
+                store=store,
+            )
+            create_dispatch_plan_for_gateway_session(
+                approved["session_id"],
+                requester_id="987654321012345678",
+            )
+
+        with patch(
+            "agent.coo.gateway_execution_runtime.start_dry_run_for_gateway_session"
+        ) as mock_start_dry_run, self.assertRaises(ValueError):
+            execute_coo_approval_button_action(
+                action="dry_run_preview",
+                session_id=approved["session_id"],
+                discord_user_id="000000000000000001",
+                store=store,
+            )
+
+        mock_start_dry_run.assert_not_called()
+
+    def test_execute_approve_does_not_call_dry_run_bridge(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+
+        with patch(
+            "agent.coo.gateway_execution_runtime.start_dry_run_for_gateway_session"
+        ) as mock_start_dry_run:
+            execute_coo_approval_button_action(
+                action="approve",
+                session_id=seeded["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+        mock_start_dry_run.assert_not_called()
+
+    def test_execute_prepare_plan_does_not_call_dry_run_bridge(self) -> None:
+        import subprocess
+
+        from agent.coo.gateway_approval import approve_gateway_session
+
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            approved = approve_gateway_session(
+                seeded["session_id"],
+                reviewer="987654321012345678",
+                requester_id="987654321012345678",
+                store=store,
+            )
+
+        with patch(
+            "agent.coo.gateway_execution_runtime.start_dry_run_for_gateway_session"
+        ) as mock_start_dry_run:
+            execute_coo_approval_button_action(
+                action="prepare_plan",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+        mock_start_dry_run.assert_not_called()
+
+    def test_subprocess_not_called_for_dry_run_preview(self) -> None:
+        import subprocess
+
+        from agent.coo.execution_dispatcher import get_default_dispatch_plan_store
+        from agent.coo.execution_runtime import get_default_execution_run_store
+        from agent.coo.execution_ticket import get_default_ticket_store
+        from agent.coo.gateway_execution_dispatcher import create_dispatch_plan_for_gateway_session
+        from agent.coo.gateway_approval import approve_gateway_session
+
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+        get_default_execution_run_store().clear()
+
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            approved = approve_gateway_session(
+                seeded["session_id"],
+                reviewer="987654321012345678",
+                requester_id="987654321012345678",
+                store=store,
+            )
+            create_dispatch_plan_for_gateway_session(
+                approved["session_id"],
+                requester_id="987654321012345678",
+            )
+            execute_coo_approval_button_action(
+                action="dry_run_preview",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+    def test_gateway_execution_runtime_lazy_import_only(self) -> None:
+        from pathlib import Path
+
+        discord_path = (
+            Path(__file__).resolve().parents[2]
+            / "plugins/platforms/discord/coo_approval.py"
+        )
+        source = discord_path.read_text(encoding="utf-8")
+        for line in source.splitlines():
+            if line.startswith("from agent.coo.gateway_execution_runtime import"):
+                self.fail(
+                    "gateway_execution_runtime must be imported lazily inside functions"
+                )
+            if line.startswith("import agent.coo.gateway_execution_runtime"):
+                self.fail(
+                    "gateway_execution_runtime must be imported lazily inside functions"
+                )
+
+
+class TestDiscordCooApprovalDryRunPreviewCallbacks(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        from agent.coo.execution_dispatcher import get_default_dispatch_plan_store
+        from agent.coo.execution_runtime import get_default_execution_run_store
+        from agent.coo.execution_ticket import get_default_ticket_store
+
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+        get_default_execution_run_store().clear()
+
+    def _mock_interaction(self, user_id: int = 987654321012345678):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        return SimpleNamespace(
+            user=SimpleNamespace(id=user_id),
+            response=SimpleNamespace(
+                is_done=lambda: False,
+                send_message=AsyncMock(),
+                edit_message=AsyncMock(),
+            ),
+            message=SimpleNamespace(edit=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+
+    async def test_dry_run_preview_callback_sends_ephemeral_and_updates_embed(self) -> None:
+        import subprocess
+
+        from agent.coo.execution_dispatcher import get_default_dispatch_plan_store
+        from agent.coo.execution_runtime import get_default_execution_run_store
+        from agent.coo.execution_ticket import get_default_ticket_store
+        from agent.coo.gateway_execution_dispatcher import create_dispatch_plan_for_gateway_session
+        from agent.coo.gateway_approval import approve_gateway_session
+
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+        get_default_execution_run_store().clear()
+
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            approved = approve_gateway_session(
+                seeded["session_id"],
+                reviewer="987654321012345678",
+                requester_id="987654321012345678",
+                store=store,
+            )
+            create_dispatch_plan_for_gateway_session(
+                approved["session_id"],
+                requester_id="987654321012345678",
+            )
+
+        custom_id = f"coo_approval:dry_run_preview:{approved['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord), patch.object(
+            subprocess,
+            "run",
+            side_effect=AssertionError("no subprocess"),
+        ), patch(
+            "agent.coo.gateway_execution_runtime.start_dry_run_for_gateway_session",
+            wraps=__import__(
+                "agent.coo.gateway_execution_runtime",
+                fromlist=["start_dry_run_for_gateway_session"],
+            ).start_dry_run_for_gateway_session,
+        ) as mock_start_dry_run:
+            await callback(interaction)
+
+        mock_start_dry_run.assert_called_once()
+        interaction.response.edit_message.assert_awaited()
+        edit_kwargs = interaction.response.edit_message.await_args.kwargs
+        embed_payload = edit_kwargs["embed"]
+        if hasattr(embed_payload, "fields"):
+            field_map = {
+                (field.name if hasattr(field, "name") else field["name"]): (
+                    field.value if hasattr(field, "value") else field["value"]
+                )
+                for field in embed_payload.fields
+            }
+        else:
+            field_map = {field["name"]: field["value"] for field in embed_payload["fields"]}
+        self.assertEqual(field_map["Dry Run Status"], "Dry Run Preview — Not Executed")
+        self.assertEqual(field_map["Execution"], "Not dispatched")
+        self.assertEqual(field_map["Publish"], "Not dispatched")
+        interaction.response.send_message.assert_awaited_once()
+        args, kwargs = interaction.response.send_message.await_args
+        self.assertEqual(args[0], "Dry Run Preview — Not Executed")
+        self.assertTrue(kwargs.get("ephemeral"))
+
+    async def test_dry_run_preview_wrong_requester_gets_ephemeral_error(self) -> None:
+        import subprocess
+
+        from agent.coo.execution_dispatcher import get_default_dispatch_plan_store
+        from agent.coo.execution_ticket import get_default_ticket_store
+        from agent.coo.gateway_execution_dispatcher import create_dispatch_plan_for_gateway_session
+        from agent.coo.gateway_approval import approve_gateway_session
+
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            approved = approve_gateway_session(
+                seeded["session_id"],
+                reviewer="987654321012345678",
+                requester_id="987654321012345678",
+                store=store,
+            )
+            create_dispatch_plan_for_gateway_session(
+                approved["session_id"],
+                requester_id="987654321012345678",
+            )
+
+        custom_id = f"coo_approval:dry_run_preview:{approved['session_id']}"
+        callback = _make_coo_approval_button_callback(custom_id, store=store)
+        interaction = self._mock_interaction(user_id=1)
+
+        with patch(
+            "agent.coo.gateway_execution_runtime.start_dry_run_for_gateway_session"
+        ) as mock_start_dry_run:
+            await callback(interaction)
+
+        mock_start_dry_run.assert_not_called()
         interaction.response.send_message.assert_awaited_once()
         args, kwargs = interaction.response.send_message.await_args
         self.assertEqual(args[0], _ERR_NOT_ALLOWED)

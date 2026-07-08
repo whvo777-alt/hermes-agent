@@ -394,13 +394,21 @@ class TestGatewayExecutionRuntimeBridge(unittest.TestCase):
             hasattr(gateway_execution_dispatcher_mod, "start_dry_run_for_gateway_session")
         )
 
-    def test_discord_coo_approval_does_not_import_gateway_runtime(self) -> None:
+    def test_discord_coo_approval_only_lazy_imports_gateway_execution_runtime(self) -> None:
         discord_path = (
             Path(__file__).resolve().parents[3]
             / "plugins/platforms/discord/coo_approval.py"
         )
         source = discord_path.read_text(encoding="utf-8")
-        self.assertNotIn("gateway_execution_runtime", source)
+        for line in source.splitlines():
+            if line.startswith("from agent.coo.gateway_execution_runtime import"):
+                self.fail(
+                    "gateway_execution_runtime must be imported lazily inside functions"
+                )
+            if line.startswith("import agent.coo.gateway_execution_runtime"):
+                self.fail(
+                    "gateway_execution_runtime must be imported lazily inside functions"
+                )
 
 
 if __name__ == "__main__":

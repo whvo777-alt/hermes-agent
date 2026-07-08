@@ -3,8 +3,10 @@
 Prepares in-memory COO approval session payloads, pure-dict embed/component UI
 payloads, and optional discord.py Embed/View objects for Discord handler wiring.
 
-Button callbacks update Approval Session state (approve/reject/refresh/prepare_plan).
+Button callbacks update Approval Session state
+(approve/reject/refresh/prepare_plan/dry_run_preview).
 Prepare Plan creates a dispatch plan only — no Repository2 execution.
+Dry Run Preview starts a synthetic dry-run only — no Repository2 execution.
 
 This module is for COO CEO approval sessions only.
 This module is unrelated to ``tools/approval.py`` ``resolve_gateway_approval()``.
@@ -37,6 +39,9 @@ DiscordSnowflake = Union[str, int]
 _EMBED_TITLE = "Hermes COO Approval Required"
 _EMBED_COLOR = 0x1ABC9C  # COO approval teal — distinct from exec approval orange/green/blue/purple
 _EMBED_FOOTER_TEXT = "Plan only. No execution or publish is dispatched."
+_EMBED_FOOTER_TEXT_DRY_RUN = (
+    "Dry run preview only. No execution or publish is dispatched."
+)
 _EMBED_FOOTER_TEXT_NO_PLAN = "Approval only. No execution will be dispatched."
 # Discord hard limits (per-element) used by this builder.
 _FIELD_VALUE_MAX = 1024  # max chars per embed field value
@@ -47,8 +52,15 @@ _EMBED_TOTAL_MAX = 6000  # Discord aggregate embed character budget
 _INLINE_FIELD_VALUE_MAX = 256
 _CUSTOM_ID_MAX = 100
 _COO_APPROVAL_CUSTOM_ID_PREFIX = "coo_approval"
-_ALLOWED_COO_APPROVAL_ACTIONS = frozenset({"approve", "reject", "refresh", "prepare_plan"})
+_ALLOWED_COO_APPROVAL_ACTIONS = frozenset({
+    "approve",
+    "reject",
+    "refresh",
+    "prepare_plan",
+    "dry_run_preview",
+})
 _PREPARE_PLAN_EPHEMERAL = "Plan Ready — Not Executed"
+_DRY_RUN_PREVIEW_EPHEMERAL = "Dry Run Preview — Not Executed"
 _ERR_SESSION_NOT_FOUND = "Approval session not found."
 _ERR_NOT_ALLOWED = "You are not allowed to approve this session."
 _ERR_SESSION_EXPIRED = "Approval session expired."
@@ -158,6 +170,37 @@ def _lookup_dispatch_plan_for_session(
         return None
 
 
+def _lookup_latest_dry_run_for_session(
+    session_payload: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Best-effort latest dry-run lookup for embed rendering."""
+    ticket_id = str(session_payload.get("execution_ticket_id") or "").strip()
+    if not ticket_id:
+        return None
+    try:
+        from agent.coo.gateway_execution_runtime import get_latest_dry_run_for_gateway_ticket
+
+        return get_latest_dry_run_for_gateway_ticket(ticket_id)
+    except Exception as exc:
+        logger.warning(
+            "COO approval dry-run lookup failed for ticket %s: %s",
+            ticket_id[:64],
+            exc,
+        )
+        return None
+
+
+def _format_dry_run_skill_results(results: List[Dict[str, Any]]) -> str:
+    if not results:
+        return "(none)"
+    parts: List[str] = []
+    for result in results:
+        skill_id = str(result.get("skill_id") or "unknown")
+        status = str(result.get("status") or "unknown")
+        parts.append(f"`{skill_id}`: {status} (dry-run)")
+    return _truncate(", ".join(parts), _FIELD_VALUE_MAX)
+
+
 def _calculate_embed_size(embed_payload: Dict[str, Any]) -> int:
     """Sum characters across embed title, description, field names/values, and footer."""
     total = len(str(embed_payload.get("title") or ""))
@@ -234,10 +277,14 @@ def build_coo_approval_session_payload(
 def build_coo_approval_embed_payload(
     session_payload: Dict[str, Any],
     plan_payload: Optional[Dict[str, Any]] = None,
+    run_payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a pure-dict Discord embed payload for a COO approval session."""
     session_id = _require_session_id(session_payload)
     plan = plan_payload if plan_payload is not None else _lookup_dispatch_plan_for_session(
+        session_payload
+    )
+    run = run_payload if run_payload is not None else _lookup_latest_dry_run_for_session(
         session_payload
     )
     task_kind = _truncate(session_payload.get("task_kind", ""), 128)
@@ -360,8 +407,59 @@ def build_coo_approval_embed_payload(
                 },
             ]
         )
+    if run:
+        fields.extend(
+            [
+                {
+                    "name": "Dry Run Status",
+                    "value": "Dry Run Preview — Not Executed",
+                    "inline": False,
+                },
+                {
+                    "name": "Dispatchable Results",
+                    "value": _format_dry_run_skill_results(
+                        list(run.get("dispatchable_results") or [])
+                    ),
+                    "inline": False,
+                },
+                {
+                    "name": "Preview Results",
+                    "value": _format_dry_run_skill_results(
+                        list(run.get("preview_results") or [])
+                    ),
+                    "inline": False,
+                },
+                {
+                    "name": "Blocked Skills",
+                    "value": _truncate(
+                        _format_skill_list(list(run.get("blocked_skills") or [])),
+                        _FIELD_VALUE_MAX,
+                    ),
+                    "inline": False,
+                },
+                {
+                    "name": "Run Summary",
+                    "value": _truncate(run.get("summary", ""), _FIELD_VALUE_MAX) or "(none)",
+                    "inline": False,
+                },
+                {
+                    "name": "Run At",
+                    "value": _truncate(
+                        run.get("finished_at") or run.get("started_at") or "",
+                        _INLINE_FIELD_VALUE_MAX,
+                    )
+                    or "unknown",
+                    "inline": True,
+                },
+            ]
+        )
 
-    footer_text = _EMBED_FOOTER_TEXT if plan else _EMBED_FOOTER_TEXT_NO_PLAN
+    if run:
+        footer_text = _EMBED_FOOTER_TEXT_DRY_RUN
+    elif plan:
+        footer_text = _EMBED_FOOTER_TEXT
+    else:
+        footer_text = _EMBED_FOOTER_TEXT_NO_PLAN
     embed_payload = {
         "title": _EMBED_TITLE,
         "description": description,
@@ -430,6 +528,17 @@ def _should_disable_prepare_plan_button(session_payload: Dict[str, Any]) -> bool
     return not ticket_id
 
 
+def _should_disable_dry_run_preview_button(session_payload: Dict[str, Any]) -> bool:
+    status = str(session_payload.get("status") or "").strip().lower()
+    ticket_id = str(session_payload.get("execution_ticket_id") or "").strip()
+    if status != "approved":
+        return True
+    if not ticket_id:
+        return True
+    plan = _lookup_dispatch_plan_for_session(session_payload)
+    return plan is None
+
+
 def _terminal_status_message(status: str) -> str:
     normalized = str(status or "closed").strip().lower()
     return f"Approval session is already {normalized}."
@@ -483,6 +592,33 @@ def execute_coo_approval_button_action(
             session_id,
             requester_id=user_id,
             reason="discord prepare plan",
+        )
+        refreshed = get_discord_approval_session(session_id, store=store)
+        if refreshed is None:
+            raise KeyError(session_id)
+        return refreshed
+
+    if normalized_action == "dry_run_preview":
+        existing = get_discord_approval_session(session_id, store=store)
+        if existing is None:
+            raise KeyError(session_id)
+        owner = str(existing.get("requester_id") or "")
+        if str(user_id) != owner:
+            raise ValueError(
+                f"Requester {user_id!r} is not authorized for session {session_id} "
+                f"(owner: {owner!r})"
+            )
+        if _should_disable_dry_run_preview_button(existing):
+            raise ValueError(
+                f"Cannot dry run preview for session {session_id} "
+                f"in status {existing.get('status')}"
+            )
+        from agent.coo.gateway_execution_runtime import start_dry_run_for_gateway_session
+
+        start_dry_run_for_gateway_session(
+            session_id,
+            requester_id=user_id,
+            reason="discord dry run preview",
         )
         refreshed = get_discord_approval_session(session_id, store=store)
         if refreshed is None:
@@ -569,6 +705,7 @@ def build_coo_approval_components(session_payload: Dict[str, Any]) -> List[Dict[
     session_id = _require_session_id(session_payload)
     terminal_disabled = _should_disable_coo_approval_buttons(session_payload)
     prepare_plan_disabled = _should_disable_prepare_plan_button(session_payload)
+    dry_run_preview_disabled = _should_disable_dry_run_preview_button(session_payload)
     return [
         _coo_approval_button_component(
             label="Approve",
@@ -593,6 +730,12 @@ def build_coo_approval_components(session_payload: Dict[str, Any]) -> List[Dict[
             style="primary",
             custom_id=_build_coo_approval_custom_id("prepare_plan", session_id),
             disabled=prepare_plan_disabled,
+        ),
+        _coo_approval_button_component(
+            label="Dry Run Preview",
+            style="secondary",
+            custom_id=_build_coo_approval_custom_id("dry_run_preview", session_id),
+            disabled=dry_run_preview_disabled,
         ),
     ]
 
@@ -647,6 +790,8 @@ def _make_coo_approval_button_callback(
             )
             if parsed["action"] == "prepare_plan":
                 await _respond_coo_approval_ephemeral(interaction, _PREPARE_PLAN_EPHEMERAL)
+            elif parsed["action"] == "dry_run_preview":
+                await _respond_coo_approval_ephemeral(interaction, _DRY_RUN_PREVIEW_EPHEMERAL)
             elif not updated:
                 status = session_payload.get("status", "unknown")
                 await _respond_coo_approval_ephemeral(

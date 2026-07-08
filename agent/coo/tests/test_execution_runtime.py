@@ -402,7 +402,8 @@ class TestExecutionRuntimeGatewayDiscordUntouched(unittest.TestCase):
             / "plugins/platforms/discord/coo_approval.py"
         )
         source = discord_path.read_text(encoding="utf-8")
-        self.assertNotIn("execution_runtime", source)
+        self.assertNotIn("from agent.coo.execution_runtime import", source)
+        self.assertNotIn("import agent.coo.execution_runtime", source)
 
 
 if __name__ == "__main__":
