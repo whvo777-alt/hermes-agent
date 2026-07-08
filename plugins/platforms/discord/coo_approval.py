@@ -4,9 +4,10 @@ Prepares in-memory COO approval session payloads, pure-dict embed/component UI
 payloads, and optional discord.py Embed/View objects for Discord handler wiring.
 
 Button callbacks update Approval Session state
-(approve/reject/refresh/prepare_plan/dry_run_preview).
+(approve/reject/refresh/prepare_plan/dry_run_preview/execution_review).
 Prepare Plan creates a dispatch plan only — no Repository2 execution.
 Dry Run Preview starts a synthetic dry-run only — no Repository2 execution.
+Execution Review creates ExecuteRequest + ExecuteGate only — no execution.
 
 This module is for COO CEO approval sessions only.
 This module is unrelated to ``tools/approval.py`` ``resolve_gateway_approval()``.
@@ -42,6 +43,9 @@ _EMBED_FOOTER_TEXT = "Plan only. No execution or publish is dispatched."
 _EMBED_FOOTER_TEXT_DRY_RUN = (
     "Dry run preview only. No execution or publish is dispatched."
 )
+_EMBED_FOOTER_TEXT_EXECUTION_REVIEW = (
+    "Execution review only. No execution or publish is dispatched."
+)
 _EMBED_FOOTER_TEXT_NO_PLAN = "Approval only. No execution will be dispatched."
 # Discord hard limits (per-element) used by this builder.
 _FIELD_VALUE_MAX = 1024  # max chars per embed field value
@@ -58,9 +62,15 @@ _ALLOWED_COO_APPROVAL_ACTIONS = frozenset({
     "refresh",
     "prepare_plan",
     "dry_run_preview",
+    "execution_review",
+    "approve_execution_review",
+    "reject_execution_review",
 })
 _PREPARE_PLAN_EPHEMERAL = "Plan Ready — Not Executed"
 _DRY_RUN_PREVIEW_EPHEMERAL = "Dry Run Preview — Not Executed"
+_EXECUTION_REVIEW_EPHEMERAL = "Execution Review Ready — Not Executed"
+_APPROVE_EXECUTION_REVIEW_EPHEMERAL = "Execution Review Approved — Not Executed"
+_REJECT_EXECUTION_REVIEW_EPHEMERAL = "Execution Review Rejected — Not Executed"
 _ERR_SESSION_NOT_FOUND = "Approval session not found."
 _ERR_NOT_ALLOWED = "You are not allowed to approve this session."
 _ERR_SESSION_EXPIRED = "Approval session expired."
@@ -190,6 +200,62 @@ def _lookup_latest_dry_run_for_session(
         return None
 
 
+def _lookup_latest_execution_review_for_session(
+    session_payload: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Best-effort latest execution review lookup for embed rendering."""
+    ticket_id = str(session_payload.get("execution_ticket_id") or "").strip()
+    if not ticket_id:
+        return None
+    try:
+        from agent.coo.gateway_execution_execute import (
+            get_latest_execute_request_for_gateway_ticket,
+        )
+
+        return get_latest_execute_request_for_gateway_ticket(ticket_id)
+    except Exception as exc:
+        logger.warning(
+            "COO approval execution review lookup failed for ticket %s: %s",
+            ticket_id[:64],
+            exc,
+        )
+        return None
+
+
+def _has_completed_dry_run_with_planned_skills(
+    run_payload: Optional[Dict[str, Any]],
+) -> bool:
+    if run_payload is None:
+        return False
+    if str(run_payload.get("status") or "").strip().lower() != "completed":
+        return False
+    if not bool(run_payload.get("dry_run", True)):
+        return False
+    dispatchable_results = list(run_payload.get("dispatchable_results") or [])
+    return any(
+        str(result.get("status") or "").strip().lower() == "planned"
+        for result in dispatchable_results
+    )
+
+
+def _execution_review_status_label(
+    review_payload: Optional[Dict[str, Any]],
+) -> str:
+    if review_payload is None:
+        return "Not prepared"
+    gate = review_payload.get("gate")
+    if not isinstance(gate, dict):
+        return "Not prepared"
+    gate_status = str(gate.get("status") or "").strip().lower()
+    if gate_status == "pending":
+        return "Ready — Not Executed"
+    if gate_status == "approved":
+        return "Approved — Not Executed"
+    if gate_status == "rejected":
+        return "Rejected — Not Executed"
+    return "Not prepared"
+
+
 def _format_dry_run_skill_results(results: List[Dict[str, Any]]) -> str:
     if not results:
         return "(none)"
@@ -278,6 +344,7 @@ def build_coo_approval_embed_payload(
     session_payload: Dict[str, Any],
     plan_payload: Optional[Dict[str, Any]] = None,
     run_payload: Optional[Dict[str, Any]] = None,
+    review_payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a pure-dict Discord embed payload for a COO approval session."""
     session_id = _require_session_id(session_payload)
@@ -286,6 +353,11 @@ def build_coo_approval_embed_payload(
     )
     run = run_payload if run_payload is not None else _lookup_latest_dry_run_for_session(
         session_payload
+    )
+    review = (
+        review_payload
+        if review_payload is not None
+        else _lookup_latest_execution_review_for_session(session_payload)
     )
     task_kind = _truncate(session_payload.get("task_kind", ""), 128)
     run_date = _truncate(session_payload.get("run_date", ""), 64)
@@ -454,7 +526,58 @@ def build_coo_approval_embed_payload(
             ]
         )
 
-    if run:
+    if review:
+        execute_request = dict(review.get("execute_request") or {})
+        gate = review.get("gate") if isinstance(review.get("gate"), dict) else None
+        fields.extend(
+            [
+                {
+                    "name": "Execution Review Status",
+                    "value": _execution_review_status_label(review),
+                    "inline": False,
+                },
+                {
+                    "name": "Target Skills",
+                    "value": _truncate(
+                        _format_skill_list(list(execute_request.get("target_skills") or [])),
+                        _FIELD_VALUE_MAX,
+                    ),
+                    "inline": False,
+                },
+                {
+                    "name": "Review Requested At",
+                    "value": _truncate(
+                        execute_request.get("requested_at", ""),
+                        _INLINE_FIELD_VALUE_MAX,
+                    )
+                    or "unknown",
+                    "inline": True,
+                },
+            ]
+        )
+        if gate is not None:
+            decided_by = str(gate.get("decided_by") or "").strip()
+            if decided_by:
+                fields.append(
+                    {
+                        "name": "Review Decided By",
+                        "value": _truncate(decided_by, _INLINE_FIELD_VALUE_MAX),
+                        "inline": True,
+                    }
+                )
+            gate_reason = str(gate.get("reason") or "").strip()
+            if gate_reason:
+                fields.append(
+                    {
+                        "name": "Review Reason",
+                        "value": _truncate(gate_reason, _FIELD_VALUE_MAX),
+                        "inline": False,
+                    }
+                )
+
+    if review:
+        footer_text = _EMBED_FOOTER_TEXT_EXECUTION_REVIEW
+    elif run:
         footer_text = _EMBED_FOOTER_TEXT_DRY_RUN
     elif plan:
         footer_text = _EMBED_FOOTER_TEXT
@@ -537,6 +660,52 @@ def _should_disable_dry_run_preview_button(session_payload: Dict[str, Any]) -> b
         return True
     plan = _lookup_dispatch_plan_for_session(session_payload)
     return plan is None
+
+
+def _should_disable_execution_review_button(session_payload: Dict[str, Any]) -> bool:
+    status = str(session_payload.get("status") or "").strip().lower()
+    ticket_id = str(session_payload.get("execution_ticket_id") or "").strip()
+    if status != "approved":
+        return True
+    if not ticket_id:
+        return True
+    plan = _lookup_dispatch_plan_for_session(session_payload)
+    if plan is None:
+        return True
+    run = _lookup_latest_dry_run_for_session(session_payload)
+    return not _has_completed_dry_run_with_planned_skills(run)
+
+
+def _should_show_execution_review_decision_buttons(
+    session_payload: Dict[str, Any],
+) -> bool:
+    review = _lookup_latest_execution_review_for_session(session_payload)
+    if review is None:
+        return False
+    gate = review.get("gate")
+    if not isinstance(gate, dict):
+        return False
+    return str(gate.get("status") or "").strip().lower() == "pending"
+
+
+def _assert_session_owner(
+    session_payload: Dict[str, Any],
+    user_id: str,
+    session_id: str,
+) -> None:
+    owner = str(session_payload.get("requester_id") or "")
+    if str(user_id) != owner:
+        raise ValueError(
+            f"Requester {user_id!r} is not authorized for session {session_id} "
+            f"(owner: {owner!r})"
+        )
+
+
+def _ticket_id_from_session(session_payload: Dict[str, Any]) -> str:
+    ticket_id = str(session_payload.get("execution_ticket_id") or "").strip()
+    if not ticket_id:
+        raise ValueError("Execution ticket not found for session")
+    return ticket_id
 
 
 def _terminal_status_message(status: str) -> str:
@@ -625,6 +794,78 @@ def execute_coo_approval_button_action(
             raise KeyError(session_id)
         return refreshed
 
+    if normalized_action == "execution_review":
+        existing = get_discord_approval_session(session_id, store=store)
+        if existing is None:
+            raise KeyError(session_id)
+        _assert_session_owner(existing, user_id, session_id)
+        if _should_disable_execution_review_button(existing):
+            raise ValueError(
+                f"Cannot execution review for session {session_id} "
+                f"in status {existing.get('status')}"
+            )
+        from agent.coo.gateway_execution_execute import (
+            create_execute_request_for_gateway_session,
+        )
+
+        create_execute_request_for_gateway_session(
+            session_id,
+            requester_id=user_id,
+            reason="discord execution review",
+        )
+        refreshed = get_discord_approval_session(session_id, store=store)
+        if refreshed is None:
+            raise KeyError(session_id)
+        return refreshed
+
+    if normalized_action in ("approve_execution_review", "reject_execution_review"):
+        existing = get_discord_approval_session(session_id, store=store)
+        if existing is None:
+            raise KeyError(session_id)
+        _assert_session_owner(existing, user_id, session_id)
+        ticket_id = _ticket_id_from_session(existing)
+        from agent.coo.gateway_execution_execute import (
+            approve_execute_gate_for_gateway_request,
+            get_latest_execute_request_for_gateway_ticket,
+            reject_execute_gate_for_gateway_request,
+        )
+
+        review = get_latest_execute_request_for_gateway_ticket(ticket_id)
+        if review is None:
+            raise KeyError(f"Execute request not found for ticket: {ticket_id}")
+        gate = review.get("gate")
+        if not isinstance(gate, dict):
+            raise ValueError(
+                f"Execute gate not found for request: "
+                f"{review.get('execute_request', {}).get('execute_request_id')}"
+            )
+        if str(gate.get("status") or "").strip().lower() != "pending":
+            raise ValueError(
+                f"Cannot {normalized_action.replace('_', ' ')} for gate in status "
+                f"{gate.get('status')}"
+            )
+        execute_request_id = str(
+            (review.get("execute_request") or {}).get("execute_request_id") or ""
+        ).strip()
+        if not execute_request_id:
+            raise KeyError(f"Execute request not found for ticket: {ticket_id}")
+
+        if normalized_action == "approve_execution_review":
+            approve_execute_gate_for_gateway_request(
+                execute_request_id,
+                reviewer_id=user_id,
+            )
+        else:
+            reject_execute_gate_for_gateway_request(
+                execute_request_id,
+                reviewer_id=user_id,
+                reason="discord reject execution review",
+            )
+        refreshed = get_discord_approval_session(session_id, store=store)
+        if refreshed is None:
+            raise KeyError(session_id)
+        return refreshed
+
     existing = get_discord_approval_session(session_id, store=store)
     if existing is None:
         raise KeyError(session_id)
@@ -706,7 +947,11 @@ def build_coo_approval_components(session_payload: Dict[str, Any]) -> List[Dict[
     terminal_disabled = _should_disable_coo_approval_buttons(session_payload)
     prepare_plan_disabled = _should_disable_prepare_plan_button(session_payload)
     dry_run_preview_disabled = _should_disable_dry_run_preview_button(session_payload)
-    return [
+    execution_review_disabled = _should_disable_execution_review_button(session_payload)
+    show_execution_review_decisions = _should_show_execution_review_decision_buttons(
+        session_payload
+    )
+    components = [
         _coo_approval_button_component(
             label="Approve",
             style="success",
@@ -737,7 +982,35 @@ def build_coo_approval_components(session_payload: Dict[str, Any]) -> List[Dict[
             custom_id=_build_coo_approval_custom_id("dry_run_preview", session_id),
             disabled=dry_run_preview_disabled,
         ),
+        _coo_approval_button_component(
+            label="Execution Review",
+            style="primary",
+            custom_id=_build_coo_approval_custom_id("execution_review", session_id),
+            disabled=execution_review_disabled,
+        ),
     ]
+    if show_execution_review_decisions:
+        components.extend(
+            [
+                _coo_approval_button_component(
+                    label="Approve Execution Review",
+                    style="success",
+                    custom_id=_build_coo_approval_custom_id(
+                        "approve_execution_review",
+                        session_id,
+                    ),
+                ),
+                _coo_approval_button_component(
+                    label="Reject Execution Review",
+                    style="danger",
+                    custom_id=_build_coo_approval_custom_id(
+                        "reject_execution_review",
+                        session_id,
+                    ),
+                ),
+            ]
+        )
+    return components
 
 
 def _map_button_style(discord_mod: Any, style_name: str) -> Any:
@@ -792,6 +1065,18 @@ def _make_coo_approval_button_callback(
                 await _respond_coo_approval_ephemeral(interaction, _PREPARE_PLAN_EPHEMERAL)
             elif parsed["action"] == "dry_run_preview":
                 await _respond_coo_approval_ephemeral(interaction, _DRY_RUN_PREVIEW_EPHEMERAL)
+            elif parsed["action"] == "execution_review":
+                await _respond_coo_approval_ephemeral(interaction, _EXECUTION_REVIEW_EPHEMERAL)
+            elif parsed["action"] == "approve_execution_review":
+                await _respond_coo_approval_ephemeral(
+                    interaction,
+                    _APPROVE_EXECUTION_REVIEW_EPHEMERAL,
+                )
+            elif parsed["action"] == "reject_execution_review":
+                await _respond_coo_approval_ephemeral(
+                    interaction,
+                    _REJECT_EXECUTION_REVIEW_EPHEMERAL,
+                )
             elif not updated:
                 status = session_payload.get("status", "unknown")
                 await _respond_coo_approval_ephemeral(

@@ -769,13 +769,21 @@ class TestGatewayExecuteBridge(unittest.TestCase):
         self.assertFalse(hasattr(gateway_execute_mod, "run_real"))
         self.assertFalse(hasattr(gateway_execute_mod, "dispatch"))
 
-    def test_discord_does_not_import_gateway_execution_execute(self) -> None:
+    def test_discord_lazy_imports_gateway_execution_execute_only(self) -> None:
         discord_path = (
             Path(__file__).resolve().parents[3]
             / "plugins/platforms/discord/coo_approval.py"
         )
         source = discord_path.read_text(encoding="utf-8")
-        self.assertNotIn("gateway_execution_execute", source)
+        for line in source.splitlines():
+            if line.startswith("from agent.coo.gateway_execution_execute import"):
+                self.fail(
+                    "gateway_execution_execute must be imported lazily inside functions"
+                )
+            if line.startswith("import agent.coo.gateway_execution_execute"):
+                self.fail(
+                    "gateway_execution_execute must be imported lazily inside functions"
+                )
 
 
 if __name__ == "__main__":
