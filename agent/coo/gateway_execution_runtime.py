@@ -14,8 +14,10 @@ from agent.coo.execution_dispatcher import (
     get_default_dispatch_plan_store,
 )
 from agent.coo.execution_runtime import (
+    ExecutionRequestStore,
     ExecutionRunStore,
     create_execution_request_from_plan,
+    get_default_execution_request_store,
     get_default_execution_run_store,
     start_dry_run,
 )
@@ -38,11 +40,13 @@ def start_dry_run_for_gateway_ticket(
     ticket_store: Optional[ExecutionTicketStore] = None,
     plan_store: Optional[ExecutionDispatchPlanStore] = None,
     run_store: Optional[ExecutionRunStore] = None,
+    request_store: Optional[ExecutionRequestStore] = None,
 ) -> Dict[str, Any]:
     """Start an explicit synthetic dry-run for a ticket with an existing plan."""
     tickets = ticket_store or get_default_ticket_store()
     plans = plan_store or get_default_dispatch_plan_store()
     runs = run_store or get_default_execution_run_store()
+    requests = request_store or get_default_execution_request_store()
 
     ticket = tickets.get(ticket_id)
     if ticket is None:
@@ -60,7 +64,13 @@ def start_dry_run_for_gateway_ticket(
         requested_by=requester_id,
         reason=reason,
     )
-    run = start_dry_run(request, ticket, plan, run_store=runs)
+    run = start_dry_run(
+        request,
+        ticket,
+        plan,
+        run_store=runs,
+        request_store=requests,
+    )
     return {
         "request": request.to_dict(),
         "run": run.to_dict(),
@@ -75,6 +85,7 @@ def start_dry_run_for_gateway_session(
     ticket_store: Optional[ExecutionTicketStore] = None,
     plan_store: Optional[ExecutionDispatchPlanStore] = None,
     run_store: Optional[ExecutionRunStore] = None,
+    request_store: Optional[ExecutionRequestStore] = None,
 ) -> Dict[str, Any]:
     """Start an explicit synthetic dry-run via approval session lookup."""
     tickets = ticket_store or get_default_ticket_store()
@@ -89,6 +100,7 @@ def start_dry_run_for_gateway_session(
         ticket_store=tickets,
         plan_store=plan_store,
         run_store=run_store,
+        request_store=request_store,
     )
 
 

@@ -23,6 +23,7 @@ from agent.coo.runtime_skill_adapter import dry_run_skill, to_preview_result
 from agent.coo.skills_catalog import RISK_CATEGORY_PUBLISH, get_skill
 
 _DEFAULT_RUN_STORE: Optional["ExecutionRunStore"] = None
+_DEFAULT_REQUEST_STORE: Optional["ExecutionRequestStore"] = None
 
 
 class ExecutionRunMode(str, Enum):
@@ -125,6 +126,25 @@ class ExecutionRun:
         }
 
 
+class ExecutionRequestStore:
+    """Process-local in-memory dry-run request store — no file persistence."""
+
+    def __init__(self) -> None:
+        self._requests: Dict[str, ExecutionRequest] = {}
+
+    def save(self, request: ExecutionRequest) -> None:
+        self._requests[request.request_id] = request
+
+    def get(self, request_id: str) -> Optional[ExecutionRequest]:
+        return self._requests.get(request_id)
+
+    def list_requests(self) -> List[ExecutionRequest]:
+        return list(self._requests.values())
+
+    def clear(self) -> None:
+        self._requests.clear()
+
+
 class ExecutionRunStore:
     """Process-local in-memory execution run store — no file persistence."""
 
@@ -165,6 +185,14 @@ def get_default_execution_run_store() -> ExecutionRunStore:
     if _DEFAULT_RUN_STORE is None:
         _DEFAULT_RUN_STORE = ExecutionRunStore()
     return _DEFAULT_RUN_STORE
+
+
+def get_default_execution_request_store() -> ExecutionRequestStore:
+    """Return the module-level in-memory dry-run request store."""
+    global _DEFAULT_REQUEST_STORE
+    if _DEFAULT_REQUEST_STORE is None:
+        _DEFAULT_REQUEST_STORE = ExecutionRequestStore()
+    return _DEFAULT_REQUEST_STORE
 
 
 def _assert_requester_matches(ticket: ExecutionTicket, requested_by: str) -> None:
@@ -315,6 +343,7 @@ def start_dry_run(
     ticket: ExecutionTicket,
     plan: ExecutionDispatchPlan,
     run_store: Optional[ExecutionRunStore] = None,
+    request_store: Optional[ExecutionRequestStore] = None,
 ) -> ExecutionRun:
     """Start an adapter-backed dry-run — dry_run() only, no dispatch, no R2 mutation."""
     if request.mode is not ExecutionRunMode.DRY_RUN:
@@ -344,6 +373,9 @@ def start_dry_run(
         list(request.dispatchable_skills),
         list(request.preview_only_skills),
     )
+
+    requests = request_store or get_default_execution_request_store()
+    requests.save(request)
 
     store = run_store or get_default_execution_run_store()
     existing = store.get_by_request(request.request_id)
