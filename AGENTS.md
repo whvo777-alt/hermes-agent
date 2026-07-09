@@ -1387,3 +1387,10 @@ Rules going forward:
   isolated test Repository2 root** (e.g. `CONTENT_PIPELINE_ROOT` pointed at a
   throwaway directory), never the real checkout at
   `/opt/data/multi-content-pipeline`.
+- **Path validation must happen before `mkdir` / `write` / `touch` / `open`.**
+  Rejecting an out-of-bounds path must not create parent directories as a
+  side effect. Validate resolved paths against `get_hermes_home()` (or the
+  relevant allowlist root) first; only then mutate the filesystem.
+- **Tests must assert rejected paths do not create directories.** Use throwaway
+  paths under `/tmp` (or a temp `HERMES_HOME`) — never the real Repository2
+  checkout at `/opt/data/multi-content-pipeline`.
