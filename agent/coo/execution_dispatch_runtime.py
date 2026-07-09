@@ -694,3 +694,95 @@ def consume_dispatch_unlock_token(
     token.consumed = True
     store.save(token)
     return token
+
+
+def start_dispatch_run(
+    dispatch_request: DispatchExecutionRequest,
+    *,
+    run_store: Optional[DispatchExecutionRunStore] = None,
+) -> DispatchExecutionRun:
+    """Create a QUEUED dispatch execution run — one run per dispatch request."""
+    store = run_store or get_default_dispatch_execution_run_store()
+    existing = store.get_by_request(dispatch_request.dispatch_request_id)
+    if existing is not None:
+        if existing.status is DispatchExecutionRunStatus.QUEUED:
+            return existing
+        raise ValueError(
+            f"Dispatch execution run already exists for request "
+            f"{dispatch_request.dispatch_request_id} in status {existing.status.value}"
+        )
+
+    run = DispatchExecutionRun(
+        dispatch_run_id=str(uuid.uuid4()),
+        dispatch_request_id=dispatch_request.dispatch_request_id,
+        ticket_id=dispatch_request.ticket_id,
+        plan_id=dispatch_request.plan_id,
+        status=DispatchExecutionRunStatus.QUEUED,
+        dry_run=False,
+    )
+    store.save(run)
+    return run
+
+
+def mark_dispatch_run_running(
+    run: DispatchExecutionRun,
+    *,
+    run_store: Optional[DispatchExecutionRunStore] = None,
+) -> DispatchExecutionRun:
+    """Transition a dispatch run to RUNNING."""
+    if run.status is not DispatchExecutionRunStatus.QUEUED:
+        raise ValueError(
+            f"Cannot mark dispatch run {run.dispatch_run_id} running "
+            f"from status {run.status.value}"
+        )
+    run.status = DispatchExecutionRunStatus.RUNNING
+    run.started_at = _utc_now_iso()
+    store = run_store or get_default_dispatch_execution_run_store()
+    store.save(run)
+    return run
+
+
+def mark_dispatch_run_completed(
+    run: DispatchExecutionRun,
+    skill_results: List[Dict[str, Any]],
+    *,
+    summary: str = "",
+    run_store: Optional[DispatchExecutionRunStore] = None,
+) -> DispatchExecutionRun:
+    """Transition a dispatch run to COMPLETED — does not mutate ticket/plan."""
+    if run.status is not DispatchExecutionRunStatus.RUNNING:
+        raise ValueError(
+            f"Cannot complete dispatch run {run.dispatch_run_id} "
+            f"from status {run.status.value}"
+        )
+    run.status = DispatchExecutionRunStatus.COMPLETED
+    run.finished_at = _utc_now_iso()
+    run.skill_results = [dict(item) for item in skill_results]
+    run.repository2_touched = True
+    run.summary = summary
+    store = run_store or get_default_dispatch_execution_run_store()
+    store.save(run)
+    return run
+
+
+def mark_dispatch_run_failed(
+    run: DispatchExecutionRun,
+    *,
+    summary: str = "",
+    skill_results: Optional[List[Dict[str, Any]]] = None,
+    run_store: Optional[DispatchExecutionRunStore] = None,
+) -> DispatchExecutionRun:
+    """Transition a dispatch run to FAILED — does not mutate ticket/plan."""
+    if run.status is not DispatchExecutionRunStatus.RUNNING:
+        raise ValueError(
+            f"Cannot fail dispatch run {run.dispatch_run_id} "
+            f"from status {run.status.value}"
+        )
+    run.status = DispatchExecutionRunStatus.FAILED
+    run.finished_at = _utc_now_iso()
+    if skill_results is not None:
+        run.skill_results = [dict(item) for item in skill_results]
+    run.summary = summary
+    store = run_store or get_default_dispatch_execution_run_store()
+    store.save(run)
+    return run

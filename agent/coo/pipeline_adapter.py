@@ -13,10 +13,11 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agent.coo.execution_contract import (
     ExecutionBoundaryPolicy,
+    SkillExecutionMode,
     SkillExecutionRequest,
     SkillExecutionResult,
     SkillExecutionStatus,
@@ -25,6 +26,9 @@ from agent.coo.execution_contract import (
 from agent.coo.skills_catalog import get_skill
 
 logger = logging.getLogger(__name__)
+
+PipelineDispatchExecutor = Callable[[str, str, str], Tuple[int, str, str]]
+_CREATE_CONTENT_SKILL_ID = "create_content"
 
 
 class PipelineAdapterStatus(str, Enum):
@@ -84,8 +88,14 @@ class PipelineAdapter:
     only this adapter resolves catalog entrypoint hints against ``pipeline_root``.
     """
 
-    def __init__(self, config: Optional[PipelineAdapterConfig] = None) -> None:
+    def __init__(
+        self,
+        config: Optional[PipelineAdapterConfig] = None,
+        *,
+        executor: Optional[PipelineDispatchExecutor] = None,
+    ) -> None:
         self.config = config or PipelineAdapterConfig()
+        self._executor = executor
 
     def _assert_repository_read_only(self) -> None:
         """Fail closed when the Repository 2 read-only guard is disabled.
@@ -245,18 +255,110 @@ class PipelineAdapter:
         self,
         request: SkillExecutionRequest,
         boundary: Optional[ExecutionBoundaryPolicy] = None,
+        *,
+        unlock_token_id: Optional[str] = None,
     ) -> SkillExecutionResult:
-        """Phase 4A: always forbidden — raises RuntimeError after contract evaluation."""
+        """Execute a token-gated skill dispatch via an injected executor."""
         contract = evaluate_skill_execution(request, boundary)
         if contract.status is SkillExecutionStatus.BLOCKED:
             return contract
 
         self._assert_repository_read_only()
 
-        # TODO(Phase 4B+): subprocess dispatch MUST call _assert_repository_read_only()
-        # before any write-capable adapter operation.
         if not self.config.allow_execute:
             raise RuntimeError(
                 "Execute dispatch is not available (allow_execute=false; Phase 4A is DRY_RUN only)."
             )
-        raise RuntimeError("Actual pipeline dispatch is not available in Phase 4A.")
+
+        if not unlock_token_id:
+            raise RuntimeError(
+                "Dispatch unlock token is required for execute dispatch."
+            )
+
+        from agent.coo.dispatch_unlock_context import get_active_dispatch_unlock_context
+
+        context = get_active_dispatch_unlock_context()
+        if context is None:
+            raise RuntimeError(
+                "Active dispatch unlock context is required for execute dispatch."
+            )
+        if context.token_id != unlock_token_id:
+            raise RuntimeError(
+                "Active dispatch unlock context does not match unlock_token_id."
+            )
+
+        if request.mode is not SkillExecutionMode.EXECUTE:
+            raise RuntimeError(
+                f"Dispatch requires mode {SkillExecutionMode.EXECUTE.value}, "
+                f"got {request.mode.value}."
+            )
+
+        if request.skill_id != _CREATE_CONTENT_SKILL_ID:
+            raise RuntimeError(
+                f"Dispatch is limited to {_CREATE_CONTENT_SKILL_ID!r} in Phase 10F."
+            )
+
+        if _CREATE_CONTENT_SKILL_ID not in context.target_skills:
+            raise RuntimeError(
+                f"{_CREATE_CONTENT_SKILL_ID!r} is not in the active unlock token target_skills."
+            )
+
+        definition = get_skill(request.skill_id)
+        if definition is not None and definition.read_only:
+            raise RuntimeError(
+                f"Read-only skill {request.skill_id!r} cannot be dispatched."
+            )
+
+        root_ok, root_error = self.validate_root()
+        if not root_ok:
+            return SkillExecutionResult(
+                skill_id=request.skill_id,
+                status=SkillExecutionStatus.FAILED,
+                mode=request.mode,
+                dry_run=False,
+                summary=f"Dispatch failed: {request.skill_id}",
+                blocked_reason=root_error,
+                auto_apply=False,
+                review_required=True,
+            )
+
+        entrypoint = self._catalog_entrypoint(request.skill_id)
+        override_warning = self._entrypoint_override_warning(request, entrypoint)
+
+        if self._executor is None:
+            raise RuntimeError("Pipeline dispatch executor is not configured.")
+
+        exit_code, output, error = self._executor(
+            entrypoint,
+            self.config.pipeline_root,
+            request.run_date,
+        )
+        if exit_code != 0:
+            blocked_reason = error or output or f"exit code {exit_code}"
+            return SkillExecutionResult(
+                skill_id=request.skill_id,
+                status=SkillExecutionStatus.FAILED,
+                mode=request.mode,
+                dry_run=False,
+                summary=f"Dispatch failed for {request.skill_id}",
+                blocked_reason=blocked_reason,
+                auto_apply=False,
+                review_required=True,
+            )
+
+        summary = (
+            f"Dispatched {request.skill_id} via {entrypoint!r} "
+            f"under {self.config.pipeline_root}."
+        )
+        if override_warning:
+            summary = f"{summary} {override_warning}"
+
+        return SkillExecutionResult(
+            skill_id=request.skill_id,
+            status=SkillExecutionStatus.COMPLETED,
+            mode=request.mode,
+            dry_run=False,
+            summary=summary,
+            auto_apply=False,
+            review_required=True,
+        )

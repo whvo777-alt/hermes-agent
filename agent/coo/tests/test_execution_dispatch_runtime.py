@@ -979,5 +979,66 @@ class TestDispatchUnlockTokenRemint(unittest.TestCase):
         assert_dispatch_generation_matches(token, ticket)
 
 
+class TestDispatchExecutionRunLifecycle(unittest.TestCase):
+    def test_start_dispatch_run_is_idempotent_for_queued(self) -> None:
+        from agent.coo.execution_dispatch_runtime import (
+            DispatchExecutionRequest,
+            DispatchExecutionRunStore,
+            DispatchExecutionMode,
+            start_dispatch_run,
+        )
+
+        dispatch_request = DispatchExecutionRequest(
+            dispatch_request_id=str(uuid.uuid4()),
+            execute_request_id=str(uuid.uuid4()),
+            gate_id=str(uuid.uuid4()),
+            ticket_id=str(uuid.uuid4()),
+            plan_id=str(uuid.uuid4()),
+            dry_run_run_id=str(uuid.uuid4()),
+            unlock_token_id=str(uuid.uuid4()),
+            target_skills=["create_content"],
+            requested_by="discord-user-1",
+            requested_at="2026-07-07T00:00:00+00:00",
+            mode=DispatchExecutionMode.EXECUTE,
+        )
+        store = DispatchExecutionRunStore()
+        first = start_dispatch_run(dispatch_request, run_store=store)
+        second = start_dispatch_run(dispatch_request, run_store=store)
+        self.assertEqual(first.dispatch_run_id, second.dispatch_run_id)
+
+    def test_second_run_after_failed_raises(self) -> None:
+        from agent.coo.execution_dispatch_runtime import (
+            DispatchExecutionRequest,
+            DispatchExecutionMode,
+            DispatchExecutionRunStatus,
+            DispatchExecutionRunStore,
+            mark_dispatch_run_failed,
+            mark_dispatch_run_running,
+            start_dispatch_run,
+        )
+
+        dispatch_request = DispatchExecutionRequest(
+            dispatch_request_id=str(uuid.uuid4()),
+            execute_request_id=str(uuid.uuid4()),
+            gate_id=str(uuid.uuid4()),
+            ticket_id=str(uuid.uuid4()),
+            plan_id=str(uuid.uuid4()),
+            dry_run_run_id=str(uuid.uuid4()),
+            unlock_token_id=str(uuid.uuid4()),
+            target_skills=["create_content"],
+            requested_by="discord-user-1",
+            requested_at="2026-07-07T00:00:00+00:00",
+            mode=DispatchExecutionMode.EXECUTE,
+        )
+        store = DispatchExecutionRunStore()
+        run = start_dispatch_run(dispatch_request, run_store=store)
+        mark_dispatch_run_running(run, run_store=store)
+        mark_dispatch_run_failed(run, summary="failed", run_store=store)
+        self.assertEqual(run.status, DispatchExecutionRunStatus.FAILED)
+
+        with self.assertRaises(ValueError):
+            start_dispatch_run(dispatch_request, run_store=store)
+
+
 if __name__ == "__main__":
     unittest.main()
