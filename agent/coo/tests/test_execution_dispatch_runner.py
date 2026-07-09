@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
 import uuid
+from pathlib import Path
 from unittest.mock import patch
 
 from agent.coo.execution_dispatch_runtime import (
@@ -20,9 +22,17 @@ from agent.coo.execution_dispatch_runtime import (
 from agent.coo.execution_dispatch_runner import run_approved_dispatch
 from agent.coo.execution_dispatcher import ExecutionDispatchPlanStore
 from agent.coo.execution_execute import ExecuteGate, ExecuteGateStatus, ExecuteGateStore
+from agent.coo.execution_runtime import ExecutionRunStore
 from agent.coo.execution_ticket import ExecutionTicketStatus, ExecutionTicketStore
 from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
+from agent.coo.production_executor_confirmation import (
+    ProductionExecutorConfirmationStore,
+    REQUIRED_CONFIRMATION_PHRASE,
+    create_production_executor_confirmation,
+)
+from agent.coo.production_executor_policy import ProductionExecutorPolicy
 from agent.coo.tests.test_execution_dispatch_runtime import _approved_unlock_context
+from agent.coo.dispatch_execution_audit import read_dispatch_execution_audit
 
 
 def _seed_dispatch_stores():
@@ -33,6 +43,8 @@ def _seed_dispatch_stores():
     token_store = DispatchUnlockTokenStore()
     dispatch_request_store = DispatchExecutionRequestStore()
     dispatch_run_store = DispatchExecutionRunStore()
+    dry_run_store = ExecutionRunStore()
+    dry_run_store.save(dry_run)
 
     ticket_store.save(ticket)
     plan_store.save(plan)
@@ -56,6 +68,7 @@ def _seed_dispatch_stores():
     return {
         "ticket": ticket,
         "plan": plan,
+        "dry_run": dry_run,
         "gate": gate,
         "token": token,
         "dispatch_request": dispatch_request,
@@ -65,7 +78,29 @@ def _seed_dispatch_stores():
         "token_store": token_store,
         "dispatch_request_store": dispatch_request_store,
         "dispatch_run_store": dispatch_run_store,
+        "dry_run_store": dry_run_store,
     }
+
+
+def _enabled_policy(pipeline_root: str = "/tmp/fake-pipeline") -> ProductionExecutorPolicy:
+    return ProductionExecutorPolicy(
+        enabled=True,
+        allowed_pipeline_roots=(pipeline_root,),
+    )
+
+
+def _confirmation_for(ctx: dict, store: ProductionExecutorConfirmationStore):
+    return create_production_executor_confirmation(
+        ticket_id=ctx["ticket"].ticket_id,
+        plan_id=ctx["plan"].plan_id,
+        unlock_token_id=ctx["token"].token_id,
+        dispatch_request_id=ctx["dispatch_request"].dispatch_request_id,
+        operator_id="operator-1",
+        operator_name="Operator One",
+        confirmation_reason="runner policy test",
+        confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+        confirmation_store=store,
+    )
 
 
 def _fake_adapter(success: bool = True) -> PipelineAdapter:
@@ -277,6 +312,191 @@ class TestExecutionDispatchRunner(unittest.TestCase):
                 run_store=ctx["dispatch_run_store"],
             )
         self.assertIn("already exists", str(exc.exception))
+
+
+class TestExecutionDispatchRunnerProductionPolicy(unittest.TestCase):
+    def test_policy_none_preserves_existing_happy_path(self) -> None:
+        ctx = _seed_dispatch_stores()
+        with patch.object(PipelineAdapter, "validate_root", return_value=(True, "")):
+            run = run_approved_dispatch(
+                ctx["token"].token_id,
+                requested_by=ctx["ticket"].requester_id,
+                ticket_store=ctx["ticket_store"],
+                plan_store=ctx["plan_store"],
+                gate_store=ctx["gate_store"],
+                token_store=ctx["token_store"],
+                dispatch_request_store=ctx["dispatch_request_store"],
+                dispatch_run_store=ctx["dispatch_run_store"],
+                adapter=_fake_adapter(success=True),
+            )
+        self.assertEqual(run.status, DispatchExecutionRunStatus.COMPLETED)
+
+    def test_policy_enabled_false_preserves_existing_happy_path(self) -> None:
+        ctx = _seed_dispatch_stores()
+        with patch.object(PipelineAdapter, "validate_root", return_value=(True, "")):
+            run = run_approved_dispatch(
+                ctx["token"].token_id,
+                requested_by=ctx["ticket"].requester_id,
+                ticket_store=ctx["ticket_store"],
+                plan_store=ctx["plan_store"],
+                gate_store=ctx["gate_store"],
+                token_store=ctx["token_store"],
+                dispatch_request_store=ctx["dispatch_request_store"],
+                dispatch_run_store=ctx["dispatch_run_store"],
+                adapter=_fake_adapter(success=True),
+                production_policy=ProductionExecutorPolicy(enabled=False),
+            )
+        self.assertEqual(run.status, DispatchExecutionRunStatus.COMPLETED)
+
+    def test_policy_enabled_without_confirmation_fails_without_executor(self) -> None:
+        ctx = _seed_dispatch_stores()
+        ticket = ctx["ticket"]
+        plan = ctx["plan"]
+        token = ctx["token"]
+        before_ticket = (
+            ticket.status,
+            ticket.execution_dispatched,
+            ticket.publish_dispatched,
+            ticket.repository2_touched,
+        )
+        before_plan = (plan.executed, plan.repository2_touched)
+
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+            patch.object(PipelineAdapter, "validate_root", return_value=(True, "")),
+        ):
+            run = run_approved_dispatch(
+                token.token_id,
+                requested_by=ticket.requester_id,
+                ticket_store=ctx["ticket_store"],
+                plan_store=ctx["plan_store"],
+                gate_store=ctx["gate_store"],
+                token_store=ctx["token_store"],
+                dispatch_request_store=ctx["dispatch_request_store"],
+                dispatch_run_store=ctx["dispatch_run_store"],
+                dry_run_store=ctx["dry_run_store"],
+                adapter=_fake_adapter(success=True),
+                production_policy=_enabled_policy(),
+            )
+
+        self.assertEqual(run.status, DispatchExecutionRunStatus.FAILED)
+        self.assertEqual(
+            (ticket.status, ticket.execution_dispatched, ticket.publish_dispatched, ticket.repository2_touched),
+            before_ticket,
+        )
+        self.assertEqual((plan.executed, plan.repository2_touched), before_plan)
+        self.assertFalse(ctx["token_store"].get(token.token_id).consumed)
+
+    def test_policy_enabled_with_invalid_confirmation_fails(self) -> None:
+        ctx = _seed_dispatch_stores()
+        confirmation_store = ProductionExecutorConfirmationStore()
+        confirmation = _confirmation_for(ctx, confirmation_store)
+        confirmation.unlock_token_id = "wrong-token"
+
+        with patch.object(PipelineAdapter, "validate_root", return_value=(True, "")):
+            run = run_approved_dispatch(
+                ctx["token"].token_id,
+                requested_by=ctx["ticket"].requester_id,
+                ticket_store=ctx["ticket_store"],
+                plan_store=ctx["plan_store"],
+                gate_store=ctx["gate_store"],
+                token_store=ctx["token_store"],
+                dispatch_request_store=ctx["dispatch_request_store"],
+                dispatch_run_store=ctx["dispatch_run_store"],
+                dry_run_store=ctx["dry_run_store"],
+                adapter=_fake_adapter(success=True),
+                production_policy=_enabled_policy(),
+                confirmation=confirmation,
+                confirmation_store=confirmation_store,
+            )
+
+        self.assertEqual(run.status, DispatchExecutionRunStatus.FAILED)
+        self.assertFalse(confirmation.consumed)
+
+    def test_policy_enabled_valid_confirmation_success_writes_audit_and_consumes(
+        self,
+    ) -> None:
+        ctx = _seed_dispatch_stores()
+        confirmation_store = ProductionExecutorConfirmationStore()
+        confirmation = _confirmation_for(ctx, confirmation_store)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = Path(tmp) / ".hermes"
+            hermes_home.mkdir()
+            audit_dir = hermes_home / "coo" / "audit"
+            with (
+                patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+                patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+                patch.object(PipelineAdapter, "validate_root", return_value=(True, "")),
+                patch(
+                    "agent.coo.dispatch_execution_audit.get_hermes_home",
+                    return_value=hermes_home,
+                ),
+            ):
+                run = run_approved_dispatch(
+                    ctx["token"].token_id,
+                    requested_by=ctx["ticket"].requester_id,
+                    ticket_store=ctx["ticket_store"],
+                    plan_store=ctx["plan_store"],
+                    gate_store=ctx["gate_store"],
+                    token_store=ctx["token_store"],
+                    dispatch_request_store=ctx["dispatch_request_store"],
+                    dispatch_run_store=ctx["dispatch_run_store"],
+                    dry_run_store=ctx["dry_run_store"],
+                    adapter=_fake_adapter(success=True),
+                    production_policy=_enabled_policy(),
+                    confirmation=confirmation,
+                    confirmation_store=confirmation_store,
+                    audit_dir=audit_dir,
+                )
+
+            self.assertEqual(run.status, DispatchExecutionRunStatus.COMPLETED)
+            self.assertTrue(ctx["ticket"].execution_dispatched)
+            self.assertTrue(ctx["token_store"].get(ctx["token"].token_id).consumed)
+            self.assertTrue(confirmation.consumed)
+            loaded = read_dispatch_execution_audit(run.dispatch_run_id, audit_dir=audit_dir)
+            assert loaded is not None
+            self.assertEqual(loaded.operator_id, "operator-1")
+
+    def test_policy_enabled_adapter_failure_retains_confirmation(self) -> None:
+        ctx = _seed_dispatch_stores()
+        confirmation_store = ProductionExecutorConfirmationStore()
+        confirmation = _confirmation_for(ctx, confirmation_store)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = Path(tmp) / ".hermes"
+            hermes_home.mkdir()
+            audit_dir = hermes_home / "coo" / "audit"
+            with (
+                patch.object(PipelineAdapter, "validate_root", return_value=(True, "")),
+                patch(
+                    "agent.coo.dispatch_execution_audit.get_hermes_home",
+                    return_value=hermes_home,
+                ),
+            ):
+                run = run_approved_dispatch(
+                    ctx["token"].token_id,
+                    requested_by=ctx["ticket"].requester_id,
+                    ticket_store=ctx["ticket_store"],
+                    plan_store=ctx["plan_store"],
+                    gate_store=ctx["gate_store"],
+                    token_store=ctx["token_store"],
+                    dispatch_request_store=ctx["dispatch_request_store"],
+                    dispatch_run_store=ctx["dispatch_run_store"],
+                    dry_run_store=ctx["dry_run_store"],
+                    adapter=_fake_adapter(success=False),
+                    production_policy=_enabled_policy(),
+                    confirmation=confirmation,
+                    confirmation_store=confirmation_store,
+                    audit_dir=audit_dir,
+                )
+
+            self.assertEqual(run.status, DispatchExecutionRunStatus.FAILED)
+            self.assertFalse(confirmation.consumed)
+            self.assertFalse(ctx["token_store"].get(ctx["token"].token_id).consumed)
+            loaded = read_dispatch_execution_audit(run.dispatch_run_id, audit_dir=audit_dir)
+            assert loaded is not None
 
 
 if __name__ == "__main__":
