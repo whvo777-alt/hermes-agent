@@ -141,7 +141,10 @@ def assert_production_executor_allowed(
 ) -> Dict[str, Any]:
     """Evaluate production executor policy and return a pass/fail checklist.
 
-    Raises ValueError when policy.enabled is False (fail-closed for enabled runs).
+    Does not raise on policy failure. Returns a dict with:
+    - ``checks``: per-item pass/fail entries with reasons
+    - ``all_passed``: False when any check failed (e.g. policy.enabled is False)
+    - ``summary``: human-readable failure summary when ``all_passed`` is False
     """
     checks: List[Dict[str, Any]] = []
 

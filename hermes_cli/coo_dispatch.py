@@ -36,8 +36,8 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     confirm_parser.add_argument(
         "--phrase",
-        default="CONFIRM-REPOSITORY2-EXECUTION",
-        help="Required confirmation phrase",
+        required=True,
+        help='Operator-typed confirmation phrase (must be exactly "CONFIRM-REPOSITORY2-EXECUTION")',
     )
     confirm_parser.set_defaults(handler=_cmd_confirm_run)
 
