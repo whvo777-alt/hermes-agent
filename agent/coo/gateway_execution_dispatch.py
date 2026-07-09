@@ -495,8 +495,8 @@ def maybe_remint_dispatch_token_for_gateway_ticket(
 ) -> Dict[str, Any]:
     """Mint or remint a dispatch unlock token — no dispatch execution.
 
-    Remint updates the active token only. A stale DispatchExecutionRequest with an
-  old unlock_token_id remains blocked by run_approved_dispatch and can_run=false.
+    Remint updates the active token only. Call prepare_dispatch afterward to mint
+    a new active DispatchExecutionRequest aligned with the new token.
     """
     tickets = ticket_store or get_default_ticket_store()
     plans = plan_store or get_default_dispatch_plan_store()

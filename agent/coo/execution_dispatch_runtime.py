@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from agent.coo.execution_dispatcher import DispatchPlanStatus, ExecutionDispatchPlan
 from agent.coo.execution_execute import (
@@ -235,11 +235,17 @@ class DispatchUnlockTokenStore:
 
 
 class DispatchExecutionRequestStore:
-    """Process-local in-memory dispatch execution request store."""
+    """Process-local in-memory dispatch execution request store.
+
+  Invariant: one active dispatch request per execute_request_id. Older requests
+    are retained for audit but marked superseded and excluded from
+    get_by_execute_request().
+    """
 
     def __init__(self) -> None:
         self._requests: Dict[str, DispatchExecutionRequest] = {}
         self._by_execute_request: Dict[str, str] = {}
+        self._superseded_request_ids: Set[str] = set()
 
     def save(self, request: DispatchExecutionRequest) -> None:
         existing_request_id = self._by_execute_request.get(request.execute_request_id)
@@ -254,6 +260,16 @@ class DispatchExecutionRequestStore:
         self._requests[request.dispatch_request_id] = request
         self._by_execute_request[request.execute_request_id] = request.dispatch_request_id
 
+    def supersede_active_request(self, execute_request_id: str) -> Optional[str]:
+        """Mark the active request for execute_request_id superseded; return its id."""
+        active_request_id = self._by_execute_request.pop(execute_request_id, None)
+        if active_request_id is not None:
+            self._superseded_request_ids.add(active_request_id)
+        return active_request_id
+
+    def is_superseded(self, dispatch_request_id: str) -> bool:
+        return dispatch_request_id in self._superseded_request_ids
+
     def get(self, dispatch_request_id: str) -> Optional[DispatchExecutionRequest]:
         return self._requests.get(dispatch_request_id)
 
@@ -266,12 +282,24 @@ class DispatchExecutionRequestStore:
             return None
         return self._requests.get(request_id)
 
+    def list_by_execute_request(
+        self,
+        execute_request_id: str,
+    ) -> List[DispatchExecutionRequest]:
+        requests = [
+            request
+            for request in self._requests.values()
+            if request.execute_request_id == execute_request_id
+        ]
+        return sorted(requests, key=lambda item: item.requested_at)
+
     def list_requests(self) -> List[DispatchExecutionRequest]:
         return list(self._requests.values())
 
     def clear(self) -> None:
         self._requests.clear()
         self._by_execute_request.clear()
+        self._superseded_request_ids.clear()
 
 
 class DispatchExecutionRunStore:
@@ -653,13 +681,21 @@ def create_dispatch_execution_request(
     reason: str = "",
     request_store: Optional[DispatchExecutionRequestStore] = None,
 ) -> DispatchExecutionRequest:
-    """Create a dispatch execution request from an unlock token — no dispatch."""
+    """Create a dispatch execution request from an unlock token — no dispatch.
+
+    Idempotent per active token: reusing the same usable token returns the active
+    request. When the active token changes (for example after remint), a new
+    request is minted and the prior active request is retained as superseded
+    history.
+    """
     _assert_token_usable(token)
 
     store = request_store or get_default_dispatch_execution_request_store()
     existing = store.get_by_execute_request(token.execute_request_id)
     if existing is not None:
-        return existing
+        if existing.unlock_token_id == token.token_id:
+            return existing
+        store.supersede_active_request(token.execute_request_id)
 
     dispatch_request = DispatchExecutionRequest(
         dispatch_request_id=str(uuid.uuid4()),
