@@ -243,6 +243,7 @@ def prepare_dispatch_for_gateway_ticket(
     gate_store: Optional[ExecuteGateStore] = None,
     token_store: Optional[DispatchUnlockTokenStore] = None,
     dispatch_request_store: Optional[DispatchExecutionRequestStore] = None,
+    dispatch_run_store: Optional[DispatchExecutionRunStore] = None,
 ) -> Dict[str, Any]:
     """Prepare dispatch unlock token and request — no execution."""
     tickets = ticket_store or get_default_ticket_store()
@@ -253,6 +254,7 @@ def prepare_dispatch_for_gateway_ticket(
     gates = gate_store or get_default_execute_gate_store()
     tokens = token_store or get_default_dispatch_unlock_token_store()
     dispatch_requests = dispatch_request_store or get_default_dispatch_execution_request_store()
+    dispatch_runs = dispatch_run_store or get_default_dispatch_execution_run_store()
 
     context = _resolve_approved_dispatch_context(
         ticket_id,
@@ -279,6 +281,7 @@ def prepare_dispatch_for_gateway_ticket(
         token,
         reason=reason,
         request_store=dispatch_requests,
+        dispatch_run_store=dispatch_runs,
     )
 
     return {
@@ -302,6 +305,7 @@ def prepare_dispatch_for_gateway_session(
     gate_store: Optional[ExecuteGateStore] = None,
     token_store: Optional[DispatchUnlockTokenStore] = None,
     dispatch_request_store: Optional[DispatchExecutionRequestStore] = None,
+    dispatch_run_store: Optional[DispatchExecutionRunStore] = None,
 ) -> Dict[str, Any]:
     """Prepare dispatch unlock token and request via approval session lookup."""
     tickets = ticket_store or get_default_ticket_store()
@@ -321,6 +325,7 @@ def prepare_dispatch_for_gateway_session(
         gate_store=gate_store,
         token_store=token_store,
         dispatch_request_store=dispatch_request_store,
+        dispatch_run_store=dispatch_run_store,
     )
 
 

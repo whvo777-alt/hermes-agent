@@ -680,22 +680,36 @@ def create_dispatch_execution_request(
     *,
     reason: str = "",
     request_store: Optional[DispatchExecutionRequestStore] = None,
+    dispatch_run_store: Optional[DispatchExecutionRunStore] = None,
 ) -> DispatchExecutionRequest:
     """Create a dispatch execution request from an unlock token — no dispatch.
 
     Idempotent per active token: reusing the same usable token returns the active
     request. When the active token changes (for example after remint), a new
     request is minted and the prior active request is retained as superseded
-    history.
+    history. When the active request has a FAILED run, a new request is minted
+    for retry using the same token.
     """
     _assert_token_usable(token)
 
     store = request_store or get_default_dispatch_execution_request_store()
     existing = store.get_by_execute_request(token.execute_request_id)
     if existing is not None:
-        if existing.unlock_token_id == token.token_id:
-            return existing
-        store.supersede_active_request(token.execute_request_id)
+        if existing.unlock_token_id != token.token_id:
+            store.supersede_active_request(token.execute_request_id)
+        else:
+            if dispatch_run_store is not None:
+                existing_run = dispatch_run_store.get_by_request(
+                    existing.dispatch_request_id
+                )
+                if existing_run is None:
+                    return existing
+                if existing_run.status is DispatchExecutionRunStatus.FAILED:
+                    store.supersede_active_request(token.execute_request_id)
+                else:
+                    return existing
+            else:
+                return existing
 
     dispatch_request = DispatchExecutionRequest(
         dispatch_request_id=str(uuid.uuid4()),

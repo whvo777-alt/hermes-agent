@@ -630,6 +630,180 @@ class TestGatewayDispatchBridge(unittest.TestCase):
         self.assertEqual(result["dispatch_run"]["status"], DispatchExecutionRunStatus.FAILED.value)
         self.assertEqual((ticket.status, ticket.execution_dispatched, plan.executed), before)
 
+    def test_prepare_after_failed_run_recovers_can_run(self) -> None:
+        ctx = _seed_approved_dispatch_pipeline()
+        ticket = ctx["ticket"]
+        kwargs = {
+            "requester_id": ticket.requester_id,
+            "ticket_store": ctx["ticket_store"],
+            "plan_store": ctx["plan_store"],
+            "run_store": ctx["run_store"],
+            "dry_run_request_store": ctx["dry_run_request_store"],
+            "execute_request_store": ctx["execute_request_store"],
+            "gate_store": ctx["gate_store"],
+            "token_store": ctx["token_store"],
+            "dispatch_request_store": ctx["dispatch_request_store"],
+            "dispatch_run_store": ctx["dispatch_run_store"],
+        }
+        prepare1 = prepare_dispatch_for_gateway_ticket(ticket.ticket_id, **kwargs)
+
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+            patch.object(PipelineAdapter, "validate_root", return_value=(True, "")),
+        ):
+            run_dispatch_for_gateway_request(
+                unlock_token_id=prepare1["unlock_token"]["token_id"],
+                requester_id=ticket.requester_id,
+                ticket_store=ctx["ticket_store"],
+                plan_store=ctx["plan_store"],
+                gate_store=ctx["gate_store"],
+                token_store=ctx["token_store"],
+                dispatch_request_store=ctx["dispatch_request_store"],
+                dispatch_run_store=ctx["dispatch_run_store"],
+            )
+
+        blocked = get_latest_dispatch_for_gateway_ticket(
+            ticket.ticket_id,
+            ticket_store=ctx["ticket_store"],
+            plan_store=ctx["plan_store"],
+            run_store=ctx["run_store"],
+            dry_run_request_store=ctx["dry_run_request_store"],
+            execute_request_store=ctx["execute_request_store"],
+            gate_store=ctx["gate_store"],
+            token_store=ctx["token_store"],
+            dispatch_request_store=ctx["dispatch_request_store"],
+            dispatch_run_store=ctx["dispatch_run_store"],
+        )
+        assert blocked is not None
+        self.assertFalse(blocked["can_run"])
+
+        prepare2 = prepare_dispatch_for_gateway_ticket(ticket.ticket_id, **kwargs)
+        old_request_id = prepare1["dispatch_request"]["dispatch_request_id"]
+
+        self.assertNotEqual(
+            prepare2["dispatch_request"]["dispatch_request_id"],
+            old_request_id,
+        )
+        self.assertEqual(
+            prepare2["dispatch_request"]["unlock_token_id"],
+            prepare2["unlock_token"]["token_id"],
+        )
+        self.assertTrue(ctx["dispatch_request_store"].is_superseded(old_request_id))
+        self.assertEqual(
+            ctx["dispatch_request_store"].get(old_request_id).unlock_token_id,
+            prepare1["unlock_token"]["token_id"],
+        )
+
+        recovered = get_latest_dispatch_for_gateway_ticket(
+            ticket.ticket_id,
+            ticket_store=ctx["ticket_store"],
+            plan_store=ctx["plan_store"],
+            run_store=ctx["run_store"],
+            dry_run_request_store=ctx["dry_run_request_store"],
+            execute_request_store=ctx["execute_request_store"],
+            gate_store=ctx["gate_store"],
+            token_store=ctx["token_store"],
+            dispatch_request_store=ctx["dispatch_request_store"],
+            dispatch_run_store=ctx["dispatch_run_store"],
+        )
+        assert recovered is not None
+        self.assertTrue(recovered["can_run"])
+
+        with patch.object(PipelineAdapter, "validate_root", return_value=(True, "")):
+            success = run_dispatch_for_gateway_request(
+                unlock_token_id=prepare2["unlock_token"]["token_id"],
+                requester_id=ticket.requester_id,
+                ticket_store=ctx["ticket_store"],
+                plan_store=ctx["plan_store"],
+                gate_store=ctx["gate_store"],
+                token_store=ctx["token_store"],
+                dispatch_request_store=ctx["dispatch_request_store"],
+                dispatch_run_store=ctx["dispatch_run_store"],
+                adapter=_fake_adapter(success=True),
+            )
+
+        self.assertEqual(
+            success["dispatch_run"]["status"],
+            DispatchExecutionRunStatus.COMPLETED.value,
+        )
+
+    def test_prepare_after_completed_run_keeps_request(self) -> None:
+        from agent.coo.execution_dispatch_runtime import DispatchExecutionRun
+
+        ctx = _seed_approved_dispatch_pipeline()
+        ticket = ctx["ticket"]
+        kwargs = {
+            "requester_id": ticket.requester_id,
+            "ticket_store": ctx["ticket_store"],
+            "plan_store": ctx["plan_store"],
+            "run_store": ctx["run_store"],
+            "dry_run_request_store": ctx["dry_run_request_store"],
+            "execute_request_store": ctx["execute_request_store"],
+            "gate_store": ctx["gate_store"],
+            "token_store": ctx["token_store"],
+            "dispatch_request_store": ctx["dispatch_request_store"],
+            "dispatch_run_store": ctx["dispatch_run_store"],
+        }
+        prepare1 = prepare_dispatch_for_gateway_ticket(ticket.ticket_id, **kwargs)
+        request_id = prepare1["dispatch_request"]["dispatch_request_id"]
+        ctx["dispatch_run_store"].save(
+            DispatchExecutionRun(
+                dispatch_run_id=str(uuid.uuid4()),
+                dispatch_request_id=request_id,
+                ticket_id=ticket.ticket_id,
+                plan_id=ctx["plan"].plan_id,
+                status=DispatchExecutionRunStatus.COMPLETED,
+                dry_run=False,
+                summary="Dispatch completed successfully.",
+            )
+        )
+
+        prepare2 = prepare_dispatch_for_gateway_ticket(ticket.ticket_id, **kwargs)
+        self.assertEqual(
+            prepare1["dispatch_request"]["dispatch_request_id"],
+            prepare2["dispatch_request"]["dispatch_request_id"],
+        )
+        self.assertFalse(ctx["dispatch_request_store"].is_superseded(request_id))
+
+    def test_prepare_after_running_run_keeps_request(self) -> None:
+        from agent.coo.execution_dispatch_runtime import DispatchExecutionRun
+
+        ctx = _seed_approved_dispatch_pipeline()
+        ticket = ctx["ticket"]
+        kwargs = {
+            "requester_id": ticket.requester_id,
+            "ticket_store": ctx["ticket_store"],
+            "plan_store": ctx["plan_store"],
+            "run_store": ctx["run_store"],
+            "dry_run_request_store": ctx["dry_run_request_store"],
+            "execute_request_store": ctx["execute_request_store"],
+            "gate_store": ctx["gate_store"],
+            "token_store": ctx["token_store"],
+            "dispatch_request_store": ctx["dispatch_request_store"],
+            "dispatch_run_store": ctx["dispatch_run_store"],
+        }
+        prepare1 = prepare_dispatch_for_gateway_ticket(ticket.ticket_id, **kwargs)
+        request_id = prepare1["dispatch_request"]["dispatch_request_id"]
+        ctx["dispatch_run_store"].save(
+            DispatchExecutionRun(
+                dispatch_run_id=str(uuid.uuid4()),
+                dispatch_request_id=request_id,
+                ticket_id=ticket.ticket_id,
+                plan_id=ctx["plan"].plan_id,
+                status=DispatchExecutionRunStatus.RUNNING,
+                dry_run=False,
+                summary="Dispatch in progress.",
+            )
+        )
+
+        prepare2 = prepare_dispatch_for_gateway_ticket(ticket.ticket_id, **kwargs)
+        self.assertEqual(
+            prepare1["dispatch_request"]["dispatch_request_id"],
+            prepare2["dispatch_request"]["dispatch_request_id"],
+        )
+        self.assertFalse(ctx["dispatch_request_store"].is_superseded(request_id))
+
     def test_second_run_same_dispatch_request_raises(self) -> None:
         ctx = _seed_approved_dispatch_pipeline()
         ticket = ctx["ticket"]

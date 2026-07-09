@@ -12,6 +12,8 @@ from unittest.mock import patch
 from agent.coo.execution_dispatch_runtime import (
     DispatchExecutionMode,
     DispatchExecutionRequestStore,
+    DispatchExecutionRun,
+    DispatchExecutionRunStatus,
     DispatchExecutionRunStore,
     DispatchUnlockToken,
     DispatchUnlockTokenStore,
@@ -713,6 +715,128 @@ class TestDispatchUnlockTokenFoundation(unittest.TestCase):
         assert active is not None
         self.assertEqual(active.dispatch_request_id, request_v2.dispatch_request_id)
         self.assertIsNotNone(request_store.get(request_v1.dispatch_request_id))
+
+    def test_create_dispatch_execution_request_refreshes_after_failed_run(self) -> None:
+        ticket, plan, dry_run, dry_run_request, execute_request, gate = _approved_unlock_context()
+        token_store = DispatchUnlockTokenStore()
+        request_store = DispatchExecutionRequestStore()
+        run_store = DispatchExecutionRunStore()
+        token = create_dispatch_unlock_token(
+            ticket,
+            plan,
+            dry_run,
+            dry_run_request,
+            execute_request,
+            gate,
+            requested_by=ticket.requester_id,
+            token_store=token_store,
+        )
+        request_v1 = create_dispatch_execution_request(
+            token,
+            request_store=request_store,
+            dispatch_run_store=run_store,
+        )
+        failed_run = DispatchExecutionRun(
+            dispatch_run_id=str(uuid.uuid4()),
+            dispatch_request_id=request_v1.dispatch_request_id,
+            ticket_id=ticket.ticket_id,
+            plan_id=plan.plan_id,
+            status=DispatchExecutionRunStatus.FAILED,
+            dry_run=False,
+            summary="Pipeline dispatch executor is not configured.",
+        )
+        run_store.save(failed_run)
+
+        request_v2 = create_dispatch_execution_request(
+            token,
+            request_store=request_store,
+            dispatch_run_store=run_store,
+        )
+
+        self.assertNotEqual(request_v1.dispatch_request_id, request_v2.dispatch_request_id)
+        self.assertEqual(request_v2.unlock_token_id, token.token_id)
+        self.assertTrue(request_store.is_superseded(request_v1.dispatch_request_id))
+        self.assertIsNone(run_store.get_by_request(request_v2.dispatch_request_id))
+
+    def test_create_dispatch_execution_request_keeps_completed_run_request(self) -> None:
+        ticket, plan, dry_run, dry_run_request, execute_request, gate = _approved_unlock_context()
+        token_store = DispatchUnlockTokenStore()
+        request_store = DispatchExecutionRequestStore()
+        run_store = DispatchExecutionRunStore()
+        token = create_dispatch_unlock_token(
+            ticket,
+            plan,
+            dry_run,
+            dry_run_request,
+            execute_request,
+            gate,
+            requested_by=ticket.requester_id,
+            token_store=token_store,
+        )
+        request_v1 = create_dispatch_execution_request(
+            token,
+            request_store=request_store,
+            dispatch_run_store=run_store,
+        )
+        completed_run = DispatchExecutionRun(
+            dispatch_run_id=str(uuid.uuid4()),
+            dispatch_request_id=request_v1.dispatch_request_id,
+            ticket_id=ticket.ticket_id,
+            plan_id=plan.plan_id,
+            status=DispatchExecutionRunStatus.COMPLETED,
+            dry_run=False,
+            summary="Dispatch completed successfully.",
+        )
+        run_store.save(completed_run)
+
+        request_v2 = create_dispatch_execution_request(
+            token,
+            request_store=request_store,
+            dispatch_run_store=run_store,
+        )
+
+        self.assertEqual(request_v1.dispatch_request_id, request_v2.dispatch_request_id)
+        self.assertFalse(request_store.is_superseded(request_v1.dispatch_request_id))
+
+    def test_create_dispatch_execution_request_keeps_running_run_request(self) -> None:
+        ticket, plan, dry_run, dry_run_request, execute_request, gate = _approved_unlock_context()
+        token_store = DispatchUnlockTokenStore()
+        request_store = DispatchExecutionRequestStore()
+        run_store = DispatchExecutionRunStore()
+        token = create_dispatch_unlock_token(
+            ticket,
+            plan,
+            dry_run,
+            dry_run_request,
+            execute_request,
+            gate,
+            requested_by=ticket.requester_id,
+            token_store=token_store,
+        )
+        request_v1 = create_dispatch_execution_request(
+            token,
+            request_store=request_store,
+            dispatch_run_store=run_store,
+        )
+        running_run = DispatchExecutionRun(
+            dispatch_run_id=str(uuid.uuid4()),
+            dispatch_request_id=request_v1.dispatch_request_id,
+            ticket_id=ticket.ticket_id,
+            plan_id=plan.plan_id,
+            status=DispatchExecutionRunStatus.RUNNING,
+            dry_run=False,
+            summary="Dispatch in progress.",
+        )
+        run_store.save(running_run)
+
+        request_v2 = create_dispatch_execution_request(
+            token,
+            request_store=request_store,
+            dispatch_run_store=run_store,
+        )
+
+        self.assertEqual(request_v1.dispatch_request_id, request_v2.dispatch_request_id)
+        self.assertFalse(request_store.is_superseded(request_v1.dispatch_request_id))
 
     def test_superseded_token_blocks_dispatch_request(self) -> None:
         ticket, plan, dry_run, dry_run_request, execute_request, gate = _approved_unlock_context()
