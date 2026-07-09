@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import types
 import unittest
+import unittest.mock
+from pathlib import Path
 from unittest.mock import patch
 
 from agent.coo.approval_report import build_approval_report
@@ -13,9 +15,13 @@ import plugins.platforms.discord.coo_approval as coo_approval
 from plugins.platforms.discord.coo_approval import (
     _calculate_embed_size,
     _COO_APPROVAL_VIEW_TIMEOUT_SECONDS,
+    _COO_DISPATCH_RUN_EPHEMERAL_KEY,
     _EMBED_COLOR,
     _ERR_NOT_ALLOWED,
     _ERR_SESSION_NOT_FOUND,
+    _PREPARE_DISPATCH_EPHEMERAL,
+    _RUN_COMPLETED_EPHEMERAL,
+    _RUN_EXECUTOR_NOT_CONFIGURED_EPHEMERAL,
     _is_terminal_approval_status,
     _make_coo_approval_button_callback,
     _should_disable_coo_approval_buttons,
@@ -1798,14 +1804,24 @@ class TestDiscordCooApprovalExecutionReview(unittest.TestCase):
         with patch(
             "plugins.platforms.discord.coo_approval._lookup_latest_execution_review_for_session",
             return_value=review,
+        ), patch(
+            "plugins.platforms.discord.coo_approval._lookup_latest_dispatch_for_session",
+            return_value={
+                "can_prepare": True,
+                "can_run": False,
+                "token_usable": False,
+            },
         ):
             components = build_coo_approval_components(session)
 
         labels = [button["label"] for button in components]
-        self.assertEqual(len(components), 6)
+        self.assertEqual(len(components), 9)
         self.assertIn("Execution Review", labels)
         self.assertNotIn("Approve Execution Review", labels)
         self.assertNotIn("Reject Execution Review", labels)
+        self.assertIn("Prepare Dispatch", labels)
+        self.assertIn("Run Approved Plan", labels)
+        self.assertIn("Remint Token", labels)
 
     def test_embed_shows_execution_review_fields(self) -> None:
         review = {
@@ -2268,6 +2284,517 @@ class TestDiscordCooApprovalExecutionReviewCallbacks(unittest.IsolatedAsyncioTes
         interaction.response.send_message.assert_awaited_once()
         args, kwargs = interaction.response.send_message.await_args
         self.assertEqual(args[0], _ERR_NOT_ALLOWED)
+        self.assertTrue(kwargs.get("ephemeral"))
+
+
+def _approved_execution_review_payload() -> dict:
+    return {
+        "execute_request": {
+            "execute_request_id": "exec-req-1",
+            "target_skills": ["create_content"],
+            "requested_at": "2026-07-08T12:00:00Z",
+        },
+        "gate": {
+            "status": "approved",
+            "gate_id": "gate-1",
+            "decided_by": "987654321012345678",
+        },
+    }
+
+
+def _seed_session_with_approved_execution_review(
+    store: CEOApprovalSessionStore,
+) -> dict:
+    import subprocess
+
+    from agent.coo.gateway_execution_execute import (
+        approve_execute_gate_for_gateway_request,
+        create_execute_request_for_gateway_session,
+    )
+
+    approved = _seed_approved_session_with_plan_and_dry_run(store)
+    with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+        created = create_execute_request_for_gateway_session(
+            approved["session_id"],
+            requester_id="987654321012345678",
+            reason="discord execution review",
+        )
+        approve_execute_gate_for_gateway_request(
+            created["execute_request"]["execute_request_id"],
+            reviewer_id="987654321012345678",
+        )
+    refreshed = store.get(approved["session_id"])
+    assert refreshed is not None
+    return refreshed.to_dict()
+
+
+class TestDiscordCooApprovalDispatch(unittest.TestCase):
+    def setUp(self) -> None:
+        from agent.coo.execution_dispatch_runtime import (
+            get_default_dispatch_execution_request_store,
+            get_default_dispatch_execution_run_store,
+            get_default_dispatch_unlock_token_store,
+        )
+        from agent.coo.execution_dispatcher import get_default_dispatch_plan_store
+        from agent.coo.execution_execute import (
+            get_default_execute_gate_store,
+            get_default_execute_request_store,
+        )
+        from agent.coo.execution_runtime import (
+            get_default_execution_request_store,
+            get_default_execution_run_store,
+        )
+        from agent.coo.execution_ticket import get_default_ticket_store
+
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+        get_default_execution_run_store().clear()
+        get_default_execution_request_store().clear()
+        get_default_execute_request_store().clear()
+        get_default_execute_gate_store().clear()
+        get_default_dispatch_unlock_token_store().clear()
+        get_default_dispatch_execution_request_store().clear()
+        get_default_dispatch_execution_run_store().clear()
+
+    def test_dispatch_buttons_hidden_before_execution_review_approved(self) -> None:
+        session = _sample_session_payload(status="approved", execution_ticket_id="ticket-1")
+        components = build_coo_approval_components(session)
+        labels = [button["label"] for button in components]
+        self.assertNotIn("Prepare Dispatch", labels)
+        self.assertNotIn("Run Approved Plan", labels)
+        self.assertNotIn("Remint Token", labels)
+
+    def test_dispatch_buttons_visible_after_execution_review_approved(self) -> None:
+        session = _sample_session_payload(status="approved", execution_ticket_id="ticket-1")
+        with patch(
+            "plugins.platforms.discord.coo_approval._lookup_latest_execution_review_for_session",
+            return_value=_approved_execution_review_payload(),
+        ), patch(
+            "plugins.platforms.discord.coo_approval._lookup_latest_dispatch_for_session",
+            return_value={"can_prepare": True, "can_run": False, "token_usable": False},
+        ):
+            components = build_coo_approval_components(session)
+        labels = [button["label"] for button in components]
+        self.assertIn("Prepare Dispatch", labels)
+        self.assertIn("Run Approved Plan", labels)
+        self.assertIn("Remint Token", labels)
+
+    def test_prepare_dispatch_calls_gateway(self) -> None:
+        import subprocess
+
+        from agent.coo.gateway_execution_dispatch import (
+            prepare_dispatch_for_gateway_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        approved = _seed_session_with_approved_execution_review(store)
+        with patch.object(
+            subprocess, "run", side_effect=AssertionError("no subprocess")
+        ), patch(
+            "agent.coo.gateway_execution_dispatch.prepare_dispatch_for_gateway_session",
+            wraps=prepare_dispatch_for_gateway_session,
+        ) as mock_prepare:
+            result = execute_coo_approval_button_action(
+                action="prepare_dispatch",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+        mock_prepare.assert_called_once_with(
+            approved["session_id"],
+            requester_id="987654321012345678",
+            reason="discord prepare dispatch",
+        )
+        self.assertEqual(result["status"], "approved")
+
+    def test_prepare_dispatch_enables_run_button(self) -> None:
+        import subprocess
+
+        store = CEOApprovalSessionStore()
+        approved = _seed_session_with_approved_execution_review(store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            execute_coo_approval_button_action(
+                action="prepare_dispatch",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+        components = build_coo_approval_components(approved)
+        button_map = {button["label"]: button for button in components}
+        self.assertFalse(button_map["Prepare Dispatch"].get("disabled", False))
+        self.assertFalse(button_map["Run Approved Plan"].get("disabled", False))
+
+    def test_expired_token_enables_remint_button(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from agent.coo.execution_dispatch_runtime import get_default_dispatch_unlock_token_store
+
+        store = CEOApprovalSessionStore()
+        approved = _seed_session_with_approved_execution_review(store)
+        import subprocess
+
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            execute_coo_approval_button_action(
+                action="prepare_dispatch",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+        ticket_id = str(approved["execution_ticket_id"])
+        from agent.coo.gateway_execution_dispatch import (
+            get_latest_dispatch_for_gateway_ticket,
+        )
+
+        snapshot = get_latest_dispatch_for_gateway_ticket(ticket_id)
+        assert snapshot is not None
+        token_id = snapshot["unlock_token"]["token_id"]
+        token_store = get_default_dispatch_unlock_token_store()
+        token = token_store.get(token_id)
+        assert token is not None
+        token.expires_at = (
+            datetime.now(timezone.utc) - timedelta(minutes=5)
+        ).isoformat()
+        token_store.save(token)
+
+        components = build_coo_approval_components(approved)
+        button_map = {button["label"]: button for button in components}
+        self.assertFalse(button_map["Remint Token"].get("disabled", False))
+        self.assertTrue(button_map["Run Approved Plan"].get("disabled", True))
+
+    def test_remint_dispatch_token_calls_gateway(self) -> None:
+        import subprocess
+        from datetime import datetime, timedelta, timezone
+
+        from agent.coo.execution_dispatch_runtime import get_default_dispatch_unlock_token_store
+        from agent.coo.gateway_execution_dispatch import (
+            get_latest_dispatch_for_gateway_ticket,
+            maybe_remint_dispatch_token_for_gateway_ticket,
+            prepare_dispatch_for_gateway_session,
+        )
+
+        store = CEOApprovalSessionStore()
+        approved = _seed_session_with_approved_execution_review(store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            prepare_dispatch_for_gateway_session(
+                approved["session_id"],
+                requester_id="987654321012345678",
+            )
+        ticket_id = str(approved["execution_ticket_id"])
+        snapshot = get_latest_dispatch_for_gateway_ticket(ticket_id)
+        assert snapshot is not None
+        token = get_default_dispatch_unlock_token_store().get(
+            snapshot["unlock_token"]["token_id"]
+        )
+        assert token is not None
+        token.expires_at = (
+            datetime.now(timezone.utc) - timedelta(minutes=5)
+        ).isoformat()
+        get_default_dispatch_unlock_token_store().save(token)
+
+        with patch.object(
+            subprocess, "run", side_effect=AssertionError("no subprocess")
+        ), patch(
+            "agent.coo.gateway_execution_dispatch.maybe_remint_dispatch_token_for_gateway_ticket",
+            wraps=maybe_remint_dispatch_token_for_gateway_ticket,
+        ) as mock_remint:
+            execute_coo_approval_button_action(
+                action="remint_dispatch_token",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+        mock_remint.assert_called_once_with(
+            ticket_id,
+            requester_id="987654321012345678",
+            reason="discord remint dispatch token",
+        )
+
+    def test_run_approved_plan_calls_gateway(self) -> None:
+        import subprocess
+
+        from agent.coo.gateway_execution_dispatch import (
+            prepare_dispatch_for_gateway_session,
+            run_dispatch_for_gateway_request,
+        )
+
+        store = CEOApprovalSessionStore()
+        approved = _seed_session_with_approved_execution_review(store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            prepare_dispatch_for_gateway_session(
+                approved["session_id"],
+                requester_id="987654321012345678",
+            )
+
+        with patch.object(
+            subprocess, "run", side_effect=AssertionError("no subprocess")
+        ), patch(
+            "agent.coo.gateway_execution_dispatch.run_dispatch_for_gateway_request",
+            wraps=run_dispatch_for_gateway_request,
+        ) as mock_run:
+            result = execute_coo_approval_button_action(
+                action="run_approved_plan",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+        mock_run.assert_called_once()
+        self.assertEqual(
+            mock_run.call_args.kwargs["requester_id"],
+            "987654321012345678",
+        )
+        self.assertIn(
+            _COO_DISPATCH_RUN_EPHEMERAL_KEY,
+            result,
+        )
+        self.assertEqual(
+            result[_COO_DISPATCH_RUN_EPHEMERAL_KEY],
+            _RUN_EXECUTOR_NOT_CONFIGURED_EPHEMERAL,
+        )
+
+    def test_run_approved_plan_fake_completed_ephemeral(self) -> None:
+        store = CEOApprovalSessionStore()
+        approved = _seed_session_with_approved_execution_review(store)
+        with patch(
+            "agent.coo.gateway_execution_dispatch.get_latest_dispatch_for_gateway_ticket",
+            return_value={
+                "can_run": True,
+                "unlock_token": {"token_id": "token-1"},
+            },
+        ), patch(
+            "agent.coo.gateway_execution_dispatch.run_dispatch_for_gateway_request",
+            return_value={
+                "dispatch_run": {
+                    "status": "completed",
+                    "summary": "Dispatch completed successfully.",
+                },
+                "ticket": {},
+                "plan": {},
+            },
+        ), patch(
+            "plugins.platforms.discord.coo_approval._should_disable_run_approved_plan_button",
+            return_value=False,
+        ):
+            result = execute_coo_approval_button_action(
+                action="run_approved_plan",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+
+        self.assertEqual(
+            result[_COO_DISPATCH_RUN_EPHEMERAL_KEY],
+            _RUN_COMPLETED_EPHEMERAL,
+        )
+
+    def test_dispatch_embed_shows_status_token_executor(self) -> None:
+        dispatch_payload = {
+            "dispatch_request": {"dispatch_request_id": "dispatch-req-1"},
+            "unlock_token": {"token_id": "token-1", "consumed": False},
+            "token_usable": True,
+            "dispatch_run": None,
+        }
+        embed = build_coo_approval_embed_payload(
+            _sample_session_payload(status="approved", execution_ticket_id="ticket-abc"),
+            review_payload=_approved_execution_review_payload(),
+            dispatch_payload=dispatch_payload,
+        )
+        field_map = {field["name"]: field["value"] for field in embed["fields"]}
+        self.assertEqual(field_map["Dispatch Status"], "Prepared — Not Executed")
+        self.assertEqual(field_map["Dispatch Token"], "usable")
+        self.assertEqual(field_map["Executor"], "Not configured")
+        self.assertEqual(field_map["Execution"], "Not dispatched")
+        self.assertEqual(field_map["Publish"], "Not dispatched")
+        self.assertIn("Dispatch prepared only", embed["footer"]["text"])
+
+    def test_dispatch_embed_shows_failed_run(self) -> None:
+        dispatch_payload = {
+            "dispatch_request": {"dispatch_request_id": "dispatch-req-1"},
+            "unlock_token": {"token_id": "token-1"},
+            "dispatch_run": {
+                "status": "failed",
+                "summary": "Pipeline dispatch executor is not configured.",
+            },
+        }
+        embed = build_coo_approval_embed_payload(
+            _sample_session_payload(status="approved", execution_ticket_id="ticket-abc"),
+            review_payload=_approved_execution_review_payload(),
+            dispatch_payload=dispatch_payload,
+        )
+        field_map = {field["name"]: field["value"] for field in embed["fields"]}
+        self.assertEqual(field_map["Dispatch Status"], "Run Attempted — Failed")
+        self.assertIn("Executor not configured", embed["footer"]["text"])
+
+    def test_parse_dispatch_custom_ids(self) -> None:
+        session_id = "sess-dispatch-1"
+        for action in (
+            "prepare_dispatch",
+            "run_approved_plan",
+            "remint_dispatch_token",
+        ):
+            parsed = parse_coo_approval_custom_id(f"coo_approval:{action}:{session_id}")
+            self.assertEqual(parsed["action"], action)
+            self.assertEqual(parsed["session_id"], session_id)
+
+    def test_prepare_dispatch_rejects_wrong_requester(self) -> None:
+        store = CEOApprovalSessionStore()
+        approved = _seed_session_with_approved_execution_review(store)
+        with patch(
+            "agent.coo.gateway_execution_dispatch.prepare_dispatch_for_gateway_session"
+        ) as mock_prepare:
+            with self.assertRaises(ValueError):
+                execute_coo_approval_button_action(
+                    action="prepare_dispatch",
+                    session_id=approved["session_id"],
+                    discord_user_id="wrong-user",
+                    store=store,
+                )
+        mock_prepare.assert_not_called()
+
+    def test_execution_review_does_not_call_dispatch_gateway(self) -> None:
+        import subprocess
+
+        store = CEOApprovalSessionStore()
+        approved = _seed_approved_session_with_plan_and_dry_run(store)
+        with patch.object(
+            subprocess, "run", side_effect=AssertionError("no subprocess")
+        ), patch(
+            "agent.coo.gateway_execution_dispatch.prepare_dispatch_for_gateway_session"
+        ) as mock_prepare, patch(
+            "agent.coo.gateway_execution_dispatch.run_dispatch_for_gateway_request"
+        ) as mock_run, patch(
+            "agent.coo.gateway_execution_dispatch.maybe_remint_dispatch_token_for_gateway_ticket"
+        ) as mock_remint:
+            execute_coo_approval_button_action(
+                action="execution_review",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+        mock_prepare.assert_not_called()
+        mock_run.assert_not_called()
+        mock_remint.assert_not_called()
+
+    def test_gateway_execution_dispatch_lazy_import_only(self) -> None:
+        source = coo_approval.__file__
+        assert source is not None
+        text = Path(source).read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if line.startswith("from agent.coo.gateway_execution_dispatch import"):
+                self.fail(
+                    "gateway_execution_dispatch must be imported lazily inside functions"
+                )
+            if line.startswith("import agent.coo.gateway_execution_dispatch"):
+                self.fail(
+                    "gateway_execution_dispatch must be imported lazily inside functions"
+                )
+
+    def test_module_has_no_pipeline_adapter_or_terminal_tool(self) -> None:
+        import inspect
+
+        source = inspect.getsource(coo_approval)
+        self.assertNotIn("pipeline_adapter", source)
+        self.assertNotIn("terminal_tool", source)
+        self.assertNotIn("import subprocess", source)
+        self.assertNotIn("subprocess.run", source)
+
+
+class TestDiscordCooApprovalDispatchCallbacks(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        from agent.coo.execution_dispatch_runtime import (
+            get_default_dispatch_execution_request_store,
+            get_default_dispatch_execution_run_store,
+            get_default_dispatch_unlock_token_store,
+        )
+        from agent.coo.execution_dispatcher import get_default_dispatch_plan_store
+        from agent.coo.execution_execute import (
+            get_default_execute_gate_store,
+            get_default_execute_request_store,
+        )
+        from agent.coo.execution_runtime import (
+            get_default_execution_request_store,
+            get_default_execution_run_store,
+        )
+        from agent.coo.execution_ticket import get_default_ticket_store
+
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+        get_default_execution_run_store().clear()
+        get_default_execution_request_store().clear()
+        get_default_execute_request_store().clear()
+        get_default_execute_gate_store().clear()
+        get_default_dispatch_unlock_token_store().clear()
+        get_default_dispatch_execution_request_store().clear()
+        get_default_dispatch_execution_run_store().clear()
+
+    def _mock_interaction(self, user_id: int = 987654321012345678):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        return SimpleNamespace(
+            user=SimpleNamespace(id=user_id),
+            response=SimpleNamespace(
+                is_done=lambda: False,
+                send_message=AsyncMock(),
+                edit_message=AsyncMock(),
+            ),
+            message=SimpleNamespace(edit=AsyncMock()),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+
+    async def test_prepare_dispatch_callback_ephemeral(self) -> None:
+        import subprocess
+
+        store = CEOApprovalSessionStore()
+        approved = _seed_session_with_approved_execution_review(store)
+        callback = _make_coo_approval_button_callback(
+            f"coo_approval:prepare_dispatch:{approved['session_id']}",
+            store=store,
+        )
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord), patch.object(
+            subprocess, "run", side_effect=AssertionError("no subprocess")
+        ):
+            await callback(interaction)
+        interaction.response.send_message.assert_awaited_once()
+        args, kwargs = interaction.response.send_message.await_args
+        self.assertEqual(args[0], _PREPARE_DISPATCH_EPHEMERAL)
+        self.assertTrue(kwargs.get("ephemeral"))
+
+    async def test_run_approved_plan_callback_executor_not_configured_ephemeral(
+        self,
+    ) -> None:
+        import subprocess
+
+        from agent.coo.pipeline_adapter import PipelineAdapter
+
+        store = CEOApprovalSessionStore()
+        approved = _seed_session_with_approved_execution_review(store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            execute_coo_approval_button_action(
+                action="prepare_dispatch",
+                session_id=approved["session_id"],
+                discord_user_id="987654321012345678",
+                store=store,
+            )
+        callback = _make_coo_approval_button_callback(
+            f"coo_approval:run_approved_plan:{approved['session_id']}",
+            store=store,
+        )
+        interaction = self._mock_interaction()
+        fake_discord = _make_fake_discord_module()
+        with patch.object(coo_approval, "_get_discord_module", return_value=fake_discord), patch.object(
+            subprocess, "run", side_effect=AssertionError("no subprocess")
+        ), patch.object(PipelineAdapter, "validate_root", return_value=(True, "")):
+            await callback(interaction)
+        interaction.response.send_message.assert_awaited_once()
+        args, kwargs = interaction.response.send_message.await_args
+        self.assertEqual(args[0], _RUN_EXECUTOR_NOT_CONFIGURED_EPHEMERAL)
         self.assertTrue(kwargs.get("ephemeral"))
 
 

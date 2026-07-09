@@ -1073,7 +1073,7 @@ class TestGatewayDispatchBridge(unittest.TestCase):
         self.assertNotIn("subprocess.run", source)
         self.assertNotIn("subprocess.Popen", source)
 
-    def test_discord_file_unchanged_by_gateway_dispatch(self) -> None:
+    def test_discord_dispatch_wired_with_lazy_import_only(self) -> None:
         discord_path = (
             Path(__file__).resolve().parents[3]
             / "plugins/platforms/discord/coo_approval.py"
@@ -1082,15 +1082,15 @@ class TestGatewayDispatchBridge(unittest.TestCase):
         for line in source.splitlines():
             if line.startswith("from agent.coo.gateway_execution_dispatch import"):
                 self.fail(
-                    "gateway_execution_dispatch must not be wired into Discord in Phase 10H"
+                    "gateway_execution_dispatch must be imported lazily inside functions"
                 )
             if line.startswith("import agent.coo.gateway_execution_dispatch"):
                 self.fail(
-                    "gateway_execution_dispatch must not be wired into Discord in Phase 10H"
+                    "gateway_execution_dispatch must be imported lazily inside functions"
                 )
-        self.assertNotIn("run_dispatch_for_gateway_request", source)
-        self.assertNotIn("prepare_dispatch_for_gateway_ticket", source)
-        self.assertNotIn("maybe_remint_dispatch_token_for_gateway_ticket", source)
+        self.assertIn("prepare_dispatch", source)
+        self.assertIn("run_approved_plan", source)
+        self.assertIn("remint_dispatch_token", source)
 
 
 if __name__ == "__main__":

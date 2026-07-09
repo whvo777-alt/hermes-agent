@@ -4,10 +4,14 @@ Prepares in-memory COO approval session payloads, pure-dict embed/component UI
 payloads, and optional discord.py Embed/View objects for Discord handler wiring.
 
 Button callbacks update Approval Session state
-(approve/reject/refresh/prepare_plan/dry_run_preview/execution_review).
+(approve/reject/refresh/prepare_plan/dry_run_preview/execution_review/
+prepare_dispatch/run_approved_plan/remint_dispatch_token).
 Prepare Plan creates a dispatch plan only — no Repository2 execution.
 Dry Run Preview starts a synthetic dry-run only — no Repository2 execution.
 Execution Review creates ExecuteRequest + ExecuteGate only — no execution.
+Prepare Dispatch creates unlock token and dispatch request only — no execution.
+Run Approved Plan invokes the gateway dispatch runner — production defaults
+fail with executor not configured; no Repository2 execution.
 
 This module is for COO CEO approval sessions only.
 This module is unrelated to ``tools/approval.py`` ``resolve_gateway_approval()``.
@@ -46,6 +50,15 @@ _EMBED_FOOTER_TEXT_DRY_RUN = (
 _EMBED_FOOTER_TEXT_EXECUTION_REVIEW = (
     "Execution review only. No execution or publish is dispatched."
 )
+_EMBED_FOOTER_TEXT_DISPATCH_PREPARED = (
+    "Dispatch prepared only. No execution or publish is dispatched."
+)
+_EMBED_FOOTER_TEXT_DISPATCH_RUN_FAILED = (
+    "Run attempted. Executor not configured — no Repository2 execution."
+)
+_EMBED_FOOTER_TEXT_DISPATCH_COMPLETED = (
+    "Dispatch completed. Publish remains not dispatched."
+)
 _EMBED_FOOTER_TEXT_NO_PLAN = "Approval only. No execution will be dispatched."
 # Discord hard limits (per-element) used by this builder.
 _FIELD_VALUE_MAX = 1024  # max chars per embed field value
@@ -65,12 +78,21 @@ _ALLOWED_COO_APPROVAL_ACTIONS = frozenset({
     "execution_review",
     "approve_execution_review",
     "reject_execution_review",
+    "prepare_dispatch",
+    "run_approved_plan",
+    "remint_dispatch_token",
 })
 _PREPARE_PLAN_EPHEMERAL = "Plan Ready — Not Executed"
 _DRY_RUN_PREVIEW_EPHEMERAL = "Dry Run Preview — Not Executed"
 _EXECUTION_REVIEW_EPHEMERAL = "Execution Review Ready — Not Executed"
 _APPROVE_EXECUTION_REVIEW_EPHEMERAL = "Execution Review Approved — Not Executed"
 _REJECT_EXECUTION_REVIEW_EPHEMERAL = "Execution Review Rejected — Not Executed"
+_PREPARE_DISPATCH_EPHEMERAL = "Dispatch Prepared — Not Executed"
+_REMINT_DISPATCH_TOKEN_EPHEMERAL = "Dispatch Token Refreshed — Prepare dispatch again"
+_RUN_COMPLETED_EPHEMERAL = "Run Completed"
+_RUN_FAILED_EPHEMERAL = "Run Attempted — Failed"
+_RUN_EXECUTOR_NOT_CONFIGURED_EPHEMERAL = "Run Attempted — Executor Not Configured"
+_COO_DISPATCH_RUN_EPHEMERAL_KEY = "_coo_dispatch_run_ephemeral"
 _ERR_SESSION_NOT_FOUND = "Approval session not found."
 _ERR_NOT_ALLOWED = "You are not allowed to approve this session."
 _ERR_SESSION_EXPIRED = "Approval session expired."
@@ -222,6 +244,105 @@ def _lookup_latest_execution_review_for_session(
         return None
 
 
+def _lookup_latest_dispatch_for_session(
+    session_payload: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Best-effort latest dispatch snapshot lookup for embed rendering."""
+    ticket_id = str(session_payload.get("execution_ticket_id") or "").strip()
+    if not ticket_id:
+        return None
+    try:
+        from agent.coo.gateway_execution_dispatch import (
+            get_latest_dispatch_for_gateway_ticket,
+        )
+
+        return get_latest_dispatch_for_gateway_ticket(ticket_id)
+    except Exception as exc:
+        logger.warning(
+            "COO approval dispatch lookup failed for ticket %s: %s",
+            ticket_id[:64],
+            exc,
+        )
+        return None
+
+
+def _is_execution_review_gate_approved(
+    review_payload: Optional[Dict[str, Any]],
+) -> bool:
+    if review_payload is None:
+        return False
+    gate = review_payload.get("gate")
+    if not isinstance(gate, dict):
+        return False
+    return str(gate.get("status") or "").strip().lower() == "approved"
+
+
+def _dispatch_status_label(
+    dispatch_payload: Optional[Dict[str, Any]],
+) -> str:
+    if dispatch_payload is None:
+        return "Not prepared"
+    dispatch_run = dispatch_payload.get("dispatch_run")
+    if isinstance(dispatch_run, dict):
+        run_status = str(dispatch_run.get("status") or "").strip().lower()
+        if run_status == "completed":
+            return "Completed"
+        if run_status == "failed":
+            return "Run Attempted — Failed"
+    if dispatch_payload.get("dispatch_request"):
+        return "Prepared — Not Executed"
+    return "Not prepared"
+
+
+def _dispatch_token_label(
+    dispatch_payload: Optional[Dict[str, Any]],
+) -> str:
+    if dispatch_payload is None:
+        return "not minted"
+    token = dispatch_payload.get("unlock_token")
+    if not isinstance(token, dict):
+        return "not minted"
+    if token.get("consumed"):
+        return "consumed"
+    if token.get("superseded"):
+        return "superseded"
+    if dispatch_payload.get("token_usable"):
+        return "usable"
+    return "expired"
+
+
+def _dispatch_executor_label() -> str:
+    return "Not configured"
+
+
+def _execution_field_label(
+    session_payload: Dict[str, Any],
+    dispatch_payload: Optional[Dict[str, Any]] = None,
+) -> str:
+    if dispatch_payload is not None:
+        dispatch_run = dispatch_payload.get("dispatch_run")
+        if isinstance(dispatch_run, dict):
+            if str(dispatch_run.get("status") or "").strip().lower() == "completed":
+                return "Dispatched"
+    return _dispatch_label(session_payload, "execution_dispatched")
+
+
+def _publish_field_label() -> str:
+    return "Not dispatched"
+
+
+def _dispatch_run_ephemeral_message(dispatch_run: Dict[str, Any]) -> str:
+    status = str(dispatch_run.get("status") or "").strip().lower()
+    summary = str(dispatch_run.get("summary") or "").strip().lower()
+    if status == "completed":
+        return _RUN_COMPLETED_EPHEMERAL
+    if status == "failed":
+        if "executor" in summary and "not configured" in summary:
+            return _RUN_EXECUTOR_NOT_CONFIGURED_EPHEMERAL
+        return _RUN_FAILED_EPHEMERAL
+    return _RUN_FAILED_EPHEMERAL
+
+
 def _has_completed_dry_run_with_planned_skills(
     run_payload: Optional[Dict[str, Any]],
 ) -> bool:
@@ -345,6 +466,7 @@ def build_coo_approval_embed_payload(
     plan_payload: Optional[Dict[str, Any]] = None,
     run_payload: Optional[Dict[str, Any]] = None,
     review_payload: Optional[Dict[str, Any]] = None,
+    dispatch_payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build a pure-dict Discord embed payload for a COO approval session."""
     session_id = _require_session_id(session_payload)
@@ -358,6 +480,15 @@ def build_coo_approval_embed_payload(
         review_payload
         if review_payload is not None
         else _lookup_latest_execution_review_for_session(session_payload)
+    )
+    dispatch = (
+        dispatch_payload
+        if dispatch_payload is not None
+        else (
+            _lookup_latest_dispatch_for_session(session_payload)
+            if _is_execution_review_gate_approved(review)
+            else None
+        )
     )
     task_kind = _truncate(session_payload.get("task_kind", ""), 128)
     run_date = _truncate(session_payload.get("run_date", ""), 64)
@@ -423,12 +554,12 @@ def build_coo_approval_embed_payload(
             },
             {
                 "name": "Execution",
-                "value": _dispatch_label(session_payload, "execution_dispatched"),
+                "value": _execution_field_label(session_payload, dispatch),
                 "inline": True,
             },
             {
                 "name": "Publish",
-                "value": _dispatch_label(session_payload, "publish_dispatched"),
+                "value": _publish_field_label(),
                 "inline": True,
             },
         ]
@@ -575,7 +706,71 @@ def build_coo_approval_embed_payload(
                     }
                 )
 
-    if review:
+    if dispatch is not None:
+        dispatch_request = dispatch.get("dispatch_request")
+        dispatch_run = dispatch.get("dispatch_run")
+        request_id = ""
+        if isinstance(dispatch_request, dict):
+            request_id = str(dispatch_request.get("dispatch_request_id") or "")
+        run_status = ""
+        run_summary = ""
+        if isinstance(dispatch_run, dict):
+            run_status = str(dispatch_run.get("status") or "")
+            run_summary = str(dispatch_run.get("summary") or "")
+        fields.extend(
+            [
+                {
+                    "name": "Dispatch Status",
+                    "value": _dispatch_status_label(dispatch),
+                    "inline": False,
+                },
+                {
+                    "name": "Dispatch Token",
+                    "value": _dispatch_token_label(dispatch),
+                    "inline": True,
+                },
+                {
+                    "name": "Executor",
+                    "value": _dispatch_executor_label(),
+                    "inline": True,
+                },
+                {
+                    "name": "Dispatch Request",
+                    "value": _truncate(request_id or "(none)", _INLINE_FIELD_VALUE_MAX),
+                    "inline": False,
+                },
+                {
+                    "name": "Dispatch Run",
+                    "value": _truncate(
+                        f"{run_status or '(none)'}"
+                        + (f" — {run_summary}" if run_summary else ""),
+                        _FIELD_VALUE_MAX,
+                    ),
+                    "inline": False,
+                },
+            ]
+        )
+
+    dispatch_run = dispatch.get("dispatch_run") if isinstance(dispatch, dict) else None
+    if isinstance(dispatch_run, dict):
+        run_status = str(dispatch_run.get("status") or "").strip().lower()
+        if run_status == "completed":
+            footer_text = _EMBED_FOOTER_TEXT_DISPATCH_COMPLETED
+        elif run_status == "failed":
+            footer_text = _EMBED_FOOTER_TEXT_DISPATCH_RUN_FAILED
+        elif dispatch.get("dispatch_request"):
+            footer_text = _EMBED_FOOTER_TEXT_DISPATCH_PREPARED
+        elif review:
+            footer_text = _EMBED_FOOTER_TEXT_EXECUTION_REVIEW
+        elif run:
+            footer_text = _EMBED_FOOTER_TEXT_DRY_RUN
+        elif plan:
+            footer_text = _EMBED_FOOTER_TEXT
+        else:
+            footer_text = _EMBED_FOOTER_TEXT_NO_PLAN
+    elif dispatch is not None and dispatch.get("dispatch_request"):
+        footer_text = _EMBED_FOOTER_TEXT_DISPATCH_PREPARED
+    elif review:
         footer_text = _EMBED_FOOTER_TEXT_EXECUTION_REVIEW
     elif run:
         footer_text = _EMBED_FOOTER_TEXT_DRY_RUN
@@ -686,6 +881,52 @@ def _should_show_execution_review_decision_buttons(
     if not isinstance(gate, dict):
         return False
     return str(gate.get("status") or "").strip().lower() == "pending"
+
+
+def _should_show_dispatch_buttons(session_payload: Dict[str, Any]) -> bool:
+    review = _lookup_latest_execution_review_for_session(session_payload)
+    if not _is_execution_review_gate_approved(review):
+        return False
+    ticket_id = str(session_payload.get("execution_ticket_id") or "").strip()
+    if not ticket_id:
+        return False
+    dispatch = _lookup_latest_dispatch_for_session(session_payload)
+    if dispatch is not None:
+        dispatch_run = dispatch.get("dispatch_run")
+        if isinstance(dispatch_run, dict):
+            if str(dispatch_run.get("status") or "").strip().lower() == "completed":
+                return False
+    return True
+
+
+def _should_disable_prepare_dispatch_button(session_payload: Dict[str, Any]) -> bool:
+    if not _should_show_dispatch_buttons(session_payload):
+        return True
+    dispatch = _lookup_latest_dispatch_for_session(session_payload) or {}
+    return not bool(dispatch.get("can_prepare"))
+
+
+def _should_disable_run_approved_plan_button(session_payload: Dict[str, Any]) -> bool:
+    if not _should_show_dispatch_buttons(session_payload):
+        return True
+    dispatch = _lookup_latest_dispatch_for_session(session_payload) or {}
+    return not bool(dispatch.get("can_run"))
+
+
+def _should_disable_remint_dispatch_token_button(session_payload: Dict[str, Any]) -> bool:
+    if not _should_show_dispatch_buttons(session_payload):
+        return True
+    dispatch = _lookup_latest_dispatch_for_session(session_payload) or {}
+    token = dispatch.get("unlock_token")
+    if not isinstance(token, dict):
+        return True
+    if token.get("consumed"):
+        return True
+    if token.get("superseded"):
+        return True
+    if dispatch.get("token_usable"):
+        return True
+    return False
 
 
 def _assert_session_owner(
@@ -817,6 +1058,97 @@ def execute_coo_approval_button_action(
         if refreshed is None:
             raise KeyError(session_id)
         return refreshed
+
+    if normalized_action == "prepare_dispatch":
+        existing = get_discord_approval_session(session_id, store=store)
+        if existing is None:
+            raise KeyError(session_id)
+        _assert_session_owner(existing, user_id, session_id)
+        if _should_disable_prepare_dispatch_button(existing):
+            raise ValueError(
+                f"Cannot prepare dispatch for session {session_id} "
+                f"in status {existing.get('status')}"
+            )
+        from agent.coo.gateway_execution_dispatch import (
+            prepare_dispatch_for_gateway_session,
+        )
+
+        prepare_dispatch_for_gateway_session(
+            session_id,
+            requester_id=user_id,
+            reason="discord prepare dispatch",
+        )
+        refreshed = get_discord_approval_session(session_id, store=store)
+        if refreshed is None:
+            raise KeyError(session_id)
+        return refreshed
+
+    if normalized_action == "remint_dispatch_token":
+        existing = get_discord_approval_session(session_id, store=store)
+        if existing is None:
+            raise KeyError(session_id)
+        _assert_session_owner(existing, user_id, session_id)
+        if _should_disable_remint_dispatch_token_button(existing):
+            raise ValueError(
+                f"Cannot remint dispatch token for session {session_id} "
+                f"in status {existing.get('status')}"
+            )
+        ticket_id = _ticket_id_from_session(existing)
+        from agent.coo.gateway_execution_dispatch import (
+            maybe_remint_dispatch_token_for_gateway_ticket,
+        )
+
+        maybe_remint_dispatch_token_for_gateway_ticket(
+            ticket_id,
+            requester_id=user_id,
+            reason="discord remint dispatch token",
+        )
+        refreshed = get_discord_approval_session(session_id, store=store)
+        if refreshed is None:
+            raise KeyError(session_id)
+        return refreshed
+
+    if normalized_action == "run_approved_plan":
+        existing = get_discord_approval_session(session_id, store=store)
+        if existing is None:
+            raise KeyError(session_id)
+        _assert_session_owner(existing, user_id, session_id)
+        if _should_disable_run_approved_plan_button(existing):
+            raise ValueError(
+                f"Cannot run approved plan for session {session_id} "
+                f"in status {existing.get('status')}"
+            )
+        ticket_id = _ticket_id_from_session(existing)
+        from agent.coo.gateway_execution_dispatch import (
+            get_latest_dispatch_for_gateway_ticket,
+            run_dispatch_for_gateway_request,
+        )
+
+        snapshot = get_latest_dispatch_for_gateway_ticket(
+            ticket_id,
+            requester_id=user_id,
+        )
+        if snapshot is None or not snapshot.get("can_run"):
+            raise ValueError("Cannot run approved plan — dispatch not ready.")
+        unlock_token = snapshot.get("unlock_token")
+        if not isinstance(unlock_token, dict):
+            raise ValueError("Cannot run approved plan — dispatch unlock token missing.")
+        unlock_token_id = str(unlock_token.get("token_id") or "").strip()
+        if not unlock_token_id:
+            raise ValueError("Cannot run approved plan — dispatch unlock token missing.")
+        run_result = run_dispatch_for_gateway_request(
+            unlock_token_id=unlock_token_id,
+            requester_id=user_id,
+        )
+        refreshed = get_discord_approval_session(session_id, store=store)
+        if refreshed is None:
+            raise KeyError(session_id)
+        return {
+            **refreshed,
+            _COO_DISPATCH_RUN_EPHEMERAL_KEY: _dispatch_run_ephemeral_message(
+                dict(run_result.get("dispatch_run") or {})
+            ),
+        }
 
     if normalized_action in ("approve_execution_review", "reject_execution_review"):
         existing = get_discord_approval_session(session_id, store=store)
@@ -1010,6 +1342,36 @@ def build_coo_approval_components(session_payload: Dict[str, Any]) -> List[Dict[
                 ),
             ]
         )
+    if _should_show_dispatch_buttons(session_payload):
+        dispatch = _lookup_latest_dispatch_for_session(session_payload) or {}
+        components.extend(
+            [
+                _coo_approval_button_component(
+                    label="Prepare Dispatch",
+                    style="primary",
+                    custom_id=_build_coo_approval_custom_id("prepare_dispatch", session_id),
+                    disabled=_should_disable_prepare_dispatch_button(session_payload),
+                ),
+                _coo_approval_button_component(
+                    label="Run Approved Plan",
+                    style="secondary",
+                    custom_id=_build_coo_approval_custom_id(
+                        "run_approved_plan",
+                        session_id,
+                    ),
+                    disabled=_should_disable_run_approved_plan_button(session_payload),
+                ),
+                _coo_approval_button_component(
+                    label="Remint Token",
+                    style="secondary",
+                    custom_id=_build_coo_approval_custom_id(
+                        "remint_dispatch_token",
+                        session_id,
+                    ),
+                    disabled=_should_disable_remint_dispatch_token_button(session_payload),
+                ),
+            ]
+        )
     return components
 
 
@@ -1077,6 +1439,19 @@ def _make_coo_approval_button_callback(
                     interaction,
                     _REJECT_EXECUTION_REVIEW_EPHEMERAL,
                 )
+            elif parsed["action"] == "prepare_dispatch":
+                await _respond_coo_approval_ephemeral(interaction, _PREPARE_DISPATCH_EPHEMERAL)
+            elif parsed["action"] == "remint_dispatch_token":
+                await _respond_coo_approval_ephemeral(
+                    interaction,
+                    _REMINT_DISPATCH_TOKEN_EPHEMERAL,
+                )
+            elif parsed["action"] == "run_approved_plan":
+                ephemeral = str(
+                    session_payload.get(_COO_DISPATCH_RUN_EPHEMERAL_KEY)
+                    or _RUN_FAILED_EPHEMERAL
+                )
+                await _respond_coo_approval_ephemeral(interaction, ephemeral)
             elif not updated:
                 status = session_payload.get("status", "unknown")
                 await _respond_coo_approval_ephemeral(
