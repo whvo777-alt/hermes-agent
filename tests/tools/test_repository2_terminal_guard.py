@@ -15,6 +15,8 @@ from tools.repository2_terminal_guard import (
     check_repository2_terminal_block,
 )
 
+from agent.coo.dispatch_unlock_context import DispatchUnlockContext
+
 REPOSITORY2_ROOT = "/opt/data/multi-content-pipeline"
 SKILL_PATH = (
     Path(__file__).resolve().parents[2]
@@ -33,6 +35,24 @@ def _minimal_terminal_config(cwd="/tmp"):
         "modal_image": "",
         "daytona_image": "",
     }
+
+
+def _valid_unlock_context(
+    *,
+    target_skills: tuple[str, ...] = ("create_content",),
+) -> DispatchUnlockContext:
+    return DispatchUnlockContext(
+        token_id="token-1",
+        ticket_id="ticket-1",
+        plan_id="plan-1",
+        execute_request_id="execute-request-1",
+        gate_id="gate-1",
+        dry_run_run_id="dry-run-1",
+        target_skills=target_skills,
+        dispatch_generation=0,
+        pipeline_root=REPOSITORY2_ROOT,
+        allowed_entrypoints=("node pipeline.js",),
+    )
 
 
 class TestRepository2TerminalGuard(unittest.TestCase):
@@ -178,6 +198,93 @@ class TestRepository2TerminalGuard(unittest.TestCase):
         self.assertEqual(blocked_result["status"], "blocked")
         self.assertEqual(blocked_result["error"], REPOSITORY2_BLOCK_MESSAGE)
         self.assertEqual(execute_mock.call_count, 1)
+
+
+class TestRepository2TerminalGuardScopedUnlock(unittest.TestCase):
+    def test_valid_context_allows_node_pipeline_js_in_repository2(self) -> None:
+        blocked = check_repository2_terminal_block(
+            "node pipeline.js",
+            effective_workdir=REPOSITORY2_ROOT,
+            repository2_root=REPOSITORY2_ROOT,
+            unlock_context=_valid_unlock_context(),
+        )
+        self.assertIsNone(blocked)
+
+    def test_valid_context_blocks_npm_run_preview_approvals(self) -> None:
+        blocked = check_repository2_terminal_block(
+            "npm run preview:approvals",
+            effective_workdir=REPOSITORY2_ROOT,
+            repository2_root=REPOSITORY2_ROOT,
+            unlock_context=_valid_unlock_context(),
+        )
+        self.assertEqual(blocked, REPOSITORY2_BLOCK_MESSAGE)
+
+    def test_valid_context_blocks_npm_run_verify(self) -> None:
+        blocked = check_repository2_terminal_block(
+            "npm run verify",
+            effective_workdir=REPOSITORY2_ROOT,
+            repository2_root=REPOSITORY2_ROOT,
+            unlock_context=_valid_unlock_context(),
+        )
+        self.assertEqual(blocked, REPOSITORY2_BLOCK_MESSAGE)
+
+    def test_valid_context_blocks_publish_and_preflight(self) -> None:
+        for command in ("npm run preflight:publish", "publish now"):
+            with self.subTest(command=command):
+                blocked = check_repository2_terminal_block(
+                    command,
+                    effective_workdir=REPOSITORY2_ROOT,
+                    repository2_root=REPOSITORY2_ROOT,
+                    unlock_context=_valid_unlock_context(),
+                )
+                self.assertEqual(blocked, REPOSITORY2_BLOCK_MESSAGE)
+
+    def test_valid_context_blocks_pipeline_js_outside_repository2(self) -> None:
+        blocked = check_repository2_terminal_block(
+            "node pipeline.js",
+            effective_workdir="/tmp",
+            repository2_root=REPOSITORY2_ROOT,
+            unlock_context=_valid_unlock_context(),
+        )
+        self.assertEqual(blocked, REPOSITORY2_BLOCK_MESSAGE)
+
+    def test_valid_context_allows_ls_in_repository2(self) -> None:
+        blocked = check_repository2_terminal_block(
+            "ls -la outputs",
+            effective_workdir=REPOSITORY2_ROOT,
+            repository2_root=REPOSITORY2_ROOT,
+            unlock_context=_valid_unlock_context(),
+        )
+        self.assertIsNone(blocked)
+
+    def test_context_without_create_content_blocks_pipeline_js(self) -> None:
+        blocked = check_repository2_terminal_block(
+            "node pipeline.js",
+            effective_workdir=REPOSITORY2_ROOT,
+            repository2_root=REPOSITORY2_ROOT,
+            unlock_context=_valid_unlock_context(target_skills=()),
+        )
+        self.assertEqual(blocked, REPOSITORY2_BLOCK_MESSAGE)
+
+
+class TestRepository2TerminalGuardIntegration(unittest.TestCase):
+    def test_terminal_tool_force_without_context_still_blocks(self) -> None:
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            with patch.object(
+                terminal_tool,
+                "_get_env_config",
+                return_value=_minimal_terminal_config(),
+            ):
+                raw = terminal_tool.terminal_tool(
+                    command="node pipeline.js",
+                    workdir=REPOSITORY2_ROOT,
+                    force=True,
+                )
+
+        payload = json.loads(raw)
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["error"], REPOSITORY2_BLOCK_MESSAGE)
+        self.assertEqual(payload["exit_code"], 1)
 
 
 if __name__ == "__main__":

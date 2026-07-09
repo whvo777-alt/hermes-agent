@@ -88,6 +88,7 @@ class ExecutionTicket:
     execution_dispatched: bool = False
     publish_dispatched: bool = False
     repository2_touched: bool = False
+    dispatch_generation: int = 0
     created_at: str = field(default_factory=_utc_now_iso)
     source_report_status: str = ""
     source_runtime_status: str = ""
@@ -112,6 +113,7 @@ class ExecutionTicket:
             "execution_dispatched": self.execution_dispatched,
             "publish_dispatched": self.publish_dispatched,
             "repository2_touched": self.repository2_touched,
+            "dispatch_generation": self.dispatch_generation,
             "created_at": self.created_at,
             "source_report_status": self.source_report_status,
             "source_runtime_status": self.source_runtime_status,
@@ -240,3 +242,11 @@ def mark_dispatch_pending(ticket: ExecutionTicket) -> None:
             f"from status {ticket.status.value}"
         )
     ticket.status = ExecutionTicketStatus.DISPATCH_PENDING
+
+
+def bump_dispatch_generation(ticket: ExecutionTicket, reason: str = "") -> int:
+    """Increment the ticket dispatch generation — lineage invalidation marker."""
+    ticket.dispatch_generation += 1
+    if reason:
+        ticket.notes.append(f"dispatch_generation bumped: {reason}")
+    return ticket.dispatch_generation

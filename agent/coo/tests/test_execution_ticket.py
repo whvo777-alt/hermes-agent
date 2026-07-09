@@ -20,6 +20,7 @@ from agent.coo.execution_ticket import (
     ExecutionTicket,
     ExecutionTicketStatus,
     ExecutionTicketStore,
+    bump_dispatch_generation,
     create_ticket_from_approval_session,
 )
 from agent.coo.orchestrator import COOOrchestrator
@@ -306,6 +307,35 @@ class TestExecutionTicketStoreInvariant(unittest.TestCase):
 
         self.assertIs(store.get("ticket-1"), ticket)
         self.assertEqual(store.get("ticket-1").notes, ["updated"])
+
+
+class TestDispatchGeneration(unittest.TestCase):
+    def test_dispatch_generation_defaults_to_zero(self) -> None:
+        ticket = ExecutionTicket(
+            ticket_id="ticket-gen-1",
+            approval_session_id="session-gen-1",
+            status=ExecutionTicketStatus.CREATED,
+            task_kind="create_content",
+            run_date="2026-07-07",
+        )
+        self.assertEqual(ticket.dispatch_generation, 0)
+
+    def test_bump_dispatch_generation_increments(self) -> None:
+        ticket = ExecutionTicket(
+            ticket_id="ticket-gen-2",
+            approval_session_id="session-gen-2",
+            status=ExecutionTicketStatus.CREATED,
+            task_kind="create_content",
+            run_date="2026-07-07",
+        )
+        first = bump_dispatch_generation(ticket, reason="new dry-run")
+        second = bump_dispatch_generation(ticket, reason="new execute request")
+
+        self.assertEqual(first, 1)
+        self.assertEqual(second, 2)
+        self.assertEqual(ticket.dispatch_generation, 2)
+        self.assertIn("dispatch_generation bumped: new dry-run", ticket.notes)
+        self.assertIn("dispatch_generation bumped: new execute request", ticket.notes)
 
 
 if __name__ == "__main__":

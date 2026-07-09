@@ -2337,8 +2337,14 @@ def terminal_tool(
             default_cwd=cwd,
         )
         from tools.repository2_terminal_guard import check_repository2_terminal_block
+        from agent.coo.dispatch_unlock_context import get_active_dispatch_unlock_context
 
-        repository2_block = check_repository2_terminal_block(command, effective_cwd)
+        unlock_context = get_active_dispatch_unlock_context()
+        repository2_block = check_repository2_terminal_block(
+            command,
+            effective_cwd,
+            unlock_context=unlock_context,
+        )
         if repository2_block:
             logger.warning(
                 "Blocked Repository2 terminal execution "
