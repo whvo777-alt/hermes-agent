@@ -8,7 +8,7 @@ import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from agent.coo.execution_dispatch_runtime import (
     DispatchExecutionRequestStore,
@@ -54,6 +54,12 @@ from agent.coo.gateway_execution_execute import (
     create_execute_request_for_gateway_ticket,
 )
 from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
+from agent.coo.production_executor_confirmation import (
+    ProductionExecutorConfirmationStore,
+    REQUIRED_CONFIRMATION_PHRASE,
+    create_production_executor_confirmation,
+)
+from agent.coo.production_executor_policy import ProductionExecutorPolicy
 from agent.coo.tests.test_gateway_execution_execute import (
     _manual_plan,
     _manual_ticket,
@@ -1091,6 +1097,122 @@ class TestGatewayDispatchBridge(unittest.TestCase):
         self.assertIn("prepare_dispatch", source)
         self.assertIn("run_approved_plan", source)
         self.assertIn("remint_dispatch_token", source)
+
+
+class TestGatewayDispatchProductionPolicyThreading(unittest.TestCase):
+    def setUp(self) -> None:
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+        get_default_execution_run_store().clear()
+        get_default_execution_request_store().clear()
+        get_default_execute_request_store().clear()
+        get_default_execute_gate_store().clear()
+        get_default_dispatch_unlock_token_store().clear()
+        get_default_dispatch_execution_request_store().clear()
+        get_default_dispatch_execution_run_store().clear()
+
+    def test_run_without_production_policy_threads_none_defaults(self) -> None:
+        ctx = _seed_approved_dispatch_pipeline()
+        ticket = ctx["ticket"]
+        prepare = prepare_dispatch_for_gateway_ticket(
+            ticket.ticket_id,
+            requester_id=ticket.requester_id,
+            ticket_store=ctx["ticket_store"],
+            plan_store=ctx["plan_store"],
+            run_store=ctx["run_store"],
+            dry_run_request_store=ctx["dry_run_request_store"],
+            execute_request_store=ctx["execute_request_store"],
+            gate_store=ctx["gate_store"],
+            token_store=ctx["token_store"],
+            dispatch_request_store=ctx["dispatch_request_store"],
+        )
+        fake_run = MagicMock()
+        fake_run.to_dict.return_value = {"status": "failed", "summary": "stub"}
+
+        with patch(
+            "agent.coo.gateway_execution_dispatch.run_approved_dispatch",
+            return_value=fake_run,
+        ) as mock_run:
+            run_dispatch_for_gateway_request(
+                unlock_token_id=prepare["unlock_token"]["token_id"],
+                requester_id=ticket.requester_id,
+                ticket_store=ctx["ticket_store"],
+                plan_store=ctx["plan_store"],
+                gate_store=ctx["gate_store"],
+                token_store=ctx["token_store"],
+                dispatch_request_store=ctx["dispatch_request_store"],
+                dispatch_run_store=ctx["dispatch_run_store"],
+            )
+
+        kwargs = mock_run.call_args.kwargs
+        self.assertIsNone(kwargs.get("production_policy"))
+        self.assertIsNone(kwargs.get("confirmation"))
+        self.assertIsNone(kwargs.get("confirmation_store"))
+        self.assertIsNone(kwargs.get("audit_dir"))
+        self.assertIsNone(kwargs.get("dry_run_store"))
+
+    def test_run_threads_production_policy_confirmation_and_audit_dir(self) -> None:
+        ctx = _seed_approved_dispatch_pipeline()
+        ticket = ctx["ticket"]
+        prepare = prepare_dispatch_for_gateway_ticket(
+            ticket.ticket_id,
+            requester_id=ticket.requester_id,
+            ticket_store=ctx["ticket_store"],
+            plan_store=ctx["plan_store"],
+            run_store=ctx["run_store"],
+            dry_run_request_store=ctx["dry_run_request_store"],
+            execute_request_store=ctx["execute_request_store"],
+            gate_store=ctx["gate_store"],
+            token_store=ctx["token_store"],
+            dispatch_request_store=ctx["dispatch_request_store"],
+        )
+        policy = ProductionExecutorPolicy(
+            enabled=True,
+            allowed_pipeline_roots=("/tmp/fake-pipeline",),
+        )
+        confirmation_store = ProductionExecutorConfirmationStore()
+        confirmation = create_production_executor_confirmation(
+            ticket_id=ticket.ticket_id,
+            plan_id=ctx["plan"].plan_id,
+            unlock_token_id=prepare["unlock_token"]["token_id"],
+            dispatch_request_id=prepare["dispatch_request"]["dispatch_request_id"],
+            operator_id="operator-1",
+            operator_name="Operator One",
+            confirmation_reason="gateway threading test",
+            confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            confirmation_store=confirmation_store,
+        )
+        audit_dir = Path("/tmp/hermes-audit-threading")
+        dry_run_store = ctx["run_store"]
+        fake_run = MagicMock()
+        fake_run.to_dict.return_value = {"status": "failed", "summary": "stub"}
+
+        with patch(
+            "agent.coo.gateway_execution_dispatch.run_approved_dispatch",
+            return_value=fake_run,
+        ) as mock_run:
+            run_dispatch_for_gateway_request(
+                unlock_token_id=prepare["unlock_token"]["token_id"],
+                requester_id=ticket.requester_id,
+                ticket_store=ctx["ticket_store"],
+                plan_store=ctx["plan_store"],
+                gate_store=ctx["gate_store"],
+                token_store=ctx["token_store"],
+                dispatch_request_store=ctx["dispatch_request_store"],
+                dispatch_run_store=ctx["dispatch_run_store"],
+                dry_run_store=dry_run_store,
+                production_policy=policy,
+                confirmation=confirmation,
+                confirmation_store=confirmation_store,
+                audit_dir=audit_dir,
+            )
+
+        kwargs = mock_run.call_args.kwargs
+        self.assertIs(kwargs["production_policy"], policy)
+        self.assertIs(kwargs["confirmation"], confirmation)
+        self.assertIs(kwargs["confirmation_store"], confirmation_store)
+        self.assertEqual(kwargs["audit_dir"], audit_dir)
+        self.assertIs(kwargs["dry_run_store"], dry_run_store)
 
 
 if __name__ == "__main__":

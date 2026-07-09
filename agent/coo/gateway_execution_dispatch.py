@@ -8,6 +8,7 @@ subprocess, no terminal allow-path, and no real executor in production defaults.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from agent.coo.execution_dispatch_runtime import (
@@ -55,6 +56,11 @@ from agent.coo.execution_ticket import (
     get_default_ticket_store,
 )
 from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
+from agent.coo.production_executor_confirmation import (
+    ProductionExecutorConfirmation,
+    ProductionExecutorConfirmationStore,
+)
+from agent.coo.production_executor_policy import ProductionExecutorPolicy
 
 
 @dataclass(frozen=True)
@@ -340,7 +346,12 @@ def run_dispatch_for_gateway_request(
     token_store: Optional[DispatchUnlockTokenStore] = None,
     dispatch_request_store: Optional[DispatchExecutionRequestStore] = None,
     dispatch_run_store: Optional[DispatchExecutionRunStore] = None,
+    dry_run_store: Optional[ExecutionRunStore] = None,
     adapter: Optional[PipelineAdapter] = None,
+    production_policy: Optional[ProductionExecutorPolicy] = None,
+    confirmation: Optional[ProductionExecutorConfirmation] = None,
+    confirmation_store: Optional[ProductionExecutorConfirmationStore] = None,
+    audit_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run token-gated dispatch via the runner — default adapter has no executor."""
     if not unlock_token_id and not dispatch_request_id:
@@ -390,7 +401,12 @@ def run_dispatch_for_gateway_request(
         token_store=tokens,
         dispatch_request_store=dispatch_requests,
         dispatch_run_store=runs,
+        dry_run_store=dry_run_store,
         adapter=pipeline,
+        production_policy=production_policy,
+        confirmation=confirmation,
+        confirmation_store=confirmation_store,
+        audit_dir=audit_dir,
     )
 
     return {
