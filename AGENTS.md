@@ -1354,3 +1354,36 @@ not the specific names.
 
 Reviewers should reject new change-detector tests; authors should convert
 them into invariants before re-requesting review.
+
+### Repository2 Execution Safety
+
+Repository2 (`multi-content-pipeline`) is a real content pipeline that writes
+files, calls LLM providers, and (eventually) publishes to live blogs. The COO
+layer (`agent/coo/`) exists specifically to gate access to it. A Phase 10D
+review incident accidentally ran the real `node pipeline.js` end to end
+(research/writing/quality/approval-queue) while verifying that
+`tools/repository2_terminal_guard.py`'s scoped-unlock allow-path worked —
+`subprocess.run` was mocked, but this codebase's local execution backend does
+not call `subprocess.run` directly, so the mock did not stop it. Evidence of
+that run is preserved at `outputs/2026-07-09/` in the Repository2 checkout —
+do not delete it.
+
+Rules going forward:
+
+- **Never verify the guard's allow-path through `tools/terminal_tool.py`.**
+  Test `tools/repository2_terminal_guard.check_repository2_terminal_block()`
+  directly instead — it's a pure function with no subprocess/adapter calls,
+  and every allow/block combination can be asserted on its return value alone.
+- **`terminal_tool()` integration tests may only exercise the blocked path.**
+  Asserting that a command *is* blocked, with `subprocess.run` mocked to
+  raise, is safe because execution never reaches the backend. Asserting that
+  a command *is allowed* through the real `terminal_tool()` is not — the
+  guard passing the command through means the backend actually runs it.
+- **`patch.object(subprocess, "run", ...)` does not guarantee a command
+  can't execute.** The local backend has at least one execution path that
+  bypasses it. Treat "the guard blocks it" as the only real safety boundary
+  in tests, not "subprocess is mocked."
+- **Real `node pipeline.js` execution requires explicit approval and an
+  isolated test Repository2 root** (e.g. `CONTENT_PIPELINE_ROOT` pointed at a
+  throwaway directory), never the real checkout at
+  `/opt/data/multi-content-pipeline`.
