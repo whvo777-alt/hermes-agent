@@ -65,7 +65,7 @@ class TestExecutionTicketFoundation(unittest.TestCase):
         self.assertTrue(ticket.ticket_id)
         self.assertEqual(ticket.approval_session_id, session.session_id)
         self.assertEqual(ticket.status, ExecutionTicketStatus.CREATED)
-        self.assertEqual(ticket.run_date, "2026-07-07")
+        self.assertEqual(ticket.run_date, session.run_date)
         self.assertEqual(ticket.requester_id, "discord-user-1")
         self.assertEqual(ticket.channel_id, "discord-chan-1")
         self.assertEqual(ticket.reviewer, "discord-user-1")
