@@ -50,11 +50,15 @@ def _seed_bundle_and_confirmation(
     *,
     bundle_dir: Path,
     confirmation_dir: Path,
+    tmp_path: Path,
     remint_pending: bool = False,
     bundle_consumed: bool = False,
     confirmation_consumed: bool = False,
     confirmation_expired: bool = False,
 ):
+    pipeline_root = tmp_path / "fake-pipeline"
+    pipeline_root.mkdir(exist_ok=True)
+    attested_pipeline_root = str(pipeline_root.resolve())
     ticket, plan, dry_run, dry_run_request, execute_request, gate = _approved_unlock_context()
     token_store = DispatchUnlockTokenStore()
     token = create_dispatch_unlock_token(
@@ -108,6 +112,7 @@ def _seed_bundle_and_confirmation(
         operator_name="Status Operator",
         confirmation_reason="status test",
         confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+        attested_pipeline_root=attested_pipeline_root,
     )
     if confirmation_consumed:
         from dataclasses import replace as dc_replace
@@ -126,6 +131,10 @@ def _seed_bundle_and_confirmation(
         )
     write_confirmation(confirmation, confirmation_dir=confirmation_dir)
     return ticket, token, dispatch_request, confirmation
+
+
+def _seeded_pipeline_root(tmp_path: Path) -> str:
+    return str((tmp_path / "fake-pipeline").resolve())
 
 
 class TestDispatchPersistenceStatus(unittest.TestCase):
@@ -161,6 +170,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, _confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
         summary = summarize_dispatch_persistence_status(
             ticket_id=ticket.ticket_id,
@@ -181,13 +191,13 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
-        pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        pipeline_root.mkdir()
+        pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
         summary = summarize_dispatch_persistence_status(
             ticket_id=ticket.ticket_id,
             confirmation_id=confirmation.confirmation_id,
-            pipeline_root=str(pipeline_root),
+            pipeline_root=pipeline_root,
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
             merged_config=_DEFAULT_MERGED_CONFIG,
@@ -205,15 +215,15 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
-        pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        pipeline_root.mkdir()
+        pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
         enabled_config = {
             "coo": {
                 "dispatch": {
                     "executor": {
                         "enabled": True,
-                        "allowed_pipeline_roots": [str(pipeline_root)],
+                        "allowed_pipeline_roots": [pipeline_root],
                     }
                 }
             }
@@ -221,7 +231,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         summary = summarize_dispatch_persistence_status(
             ticket_id=ticket.ticket_id,
             confirmation_id=confirmation.confirmation_id,
-            pipeline_root=str(pipeline_root),
+            pipeline_root=pipeline_root,
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
             merged_config=enabled_config,
@@ -234,6 +244,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, _confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
         merged = {
             "coo": {
@@ -270,6 +281,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, _confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
         path = self.bundle_dir / f"{ticket.ticket_id}.json"
         path.write_text("{bad", encoding="utf-8")
@@ -286,6 +298,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
         other = create_production_executor_confirmation(
             ticket_id="other-ticket",
@@ -296,13 +309,14 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             operator_name="Other",
             confirmation_reason="mismatch",
             confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=_seeded_pipeline_root(Path(self.tmp.name)),
         )
         write_confirmation(other, confirmation_dir=self.confirmation_dir)
         with self.assertRaises(ValueError) as exc:
             summarize_dispatch_persistence_status(
                 ticket_id=ticket.ticket_id,
                 confirmation_id=other.confirmation_id,
-                pipeline_root=str(Path(self.tmp.name) / "fake-pipeline"),
+                pipeline_root=_seeded_pipeline_root(Path(self.tmp.name)),
                 bundle_dir=self.bundle_dir,
                 confirmation_dir=self.confirmation_dir,
                 merged_config=_DEFAULT_MERGED_CONFIG,
@@ -313,6 +327,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
         with self.assertRaises(ValueError) as exc:
             summarize_dispatch_persistence_status(
@@ -328,13 +343,12 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, _confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
-        pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        pipeline_root.mkdir()
         with self.assertRaises(ValueError) as exc:
             summarize_dispatch_persistence_status(
                 ticket_id=ticket.ticket_id,
-                pipeline_root=str(pipeline_root),
+                pipeline_root=_seeded_pipeline_root(Path(self.tmp.name)),
                 bundle_dir=self.bundle_dir,
                 confirmation_dir=self.confirmation_dir,
                 merged_config=_DEFAULT_MERGED_CONFIG,
@@ -345,6 +359,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, _confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
             remint_pending=True,
             bundle_consumed=True,
             confirmation_consumed=True,
@@ -366,17 +381,17 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
             confirmation_consumed=True,
             confirmation_expired=True,
         )
-        pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        pipeline_root.mkdir()
+        pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
         enabled_config = {
             "coo": {
                 "dispatch": {
                     "executor": {
                         "enabled": True,
-                        "allowed_pipeline_roots": [str(pipeline_root)],
+                        "allowed_pipeline_roots": [pipeline_root],
                     }
                 }
             }
@@ -385,7 +400,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             summarize_dispatch_persistence_status(
                 ticket_id=ticket.ticket_id,
                 confirmation_id=confirmation.confirmation_id,
-                pipeline_root=str(pipeline_root),
+                pipeline_root=pipeline_root,
                 bundle_dir=self.bundle_dir,
                 confirmation_dir=self.confirmation_dir,
                 merged_config=enabled_config,
@@ -396,13 +411,13 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
-        pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        pipeline_root.mkdir()
+        pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
         summary = summarize_dispatch_persistence_status(
             ticket_id=ticket.ticket_id,
             confirmation_id=confirmation.confirmation_id,
-            pipeline_root=str(pipeline_root),
+            pipeline_root=pipeline_root,
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
             merged_config=_DEFAULT_MERGED_CONFIG,
@@ -412,7 +427,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         self.assertNotIn(token.token_id, output)
         self.assertNotIn('"snapshot"', output)
         self.assertNotIn("unlock_token", output.lower())
-        self.assertNotIn(str(pipeline_root), output)
+        self.assertNotIn(pipeline_root, output)
         self.assertIn("executor_enabled: false", output)
         self.assertIn("executor_allowlist_count: 0", output)
         self.assertNotIn("/opt/data/multi-content-pipeline", output)
@@ -422,6 +437,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, _confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
         with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
             with patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")):
@@ -438,9 +454,9 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
-        pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        pipeline_root.mkdir()
+        pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
         stdout = io.StringIO()
         with patch.object(sys, "stdout", stdout):
             exit_code = main(
@@ -451,7 +467,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
                     "--confirmation-id",
                     confirmation.confirmation_id,
                     "--pipeline-root",
-                    str(pipeline_root),
+                    pipeline_root,
                 ]
             )
         self.assertEqual(exit_code, 1)
@@ -461,15 +477,15 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
-        pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        pipeline_root.mkdir()
+        pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
         enabled_config = {
             "coo": {
                 "dispatch": {
                     "executor": {
                         "enabled": True,
-                        "allowed_pipeline_roots": [str(pipeline_root)],
+                        "allowed_pipeline_roots": [pipeline_root],
                     }
                 }
             }
@@ -488,19 +504,41 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
                         "--confirmation-id",
                         confirmation.confirmation_id,
                         "--pipeline-root",
-                        str(pipeline_root),
+                        pipeline_root,
                     ]
                 )
         self.assertEqual(exit_code, 0)
         self.assertIn("preflight: passed", stdout.getvalue())
 
+    def test_status_preflight_shows_pipeline_root_attestation_fields(self) -> None:
+        ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
+            bundle_dir=self.bundle_dir,
+            confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
+        )
+        pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
+        summary = summarize_dispatch_persistence_status(
+            ticket_id=ticket.ticket_id,
+            confirmation_id=confirmation.confirmation_id,
+            pipeline_root=pipeline_root,
+            bundle_dir=self.bundle_dir,
+            confirmation_dir=self.confirmation_dir,
+            merged_config=_DEFAULT_MERGED_CONFIG,
+        )
+        output = format_dispatch_status_summary(summary)
+        self.assertTrue(summary.pipeline_root_attested)
+        self.assertTrue(summary.pipeline_root_matches)
+        self.assertIn("pipeline_root_attested: true", output)
+        self.assertIn("pipeline_root_matches: true", output)
+        self.assertNotIn(pipeline_root, output)
+
     def test_status_preflight_does_not_consume(self) -> None:
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
-        pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        pipeline_root.mkdir()
+        pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
         from agent.coo.dispatch_bundle_store import read_bundle
         from agent.coo.production_executor_confirmation import read_confirmation
 
@@ -524,7 +562,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
                     "--confirmation-id",
                     confirmation.confirmation_id,
                     "--pipeline-root",
-                    str(pipeline_root),
+                    pipeline_root,
                 ]
             )
         bundle = read_bundle(
@@ -544,6 +582,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
         stderr = io.StringIO()
         with patch.object(sys, "stderr", stderr):
@@ -565,6 +604,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
         stderr = io.StringIO()
         with patch.object(sys, "stderr", stderr):
@@ -584,9 +624,9 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         ticket, _token, _dispatch_request, _confirmation = _seed_bundle_and_confirmation(
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            tmp_path=Path(self.tmp.name),
         )
-        pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        pipeline_root.mkdir()
+        pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
         stderr = io.StringIO()
         with patch.object(sys, "stderr", stderr):
             exit_code = main(
@@ -595,7 +635,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
                     "--ticket-id",
                     ticket.ticket_id,
                     "--pipeline-root",
-                    str(pipeline_root),
+                    pipeline_root,
                 ]
             )
         self.assertEqual(exit_code, 1)

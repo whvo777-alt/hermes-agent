@@ -341,7 +341,7 @@ def execute_coo_dispatch_run(
 
     from hermes_cli.coo_dispatch import assert_cli_pipeline_root_trusted
 
-    assert_cli_pipeline_root_trusted(pipeline_root)
+    trusted_pipeline_root = assert_cli_pipeline_root_trusted(pipeline_root)
 
     bundle = read_bundle(ticket_id, bundle_dir=bundle_dir, reject_consumed=True)
     validate_bundle_for_cli_execution(bundle)
@@ -364,13 +364,20 @@ def execute_coo_dispatch_run(
         expected_confirmation_id=confirmation_id,
     )
 
+    from agent.coo.dispatch_pipeline_root_trust import assert_pipeline_root_matches_attestation
+
+    assert_pipeline_root_matches_attestation(
+        cli_pipeline_root=pipeline_root,
+        attested_pipeline_root=confirmation.attested_pipeline_root,
+    )
+
     if dry_run:
         from agent.coo.dispatch_cli_preflight import run_dispatch_policy_preflight
 
         preflight = run_dispatch_policy_preflight(
             bundle=bundle,
             confirmation=confirmation,
-            pipeline_root=pipeline_root,
+            pipeline_root=trusted_pipeline_root,
             merged_config=merged_config,
         )
         return CooDispatchRunResult(
@@ -387,7 +394,7 @@ def execute_coo_dispatch_run(
         raise ValueError("production runner is not configured")
 
     policy = _resolve_run_executor_policy(
-        pipeline_root=pipeline_root,
+        pipeline_root=trusted_pipeline_root,
         merged_config=merged_config,
     )
 
@@ -403,14 +410,14 @@ def execute_coo_dispatch_run(
 
     executor = build_pipeline_dispatch_executor(
         policy,
-        pipeline_root=pipeline_root,
+        pipeline_root=trusted_pipeline_root,
         entrypoint=_ALLOWED_FACTORY_ENTRYPOINT,
         subprocess_runner=subprocess_runner,
         node_path="/usr/bin/node",
         evidence_dir=resolved_evidence_dir,
     )
     adapter = PipelineAdapter(
-        PipelineAdapterConfig(allow_execute=True, pipeline_root=pipeline_root),
+        PipelineAdapterConfig(allow_execute=True, pipeline_root=trusted_pipeline_root),
         executor=executor,
     )
 

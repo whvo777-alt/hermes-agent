@@ -70,15 +70,18 @@ def execute_coo_dispatch_confirm_run(
     operator_name: str,
     confirmation_reason: str,
     confirmation_phrase: str,
+    pipeline_root: str,
     bundle_dir: Path | None = None,
     confirmation_dir: Path | None = None,
 ) -> "ProductionExecutorConfirmation":
     """Validate bundle evidence, then mint a persisted operator confirmation."""
+    from agent.coo.dispatch_pipeline_root_trust import assert_pipeline_root_trusted
     from agent.coo.production_executor_confirmation import (
         ProductionExecutorConfirmation,
         create_production_executor_confirmation,
     )
 
+    attested_pipeline_root = assert_pipeline_root_trusted(pipeline_root)
     validate_confirm_run_bundle_evidence(
         ticket_id=ticket_id,
         plan_id=plan_id,
@@ -95,6 +98,7 @@ def execute_coo_dispatch_confirm_run(
         operator_name=operator_name,
         confirmation_reason=confirmation_reason,
         confirmation_phrase=confirmation_phrase,
+        attested_pipeline_root=attested_pipeline_root,
         persist_to_file=True,
         confirmation_dir=confirmation_dir,
     )

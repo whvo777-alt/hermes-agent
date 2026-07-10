@@ -82,7 +82,7 @@ class _CooDispatchRunFixture:
         self.bundle_dir = self.hermes_home / "coo" / "dispatch-bundles"
         self.confirmation_dir = self.hermes_home / "coo" / "confirmations"
         self.pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        self.pipeline_root.mkdir()
+        self.pipeline_root.mkdir(exist_ok=True)
         self.home_patch = patch(
             "agent.coo.dispatch_bundle_store.get_hermes_home",
             return_value=self.hermes_home,
@@ -145,6 +145,7 @@ class _CooDispatchRunFixture:
             operator_name="CLI Operator",
             confirmation_reason="cli run test",
             confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=str(self.pipeline_root.resolve()),
             persist_to_file=True,
             confirmation_dir=self.confirmation_dir,
         )
@@ -820,6 +821,85 @@ class TestCooDispatchCliParser(unittest.TestCase):
             self.assertIn("production runner is not configured", stderr.getvalue())
         finally:
             fixture.stop()
+
+
+class TestCooDispatchPipelineRootAttestation(_CooDispatchRunTestBase):
+    def setUp(self) -> None:
+        self.fixture = _CooDispatchRunFixture()
+        self.fixture.start()
+        self.seeded = self.fixture.seed_bundle_and_confirmation()
+
+    def tearDown(self) -> None:
+        self.fixture.stop()
+
+    def _assert_not_consumed(self) -> None:
+        bundle = read_bundle(
+            self.seeded["ticket"].ticket_id,
+            bundle_dir=self.fixture.bundle_dir,
+            reject_consumed=False,
+        )
+        self.assertEqual(bundle.consumed_at, "")
+        loaded = read_confirmation(
+            self.seeded["confirmation"].confirmation_id,
+            confirmation_dir=self.fixture.confirmation_dir,
+            reject_consumed=False,
+        )
+        self.assertFalse(loaded.consumed)
+
+    def test_matching_pipeline_root_passes_with_mock_runner(self) -> None:
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+        ):
+            result = execute_coo_dispatch_run(
+                **self._run_kwargs(subprocess_runner=_mock_runner_success),
+            )
+        self.assertTrue(result.consumed)
+
+    def test_pipeline_root_mismatch_rejects_before_runner(self) -> None:
+        other_root = self.fixture.pipeline_root.parent / "other-pipeline"
+        other_root.mkdir()
+        runner_calls = {"count": 0}
+
+        def counting_runner(*args, **kwargs):
+            runner_calls["count"] += 1
+            return _mock_runner_success(*args, **kwargs)
+
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+            patch(
+                "agent.coo.dispatch_cli_run.run_approved_dispatch",
+                side_effect=AssertionError("no runner"),
+            ),
+        ):
+            with self.assertRaises(ValueError) as exc:
+                execute_coo_dispatch_run(
+                    **self._run_kwargs(
+                        pipeline_root=str(other_root),
+                        subprocess_runner=counting_runner,
+                    ),
+                )
+        self.assertIn("attested", str(exc.exception).lower())
+        self.assertEqual(runner_calls["count"], 0)
+        self._assert_not_consumed()
+
+    def test_dry_run_pipeline_root_mismatch_rejects_before_preflight(self) -> None:
+        other_root = self.fixture.pipeline_root.parent / "other-dry-pipeline"
+        other_root.mkdir()
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+        ):
+            with self.assertRaises(ValueError) as exc:
+                execute_coo_dispatch_run(
+                    **self._run_kwargs(
+                        pipeline_root=str(other_root),
+                        dry_run=True,
+                    ),
+                )
+        self.assertIn("attested", str(exc.exception).lower())
+        self._assert_not_consumed()
 
 
 if __name__ == "__main__":

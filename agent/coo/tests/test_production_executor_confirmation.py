@@ -23,6 +23,12 @@ from agent.coo.production_executor_confirmation import (
 from agent.coo.tests.test_execution_dispatch_runtime import _approved_unlock_context
 
 
+def _isolated_attested_root(base: Path) -> str:
+    root = base / "isolated-pipeline"
+    root.mkdir(exist_ok=True)
+    return str(root.resolve())
+
+
 class TestProductionExecutorConfirmation(unittest.TestCase):
     def setUp(self) -> None:
         self.store = ProductionExecutorConfirmationStore()
@@ -244,6 +250,7 @@ class TestProductionExecutorConfirmationPersistence(unittest.TestCase):
             operator_name="File Operator",
             confirmation_reason="persist test",
             confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=_isolated_attested_root(self.hermes_home),
             confirmation_store=self.store,
             persist_to_file=True,
             confirmation_dir=self.confirmation_dir,
@@ -267,6 +274,7 @@ class TestProductionExecutorConfirmationPersistence(unittest.TestCase):
             operator_name="File Operator",
             confirmation_reason="persist test",
             confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=_isolated_attested_root(self.hermes_home),
             confirmation_store=self.store,
             persist_to_file=True,
             confirmation_dir=self.confirmation_dir,
@@ -287,6 +295,7 @@ class TestProductionExecutorConfirmationPersistence(unittest.TestCase):
             operator_name="File Operator",
             confirmation_reason="persist test",
             confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=_isolated_attested_root(self.hermes_home),
             confirmation_store=self.store,
             persist_to_file=True,
             confirmation_dir=self.confirmation_dir,
@@ -319,6 +328,7 @@ class TestProductionExecutorConfirmationPersistence(unittest.TestCase):
             operator_name="File Operator",
             confirmation_reason="persist test",
             confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=_isolated_attested_root(self.hermes_home),
             confirmation_store=self.store,
             persist_to_file=True,
             confirmation_dir=self.confirmation_dir,
@@ -345,6 +355,7 @@ class TestProductionExecutorConfirmationPersistence(unittest.TestCase):
             operator_name="File Operator",
             confirmation_reason="persist test",
             confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=_isolated_attested_root(self.hermes_home),
             confirmation_store=self.store,
             persist_to_file=True,
             confirmation_dir=self.confirmation_dir,
@@ -369,12 +380,93 @@ class TestProductionExecutorConfirmationPersistence(unittest.TestCase):
             operator_name="File Operator",
             confirmation_reason="persist test",
             confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=_isolated_attested_root(self.hermes_home),
             confirmation_store=self.store,
         )
         outside = Path(self.tmp.name) / "outside" / "confirmations"
         with self.assertRaises(ValueError):
             write_confirmation(confirmation, confirmation_dir=outside)
         self.assertFalse(outside.exists())
+
+    def test_missing_attested_pipeline_root_rejected_on_read(self) -> None:
+        ticket, token, dispatch_request = self._dispatch_binding()
+        confirmation = create_production_executor_confirmation(
+            ticket_id=ticket.ticket_id,
+            plan_id=token.plan_id,
+            unlock_token_id=token.token_id,
+            dispatch_request_id=dispatch_request.dispatch_request_id,
+            operator_id="op-file",
+            operator_name="File Operator",
+            confirmation_reason="persist test",
+            confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=_isolated_attested_root(self.hermes_home),
+            confirmation_store=self.store,
+            persist_to_file=True,
+            confirmation_dir=self.confirmation_dir,
+        )
+        path = self.confirmation_dir / f"{confirmation.confirmation_id}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        del payload["attested_pipeline_root"]
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaises(ValueError) as exc:
+            read_confirmation(
+                confirmation.confirmation_id,
+                confirmation_dir=self.confirmation_dir,
+            )
+        self.assertIn("attested_pipeline_root", str(exc.exception))
+
+    def test_relative_attested_pipeline_root_rejected_on_read(self) -> None:
+        ticket, token, dispatch_request = self._dispatch_binding()
+        confirmation = create_production_executor_confirmation(
+            ticket_id=ticket.ticket_id,
+            plan_id=token.plan_id,
+            unlock_token_id=token.token_id,
+            dispatch_request_id=dispatch_request.dispatch_request_id,
+            operator_id="op-file",
+            operator_name="File Operator",
+            confirmation_reason="persist test",
+            confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=_isolated_attested_root(self.hermes_home),
+            confirmation_store=self.store,
+            persist_to_file=True,
+            confirmation_dir=self.confirmation_dir,
+        )
+        path = self.confirmation_dir / f"{confirmation.confirmation_id}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["attested_pipeline_root"] = "relative/path"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaises(ValueError) as exc:
+            read_confirmation(
+                confirmation.confirmation_id,
+                confirmation_dir=self.confirmation_dir,
+            )
+        self.assertIn("absolute", str(exc.exception).lower())
+
+    def test_production_attested_pipeline_root_rejected_on_read(self) -> None:
+        ticket, token, dispatch_request = self._dispatch_binding()
+        confirmation = create_production_executor_confirmation(
+            ticket_id=ticket.ticket_id,
+            plan_id=token.plan_id,
+            unlock_token_id=token.token_id,
+            dispatch_request_id=dispatch_request.dispatch_request_id,
+            operator_id="op-file",
+            operator_name="File Operator",
+            confirmation_reason="persist test",
+            confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=_isolated_attested_root(self.hermes_home),
+            confirmation_store=self.store,
+            persist_to_file=True,
+            confirmation_dir=self.confirmation_dir,
+        )
+        path = self.confirmation_dir / f"{confirmation.confirmation_id}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["attested_pipeline_root"] = "/opt/data/multi-content-pipeline"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            read_confirmation(
+                confirmation.confirmation_id,
+                confirmation_dir=self.confirmation_dir,
+            )
 
 
 if __name__ == "__main__":

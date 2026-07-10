@@ -23,6 +23,7 @@ from agent.coo.dispatch_cli_readiness import (
     STEP_CONFIRMATION_PERSISTENCE,
     STEP_EXECUTOR_CONFIG,
     STEP_PIPELINE_ROOT_TRUST,
+    STEP_PIPELINE_ROOT_ATTESTATION,
     STEP_POLICY_PREFLIGHT,
     evaluate_dispatch_operator_readiness,
     format_dispatch_readiness_summary,
@@ -77,7 +78,7 @@ class _CooDispatchReadinessFixture:
         self.bundle_dir = self.hermes_home / "coo" / "dispatch-bundles"
         self.confirmation_dir = self.hermes_home / "coo" / "confirmations"
         self.pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        self.pipeline_root.mkdir()
+        self.pipeline_root.mkdir(exist_ok=True)
         self._patches = [
             patch(
                 "agent.coo.dispatch_bundle_store.get_hermes_home",
@@ -124,6 +125,7 @@ class _CooDispatchReadinessFixture:
             operator_name="Readiness Operator",
             confirmation_reason="readiness test",
             confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=str(self.pipeline_root.resolve()),
             persist_to_file=True,
             confirmation_dir=self.confirmation_dir,
         )
@@ -139,6 +141,7 @@ def _seed_manual_bundle_and_confirmation(
     confirmation_consumed: bool = False,
     confirmation_expired: bool = False,
     confirmation_ticket_mismatch: bool = False,
+    attested_pipeline_root: str | None = None,
 ):
     ticket, plan, dry_run, dry_run_request, execute_request, gate = _approved_unlock_context()
     token_store = DispatchUnlockTokenStore()
@@ -184,6 +187,11 @@ def _seed_manual_bundle_and_confirmation(
     if bundle_consumed:
         mark_bundle_consumed(ticket.ticket_id, bundle_dir=bundle_dir)
 
+    if attested_pipeline_root is None:
+        root = bundle_dir.parent.parent.parent / "fake-pipeline"
+        root.mkdir(exist_ok=True)
+        attested_pipeline_root = str(root.resolve())
+
     confirmation_ticket_id = "wrong-ticket" if confirmation_ticket_mismatch else ticket.ticket_id
     confirmation = create_production_executor_confirmation(
         ticket_id=confirmation_ticket_id,
@@ -194,6 +202,7 @@ def _seed_manual_bundle_and_confirmation(
         operator_name="Readiness Operator",
         confirmation_reason="readiness test",
         confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+        attested_pipeline_root=attested_pipeline_root,
     )
     if confirmation_consumed:
         from dataclasses import replace as dc_replace
@@ -437,6 +446,19 @@ class TestDispatchOperatorReadiness(unittest.TestCase):
         self.assertNotIn(str(self.fixture.pipeline_root), output)
         self.assertNotIn("/opt/data/multi-content-pipeline", output)
 
+    def test_pipeline_root_mismatch_not_ready(self) -> None:
+        other_root = self.fixture.pipeline_root.parent / "other-pipeline"
+        other_root.mkdir(exist_ok=True)
+        summary = evaluate_dispatch_operator_readiness(
+            **self._readiness_kwargs(pipeline_root=str(other_root))
+        )
+        output = format_dispatch_readiness_summary(summary)
+        self.assertFalse(summary.ready)
+        self.assertEqual(summary.failed_steps, (STEP_PIPELINE_ROOT_ATTESTATION,))
+        self.assertIn(f"failed_steps: {STEP_PIPELINE_ROOT_ATTESTATION}", output)
+        self.assertNotIn(str(other_root), output)
+        self.assertNotIn(str(self.fixture.pipeline_root), output)
+
     def test_readiness_cli_ready_exit_zero(self) -> None:
         with (
             patch(
@@ -526,7 +548,7 @@ class TestDispatchOperatorReadinessManualPersistence(unittest.TestCase):
         self.bundle_dir = self.hermes_home / "coo" / "dispatch-bundles"
         self.confirmation_dir = self.hermes_home / "coo" / "confirmations"
         self.pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        self.pipeline_root.mkdir()
+        self.pipeline_root.mkdir(exist_ok=True)
         self.home_patch_bundle = patch(
             "agent.coo.dispatch_bundle_store.get_hermes_home",
             return_value=self.hermes_home,

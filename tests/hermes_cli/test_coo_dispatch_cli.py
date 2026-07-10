@@ -44,9 +44,12 @@ class TestCooDispatchCli(unittest.TestCase):
                 "staging validation",
                 "--phrase",
                 "CONFIRM-REPOSITORY2-EXECUTION",
+                "--pipeline-root",
+                "/tmp/isolated-pipeline",
             ]
         )
         self.assertEqual(args.coo_dispatch_command, "confirm-run")
+        self.assertEqual(args.pipeline_root, "/tmp/isolated-pipeline")
         self.assertEqual(args.ticket_id, "ticket-1")
         self.assertEqual(args.phrase, "CONFIRM-REPOSITORY2-EXECUTION")
 
@@ -121,9 +124,8 @@ class TestCooDispatchCli(unittest.TestCase):
             os.makedirs(internal_dir)
             link_path = os.path.join(tmp, "escape-link")
             os.symlink(internal_dir, link_path)
-            with patch.object(
-                coo_dispatch,
-                "PRODUCTION_ROOT_HARD_DENY",
+            with patch(
+                "agent.coo.dispatch_pipeline_root_trust.PRODUCTION_ROOT_HARD_DENY",
                 (denied_root,),
             ):
                 with self.assertRaises(ValueError):
@@ -141,6 +143,8 @@ class TestCooDispatchCli(unittest.TestCase):
             hermes_home.mkdir()
             bundle_dir = hermes_home / "coo" / "dispatch-bundles"
             confirmation_dir = hermes_home / "coo" / "confirmations"
+            pipeline_root = Path(tmp) / "fake-pipeline"
+            pipeline_root.mkdir()
             with (
                 patch(
                     "agent.coo.dispatch_bundle_store.get_hermes_home",
@@ -193,6 +197,8 @@ class TestCooDispatchCli(unittest.TestCase):
                             "cli persistence test",
                             "--phrase",
                             "CONFIRM-REPOSITORY2-EXECUTION",
+                            "--pipeline-root",
+                            str(pipeline_root),
                         ]
                     )
             self.assertEqual(exit_code, 0)
@@ -293,6 +299,7 @@ class TestCooDispatchCli(unittest.TestCase):
                 operator_name="CLI Operator",
                 confirmation_reason="cli run test",
                 confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+                attested_pipeline_root=str(pipeline_root.resolve()),
                 persist_to_file=True,
                 confirmation_dir=confirmation_dir,
             )
@@ -322,6 +329,8 @@ class TestCooDispatchCli(unittest.TestCase):
             hermes_home = Path(tmp) / ".hermes"
             hermes_home.mkdir()
             bundle_dir = hermes_home / "coo" / "dispatch-bundles"
+            pipeline_root = Path(tmp) / "fake-pipeline"
+            pipeline_root.mkdir()
             with (
                 patch(
                     "agent.coo.dispatch_bundle_store.get_hermes_home",
@@ -381,6 +390,8 @@ class TestCooDispatchCli(unittest.TestCase):
                         "test",
                         "--phrase",
                         "CONFIRM-REPOSITORY2-EXECUTION",
+                        "--pipeline-root",
+                        str(pipeline_root),
                     ]
                 )
             self.assertEqual(exit_code, 0)
@@ -407,6 +418,8 @@ class TestCooDispatchMainEntrypoint(unittest.TestCase):
         "test",
         "--phrase",
         "CONFIRM-REPOSITORY2-EXECUTION",
+        "--pipeline-root",
+        "/tmp/isolated-pipeline",
     ]
 
     @contextmanager
@@ -553,6 +566,7 @@ class TestCooDispatchMainEntrypoint(unittest.TestCase):
                 operator_name="CLI Operator",
                 confirmation_reason="cli run test",
                 confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+                attested_pipeline_root=str(pipeline_root.resolve()),
                 persist_to_file=True,
                 confirmation_dir=confirmation_dir,
             )

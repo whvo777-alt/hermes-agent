@@ -29,6 +29,8 @@ class _CooDispatchConfirmFixture:
         self.hermes_home.mkdir()
         self.bundle_dir = self.hermes_home / "coo" / "dispatch-bundles"
         self.confirmation_dir = self.hermes_home / "coo" / "confirmations"
+        self.pipeline_root = Path(self.tmp.name) / "fake-pipeline"
+        self.pipeline_root.mkdir(exist_ok=True)
         self._patches = [
             patch(
                 "agent.coo.dispatch_bundle_store.get_hermes_home",
@@ -83,6 +85,7 @@ class _CooDispatchConfirmFixture:
             "operator_name": "Confirm Operator",
             "confirmation_reason": "confirm-run validation test",
             "confirmation_phrase": REQUIRED_CONFIRMATION_PHRASE,
+            "pipeline_root": str(self.pipeline_root),
             "bundle_dir": self.bundle_dir,
             "confirmation_dir": self.confirmation_dir,
         }
@@ -92,6 +95,9 @@ class TestConfirmRunBundleCrossValidation(unittest.TestCase):
     def setUp(self) -> None:
         self.fixture = _CooDispatchConfirmFixture()
         self.fixture.start()
+        self.tmp = self.fixture.tmp
+        self.pipeline_root = Path(self.tmp.name) / "fake-pipeline"
+        self.pipeline_root.mkdir(exist_ok=True)
         self.seeded = self.fixture.seed_bundle()
 
     def tearDown(self) -> None:
@@ -125,6 +131,10 @@ class TestConfirmRunBundleCrossValidation(unittest.TestCase):
         self.assertEqual(len(files), 1)
         payload = json.loads(files[0].read_text(encoding="utf-8"))
         self.assertEqual(payload["ticket_id"], self.seeded["ticket"].ticket_id)
+        self.assertEqual(
+            payload["attested_pipeline_root"],
+            str(self.pipeline_root.resolve()),
+        )
 
     def test_missing_bundle_rejected(self) -> None:
         with self.assertRaises(KeyError):
@@ -239,6 +249,8 @@ class TestConfirmRunBundleCrossValidation(unittest.TestCase):
                     kwargs["confirmation_reason"],
                     "--phrase",
                     kwargs["confirmation_phrase"],
+                    "--pipeline-root",
+                    str(self.pipeline_root),
                 ]
             )
         self.assertEqual(exit_code, 1)
@@ -272,3 +284,29 @@ class TestConfirmRunBundleCrossValidation(unittest.TestCase):
         except ValueError:
             is_inside = False
         self.assertFalse(is_inside)
+
+    def test_empty_pipeline_root_rejected_before_confirmation(self) -> None:
+        with self.assertRaises(ValueError):
+            execute_coo_dispatch_confirm_run(**self._confirm_kwargs(pipeline_root=""))
+        self._assert_no_confirmation_files()
+
+    def test_relative_pipeline_root_rejected_before_confirmation(self) -> None:
+        with self.assertRaises(ValueError):
+            execute_coo_dispatch_confirm_run(**self._confirm_kwargs(pipeline_root="relative/path"))
+        self._assert_no_confirmation_files()
+
+    def test_production_pipeline_root_rejected_before_confirmation(self) -> None:
+        with self.assertRaises(ValueError):
+            execute_coo_dispatch_confirm_run(
+                **self._confirm_kwargs(
+                    pipeline_root="/opt/data/multi-content-pipeline",
+                )
+            )
+        self._assert_no_confirmation_files()
+
+    def test_missing_bundle_rejected_before_confirmation(self) -> None:
+        with self.assertRaises(KeyError):
+            execute_coo_dispatch_confirm_run(
+                **self._confirm_kwargs(ticket_id="missing-ticket"),
+            )
+        self._assert_no_confirmation_files()

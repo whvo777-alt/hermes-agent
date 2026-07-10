@@ -11,24 +11,22 @@ import os
 import sys
 from typing import Callable, Optional
 
-PRODUCTION_ROOT_HARD_DENY = (
-    "/opt/data/multi-content-pipeline",
+from agent.coo.dispatch_pipeline_root_trust import (
+    PRODUCTION_ROOT_HARD_DENY,
+    assert_pipeline_root_allowed,
+    assert_pipeline_root_trusted,
 )
 
 
 def assert_pipeline_root_allowed_for_cli(pipeline_root: str) -> None:
     """Reject production Repository2 roots and any path inside them."""
-    candidate = os.path.realpath(os.path.expanduser(pipeline_root))
-    for denied in PRODUCTION_ROOT_HARD_DENY:
-        production_root = os.path.realpath(denied)
-        try:
-            is_inside = os.path.commonpath([candidate, production_root]) == production_root
-        except ValueError:
-            is_inside = False
-        if is_inside:
-            raise ValueError(
-                f"pipeline_root {pipeline_root!r} is hard-denied for CLI dispatch run"
-            )
+    resolved = os.path.realpath(os.path.expanduser(pipeline_root))
+    try:
+        assert_pipeline_root_allowed(resolved)
+    except ValueError as exc:
+        raise ValueError(
+            f"pipeline_root {pipeline_root!r} is hard-denied for CLI dispatch run"
+        ) from exc
 
 
 def assert_cli_pipeline_root_trusted(pipeline_root: str) -> str:
@@ -37,11 +35,7 @@ def assert_cli_pipeline_root_trusted(pipeline_root: str) -> str:
     Bundle snapshots do not currently carry a trusted pipeline_root field, so
     validation is limited to symlink-resolved hard-deny policy checks.
     """
-    if not pipeline_root.strip():
-        raise ValueError("pipeline_root is required")
-    resolved = os.path.realpath(os.path.expanduser(pipeline_root))
-    assert_pipeline_root_allowed_for_cli(resolved)
-    return resolved
+    return assert_pipeline_root_trusted(pipeline_root)
 
 
 def register_cli(parser: argparse.ArgumentParser) -> None:
@@ -74,6 +68,11 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         "--phrase",
         required=True,
         help='Operator-typed confirmation phrase (must be exactly "CONFIRM-REPOSITORY2-EXECUTION")',
+    )
+    confirm_parser.add_argument(
+        "--pipeline-root",
+        required=True,
+        help="Isolated pipeline root to attest for later dispatch (production root hard-denied)",
     )
     confirm_parser.set_defaults(handler=_cmd_confirm_run)
 
@@ -202,6 +201,7 @@ def _cmd_confirm_run(args: argparse.Namespace) -> int:
             operator_name=args.operator_name,
             confirmation_reason=args.reason,
             confirmation_phrase=args.phrase,
+            pipeline_root=args.pipeline_root,
         )
     except (ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)

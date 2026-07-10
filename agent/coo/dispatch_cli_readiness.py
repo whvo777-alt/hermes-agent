@@ -27,6 +27,7 @@ STEP_PIPELINE_ROOT_TRUST = "pipeline_root_trust"
 STEP_EXECUTOR_CONFIG = "executor_config"
 STEP_BUNDLE_PERSISTENCE = "bundle_persistence"
 STEP_CONFIRMATION_PERSISTENCE = "confirmation_persistence"
+STEP_PIPELINE_ROOT_ATTESTATION = "pipeline_root_attestation"
 STEP_POLICY_PREFLIGHT = "policy_preflight"
 
 
@@ -114,6 +115,22 @@ def evaluate_dispatch_operator_readiness(
         return _fail(
             failed_step=STEP_CONFIRMATION_PERSISTENCE,
             config_valid=True,
+        )
+
+    try:
+        from agent.coo.dispatch_pipeline_root_trust import (
+            assert_pipeline_root_matches_attestation,
+        )
+
+        assert_pipeline_root_matches_attestation(
+            cli_pipeline_root=normalized_pipeline_root,
+            attested_pipeline_root=confirmation.attested_pipeline_root,
+        )
+    except ValueError:
+        return _fail(
+            failed_step=STEP_PIPELINE_ROOT_ATTESTATION,
+            config_valid=True,
+            persistence_valid=True,
         )
 
     preflight_summary = run_dispatch_policy_preflight(

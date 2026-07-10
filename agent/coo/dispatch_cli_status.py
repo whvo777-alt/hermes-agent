@@ -44,6 +44,8 @@ class CooDispatchStatusSummary:
     checks_passed_count: Optional[int] = None
     checks_failed_count: Optional[int] = None
     failed_checks: tuple[str, ...] = ()
+    pipeline_root_attested: Optional[bool] = None
+    pipeline_root_matches: Optional[bool] = None
 
 
 def _confirmation_is_expired(expires_at: str) -> bool:
@@ -91,7 +93,7 @@ def summarize_dispatch_persistence_status(
     if not normalized_ticket_id:
         raise ValueError("ticket_id is required")
 
-    preflight_requested, normalized_confirmation_id, _normalized_pipeline_root = (
+    preflight_requested, normalized_confirmation_id, normalized_pipeline_root = (
         _resolve_status_preflight_inputs(confirmation_id, pipeline_root)
     )
 
@@ -113,9 +115,12 @@ def summarize_dispatch_persistence_status(
     confirmation_expired: bool | None = None
     resolved_confirmation_id = ""
     confirmation = None
+    pipeline_root_attested: bool | None = None
+    pipeline_root_matches: bool | None = None
 
     if preflight_requested:
         assert normalized_confirmation_id is not None
+        assert normalized_pipeline_root is not None
         validate_bundle_for_cli_execution(bundle)
         confirmation = read_confirmation(
             normalized_confirmation_id,
@@ -130,6 +135,23 @@ def summarize_dispatch_persistence_status(
         resolved_confirmation_id = confirmation.confirmation_id
         confirmation_consumed = bool(confirmation.consumed)
         confirmation_expired = _confirmation_is_expired(confirmation.expires_at)
+        pipeline_root_attested = True
+
+        from agent.coo.dispatch_pipeline_root_trust import (
+            assert_pipeline_root_matches_attestation,
+        )
+
+        try:
+            assert_pipeline_root_matches_attestation(
+                cli_pipeline_root=normalized_pipeline_root,
+                attested_pipeline_root=confirmation.attested_pipeline_root,
+            )
+            pipeline_root_matches = True
+        except ValueError as match_exc:
+            pipeline_root_matches = False
+            raise ValueError(
+                "pipeline_root does not match attested confirmation pipeline root."
+            ) from match_exc
 
     preflight_status = "not_requested"
     checks_passed_count: int | None = None
@@ -140,11 +162,11 @@ def summarize_dispatch_persistence_status(
         from agent.coo.dispatch_cli_preflight import run_dispatch_policy_preflight
 
         assert confirmation is not None
-        assert _normalized_pipeline_root is not None
+        assert normalized_pipeline_root is not None
         preflight_summary = run_dispatch_policy_preflight(
             bundle=bundle,
             confirmation=confirmation,
-            pipeline_root=_normalized_pipeline_root,
+            pipeline_root=normalized_pipeline_root,
             merged_config=merged_config,
         )
         preflight_status = "passed" if preflight_summary.all_passed else "failed"
@@ -170,6 +192,8 @@ def summarize_dispatch_persistence_status(
         checks_passed_count=checks_passed_count,
         checks_failed_count=checks_failed_count,
         failed_checks=failed_checks,
+        pipeline_root_attested=pipeline_root_attested,
+        pipeline_root_matches=pipeline_root_matches,
     )
 
 
@@ -193,6 +217,14 @@ def format_dispatch_status_summary(summary: CooDispatchStatusSummary) -> str:
                 f"confirmation_expired: {str(summary.confirmation_expired).lower()}",
             ]
         )
+        if summary.pipeline_root_attested is not None:
+            lines.append(
+                f"pipeline_root_attested: {str(summary.pipeline_root_attested).lower()}"
+            )
+        if summary.pipeline_root_matches is not None:
+            lines.append(
+                f"pipeline_root_matches: {str(summary.pipeline_root_matches).lower()}"
+            )
     lines.extend(
         [
             f"executor_enabled: {str(summary.executor_enabled).lower()}",

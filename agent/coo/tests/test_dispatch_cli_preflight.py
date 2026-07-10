@@ -51,7 +51,7 @@ class _PreflightFixture:
         self.bundle_dir = self.hermes_home / "coo" / "dispatch-bundles"
         self.confirmation_dir = self.hermes_home / "coo" / "confirmations"
         self.pipeline_root = Path(self.tmp.name) / "fake-pipeline"
-        self.pipeline_root.mkdir()
+        self.pipeline_root.mkdir(exist_ok=True)
         self._patches = [
             patch(
                 "agent.coo.dispatch_bundle_store.get_hermes_home",
@@ -102,6 +102,7 @@ class _PreflightFixture:
             operator_name="Preflight Operator",
             confirmation_reason="preflight test",
             confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+            attested_pipeline_root=str(self.pipeline_root.resolve()),
             persist_to_file=True,
             confirmation_dir=self.confirmation_dir,
         )

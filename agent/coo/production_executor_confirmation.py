@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from hermes_constants import get_hermes_home
 
+from agent.coo.dispatch_pipeline_root_trust import validate_stored_attested_pipeline_root
+
 if TYPE_CHECKING:
     from agent.coo.execution_dispatch_runtime import (
         DispatchExecutionRequest,
@@ -47,6 +49,7 @@ class ProductionExecutorConfirmation:
     confirmation_phrase: str
     created_at: str
     expires_at: str
+    attested_pipeline_root: str = ""
     consumed: bool = False
     consumed_at: str = ""
 
@@ -63,6 +66,7 @@ class ProductionExecutorConfirmation:
             "confirmation_phrase": self.confirmation_phrase,
             "created_at": self.created_at,
             "expires_at": self.expires_at,
+            "attested_pipeline_root": self.attested_pipeline_root,
             "consumed": self.consumed,
             "consumed_at": self.consumed_at,
         }
@@ -195,6 +199,7 @@ def confirmation_to_file_dict(confirmation: ProductionExecutorConfirmation) -> D
         "operator_name": confirmation.operator_name,
         "confirmation_reason": confirmation.confirmation_reason,
         "phrase_verified": True,
+        "attested_pipeline_root": confirmation.attested_pipeline_root,
         "created_at": confirmation.created_at,
         "expires_at": confirmation.expires_at,
         "consumed": confirmation.consumed,
@@ -213,6 +218,10 @@ def confirmation_from_file_dict(payload: Dict[str, Any]) -> ProductionExecutorCo
         raise ValueError("Confirmation file must not contain confirmation_phrase.")
     if not payload.get("phrase_verified"):
         raise ValueError("Confirmation file phrase_verified must be true.")
+    attested_raw = payload.get("attested_pipeline_root")
+    if attested_raw is None:
+        raise ValueError("Confirmation file missing attested_pipeline_root.")
+    attested_pipeline_root = validate_stored_attested_pipeline_root(str(attested_raw))
     confirmation_id = str(payload.get("confirmation_id") or "").strip()
     if not confirmation_id:
         raise ValueError("Confirmation file missing confirmation_id.")
@@ -228,6 +237,7 @@ def confirmation_from_file_dict(payload: Dict[str, Any]) -> ProductionExecutorCo
         confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
         created_at=str(payload["created_at"]),
         expires_at=str(payload["expires_at"]),
+        attested_pipeline_root=attested_pipeline_root,
         consumed=bool(payload.get("consumed")),
         consumed_at=str(payload.get("consumed_at") or ""),
     )
@@ -238,6 +248,7 @@ def write_confirmation(
     confirmation_dir: Optional[Path] = None,
 ) -> Path:
     """Persist confirmation metadata under Hermes home without storing the phrase."""
+    validate_stored_attested_pipeline_root(confirmation.attested_pipeline_root)
     base_dir = confirmation_dir or default_confirmation_dir()
     _validate_confirmation_paths(confirmation.confirmation_id, base_dir)
     path = _confirmation_path(confirmation.confirmation_id, base_dir)
@@ -295,6 +306,7 @@ def mark_confirmation_consumed_file(
         confirmation_phrase=confirmation.confirmation_phrase,
         created_at=confirmation.created_at,
         expires_at=confirmation.expires_at,
+        attested_pipeline_root=confirmation.attested_pipeline_root,
         consumed=True,
         consumed_at=consumed_at or _utc_now_iso(),
     )
@@ -312,6 +324,7 @@ def create_production_executor_confirmation(
     operator_name: str,
     confirmation_reason: str,
     confirmation_phrase: str,
+    attested_pipeline_root: str = "",
     ttl_seconds: int = DEFAULT_CONFIRMATION_TTL_SECONDS,
     confirmation_store: Optional[ProductionExecutorConfirmationStore] = None,
     persist_to_file: bool = False,
@@ -327,6 +340,11 @@ def create_production_executor_confirmation(
     if confirmation_phrase != REQUIRED_CONFIRMATION_PHRASE:
         raise ValueError(
             f"confirmation_phrase must equal {REQUIRED_CONFIRMATION_PHRASE!r}"
+        )
+    validated_attested = ""
+    if attested_pipeline_root.strip() or persist_to_file:
+        validated_attested = validate_stored_attested_pipeline_root(
+            attested_pipeline_root
         )
 
     created_at = _utc_now_iso()
@@ -345,6 +363,7 @@ def create_production_executor_confirmation(
         confirmation_phrase=confirmation_phrase,
         created_at=created_at,
         expires_at=expires_at,
+        attested_pipeline_root=validated_attested,
     )
     store = confirmation_store or get_default_production_executor_confirmation_store()
     store.save(confirmation)
