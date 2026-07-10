@@ -196,6 +196,20 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     audit_find_parser.set_defaults(handler=_cmd_audit_find)
 
+    enablement_parser = subparsers.add_parser(
+        "enablement",
+        help="Read-only production runner enablement checks",
+    )
+    enablement_subparsers = enablement_parser.add_subparsers(
+        dest="coo_dispatch_enablement_command",
+        required=True,
+    )
+    enablement_check_parser = enablement_subparsers.add_parser(
+        "check",
+        help="Assess whether dispatch executor enablement can proceed without binding a runner",
+    )
+    enablement_check_parser.set_defaults(handler=_cmd_enablement_check)
+
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hermes coo dispatch")
@@ -333,6 +347,18 @@ def _cmd_audit_find(args: argparse.Namespace) -> int:
 
     print(format_dispatch_audit_find(args.ticket_id, entries))
     return 0
+
+
+def _cmd_enablement_check(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_enablement import (
+        evaluate_dispatch_enablement,
+        format_dispatch_enablement_summary,
+    )
+    from hermes_cli.config import load_config
+
+    summary = evaluate_dispatch_enablement(load_config())
+    print(format_dispatch_enablement_summary(summary))
+    return 0 if summary.enablement_ready else 1
 
 
 def run_coo_dispatch_from_args(
