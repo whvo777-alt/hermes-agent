@@ -1,4 +1,4 @@
-"""CLI confirm-run bundle cross-validation — Phase 10V.
+"""CLI confirm-run bundle cross-validation — Phase 10V / 11E bundle core.
 
 Loads and validates persisted dispatch bundles before operator confirmations
 are minted. No dispatch execution, subprocess, or persistence writes beyond
@@ -9,11 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.coo.dispatch_bundle_store import (
-    DispatchExecutionBundle,
-    read_bundle,
-    validate_bundle_for_cli_execution,
-)
+from agent.coo.dispatch_bundle_store import DispatchExecutionBundle
+from agent.coo.dispatch_cli_bundle_validation import load_validated_dispatch_bundle_for_cli
 
 
 def validate_confirm_run_bundle_evidence(
@@ -39,12 +36,11 @@ def validate_confirm_run_bundle_evidence(
     if not normalized_dispatch_request_id:
         raise ValueError("dispatch_request_id is required")
 
-    bundle = read_bundle(
-        normalized_ticket_id,
+    bundle = load_validated_dispatch_bundle_for_cli(
+        ticket_id=normalized_ticket_id,
         bundle_dir=bundle_dir,
         reject_consumed=True,
     )
-    validate_bundle_for_cli_execution(bundle)
 
     if bundle.ticket_id != normalized_ticket_id:
         raise ValueError("CLI ticket_id does not match bundle ticket_id.")

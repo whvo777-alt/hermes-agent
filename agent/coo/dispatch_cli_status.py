@@ -1,4 +1,4 @@
-"""Read-only dispatch persistence status — Phase 10S / 10W preflight readiness.
+"""Read-only dispatch persistence status — Phase 10S / 10W / 11E preflight.
 
 Loads bundle and optional confirmation files under Hermes home and returns a
 safe summary. Optional read-only policy preflight when both confirmation id and
@@ -95,24 +95,9 @@ def summarize_dispatch_persistence_status(
         _resolve_status_preflight_inputs(confirmation_id, pipeline_root)
     )
 
-    bundle = read_bundle(
-        normalized_ticket_id,
-        bundle_dir=bundle_dir,
-        reject_consumed=preflight_requested,
-    )
-    if bundle.ticket_id != normalized_ticket_id:
-        raise ValueError("Dispatch bundle ticket_id does not match CLI input.")
-
-    snapshot = bundle.snapshot
-    gate = snapshot.get("gate") if isinstance(snapshot, dict) else {}
-    ticket = snapshot.get("ticket") if isinstance(snapshot, dict) else {}
-    if not isinstance(gate, dict) or not isinstance(ticket, dict):
-        raise ValueError("Dispatch bundle snapshot is missing gate or ticket blocks.")
-
     confirmation_consumed: bool | None = None
     confirmation_expired: bool | None = None
     resolved_confirmation_id = ""
-    confirmation = None
     pipeline_root_attested: bool | None = None
     pipeline_root_matches: bool | None = None
 
@@ -136,8 +121,8 @@ def summarize_dispatch_persistence_status(
         except DispatchPreRunValidationFailure as exc:
             re_raise_dispatch_pre_run_failure(exc)
 
-        confirmation = validated.confirmation
         bundle = validated.bundle
+        confirmation = validated.confirmation
         resolved_confirmation_id = confirmation.confirmation_id
         confirmation_consumed = bool(confirmation.consumed)
         confirmation_expired = _confirmation_is_expired(confirmation.expires_at)
@@ -148,6 +133,20 @@ def summarize_dispatch_persistence_status(
         checks_passed_count = len(preflight_summary.passed_check_names)
         checks_failed_count = len(preflight_summary.failed_check_names)
         failed_checks = preflight_summary.failed_check_names
+    else:
+        bundle = read_bundle(
+            normalized_ticket_id,
+            bundle_dir=bundle_dir,
+            reject_consumed=False,
+        )
+        if bundle.ticket_id != normalized_ticket_id:
+            raise ValueError("Dispatch bundle ticket_id does not match CLI input.")
+
+    snapshot = bundle.snapshot
+    gate = snapshot.get("gate") if isinstance(snapshot, dict) else {}
+    ticket = snapshot.get("ticket") if isinstance(snapshot, dict) else {}
+    if not isinstance(gate, dict) or not isinstance(ticket, dict):
+        raise ValueError("Dispatch bundle snapshot is missing gate or ticket blocks.")
 
     return CooDispatchStatusSummary(
         ticket_id=bundle.ticket_id,

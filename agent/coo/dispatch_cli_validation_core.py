@@ -1,4 +1,4 @@
-"""Shared dispatch pre-run validation — Phase 11B / 11D.
+"""Shared dispatch pre-run validation — Phase 11B / 11D / 11E.
 
 Single ordered validation path for readiness, run, and status preflight.
 No writes, consume, subprocess, factory, or runner invocation.
@@ -12,9 +12,8 @@ from typing import Any, Mapping, Optional
 
 from agent.coo.dispatch_bundle_store import (
     DispatchExecutionBundle,
-    read_bundle,
-    validate_bundle_for_cli_execution,
 )
+from agent.coo.dispatch_cli_bundle_validation import load_validated_dispatch_bundle_for_cli
 from agent.coo.dispatch_cli_config_validate import validate_dispatch_executor_config
 from agent.coo.dispatch_cli_preflight import (
     CooDispatchPreflightSummary,
@@ -118,14 +117,13 @@ def validate_dispatch_pre_run(
         raise_dispatch_pre_run_failure(STEP_EXECUTOR_CONFIG, exc)
 
     try:
-        bundle = read_bundle(
-            normalized_ticket_id,
+        bundle = load_validated_dispatch_bundle_for_cli(
+            ticket_id=normalized_ticket_id,
             bundle_dir=bundle_dir,
             reject_consumed=True,
         )
         if bundle.ticket_id != normalized_ticket_id:
             raise ValueError("ticket_id mismatch")
-        validate_bundle_for_cli_execution(bundle)
     except KeyError:
         raise
     except (ValueError, KeyError) as exc:
