@@ -129,7 +129,18 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     status_parser.add_argument(
         "--confirmation-id",
         default=None,
-        help="Optional production executor confirmation id to include in summary",
+        help=(
+            "Production executor confirmation id; requires --pipeline-root for "
+            "read-only policy preflight"
+        ),
+    )
+    status_parser.add_argument(
+        "--pipeline-root",
+        default=None,
+        help=(
+            "Isolated pipeline root for read-only policy preflight; requires "
+            "--confirmation-id (production root hard-denied)"
+        ),
     )
     status_parser.set_defaults(handler=_cmd_status)
 
@@ -175,15 +186,20 @@ def _cmd_status(args: argparse.Namespace) -> int:
     )
 
     try:
+        if args.pipeline_root is not None:
+            assert_cli_pipeline_root_trusted(args.pipeline_root)
         summary = summarize_dispatch_persistence_status(
             ticket_id=args.ticket_id,
             confirmation_id=args.confirmation_id,
+            pipeline_root=args.pipeline_root,
         )
     except (ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
     print(format_dispatch_status_summary(summary))
+    if summary.preflight == "failed":
+        return 1
     return 0
 
 
