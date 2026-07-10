@@ -56,6 +56,11 @@ from agent.coo.execution_ticket import (
     get_default_ticket_store,
 )
 from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
+from agent.coo.dispatch_bundle_store import (
+    build_dispatch_execution_bundle,
+    upsert_bundle_after_remint,
+    upsert_bundle_preserving_identity,
+)
 from agent.coo.production_executor_confirmation import (
     ProductionExecutorConfirmation,
     ProductionExecutorConfirmationStore,
@@ -202,6 +207,27 @@ def _dispatch_request_aligned(
     return dispatch_request.unlock_token_id == token.token_id
 
 
+def _persist_gateway_dispatch_bundle(
+    context: _ApprovedDispatchContext,
+    token: DispatchUnlockToken,
+    dispatch_request,
+    *,
+    bundle_dir: Optional[Path] = None,
+) -> None:
+    """Write or update the dispatch bundle snapshot under Hermes home."""
+    bundle = build_dispatch_execution_bundle(
+        ticket=context.ticket,
+        plan=context.plan,
+        dry_run=context.dry_run,
+        dry_run_request=context.dry_run_request,
+        execute_request=context.execute_request,
+        gate=context.gate,
+        token=token,
+        dispatch_request=dispatch_request,
+    )
+    upsert_bundle_preserving_identity(bundle, bundle_dir=bundle_dir)
+
+
 def _can_prepare_dispatch(context: Optional[_ApprovedDispatchContext]) -> bool:
     if context is None:
         return False
@@ -250,6 +276,7 @@ def prepare_dispatch_for_gateway_ticket(
     token_store: Optional[DispatchUnlockTokenStore] = None,
     dispatch_request_store: Optional[DispatchExecutionRequestStore] = None,
     dispatch_run_store: Optional[DispatchExecutionRunStore] = None,
+    bundle_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Prepare dispatch unlock token and request — no execution."""
     tickets = ticket_store or get_default_ticket_store()
@@ -290,6 +317,13 @@ def prepare_dispatch_for_gateway_ticket(
         dispatch_run_store=dispatch_runs,
     )
 
+    _persist_gateway_dispatch_bundle(
+        context,
+        token,
+        dispatch_request,
+        bundle_dir=bundle_dir,
+    )
+
     return {
         "unlock_token": token.to_dict(),
         "dispatch_request": dispatch_request.to_dict(),
@@ -312,6 +346,7 @@ def prepare_dispatch_for_gateway_session(
     token_store: Optional[DispatchUnlockTokenStore] = None,
     dispatch_request_store: Optional[DispatchExecutionRequestStore] = None,
     dispatch_run_store: Optional[DispatchExecutionRunStore] = None,
+    bundle_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Prepare dispatch unlock token and request via approval session lookup."""
     tickets = ticket_store or get_default_ticket_store()
@@ -332,6 +367,7 @@ def prepare_dispatch_for_gateway_session(
         token_store=token_store,
         dispatch_request_store=dispatch_request_store,
         dispatch_run_store=dispatch_run_store,
+        bundle_dir=bundle_dir,
     )
 
 
@@ -513,6 +549,7 @@ def maybe_remint_dispatch_token_for_gateway_ticket(
     execute_request_store: Optional[ExecuteRequestStore] = None,
     gate_store: Optional[ExecuteGateStore] = None,
     token_store: Optional[DispatchUnlockTokenStore] = None,
+    bundle_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Mint or remint a dispatch unlock token — no dispatch execution.
 
@@ -554,6 +591,18 @@ def maybe_remint_dispatch_token_for_gateway_ticket(
         context.gate,
         requested_by=requester_id,
         token_store=tokens,
+    )
+
+    upsert_bundle_after_remint(
+        context.ticket.ticket_id,
+        token,
+        ticket=context.ticket,
+        plan=context.plan,
+        dry_run=context.dry_run,
+        dry_run_request=context.dry_run_request,
+        execute_request=context.execute_request,
+        gate=context.gate,
+        bundle_dir=bundle_dir,
     )
 
     return {

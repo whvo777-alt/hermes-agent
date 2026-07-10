@@ -5,20 +5,27 @@ Record-only confirmation minting and validation. No dispatch execution.
 
 from __future__ import annotations
 
+import json
+import os
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+from hermes_constants import get_hermes_home
 
 if TYPE_CHECKING:
     from agent.coo.execution_dispatch_runtime import (
         DispatchExecutionRequest,
         DispatchUnlockToken,
     )
+    from agent.coo.dispatch_bundle_store import DispatchExecutionBundle
     from agent.coo.execution_ticket import ExecutionTicket
 
 REQUIRED_CONFIRMATION_PHRASE = "CONFIRM-REPOSITORY2-EXECUTION"
 DEFAULT_CONFIRMATION_TTL_SECONDS = 300
+_CONFIRMATION_FILE_VERSION = 1
 
 
 def _utc_now_iso() -> str:
@@ -41,6 +48,7 @@ class ProductionExecutorConfirmation:
     created_at: str
     expires_at: str
     consumed: bool = False
+    consumed_at: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -56,6 +64,7 @@ class ProductionExecutorConfirmation:
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "consumed": self.consumed,
+            "consumed_at": self.consumed_at,
         }
 
 
@@ -120,6 +129,179 @@ def get_default_production_executor_confirmation_store() -> ProductionExecutorCo
     return _DEFAULT_CONFIRMATION_STORE
 
 
+def default_confirmation_dir() -> Path:
+    return get_hermes_home() / "coo" / "confirmations"
+
+
+def _assert_confirmation_path_within_hermes_home(
+    resolved: Path,
+    hermes_root: Path,
+    *,
+    label: str,
+) -> None:
+    try:
+        resolved.relative_to(hermes_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"Confirmation {label} {resolved} must remain under Hermes home {hermes_root}"
+        ) from exc
+
+
+def _confirmation_path(confirmation_id: str, confirmation_dir: Path) -> Path:
+    return confirmation_dir / f"{confirmation_id}.json"
+
+
+def _validate_confirmation_paths(
+    confirmation_id: str,
+    confirmation_dir: Path,
+) -> tuple[Path, Path]:
+    hermes_root = get_hermes_home().resolve()
+    resolved_base = confirmation_dir.resolve()
+    path = _confirmation_path(confirmation_id, confirmation_dir)
+    resolved_path = path.resolve()
+    _assert_confirmation_path_within_hermes_home(
+        resolved_base,
+        hermes_root,
+        label="directory",
+    )
+    _assert_confirmation_path_within_hermes_home(
+        resolved_path,
+        hermes_root,
+        label="path",
+    )
+    return resolved_base, resolved_path
+
+
+def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, path)
+
+
+def confirmation_to_file_dict(confirmation: ProductionExecutorConfirmation) -> Dict[str, Any]:
+    return {
+        "version": _CONFIRMATION_FILE_VERSION,
+        "confirmation_id": confirmation.confirmation_id,
+        "ticket_id": confirmation.ticket_id,
+        "plan_id": confirmation.plan_id,
+        "unlock_token_id": confirmation.unlock_token_id,
+        "dispatch_request_id": confirmation.dispatch_request_id,
+        "operator_id": confirmation.operator_id,
+        "operator_name": confirmation.operator_name,
+        "confirmation_reason": confirmation.confirmation_reason,
+        "phrase_verified": True,
+        "created_at": confirmation.created_at,
+        "expires_at": confirmation.expires_at,
+        "consumed": confirmation.consumed,
+        "consumed_at": confirmation.consumed_at,
+    }
+
+
+def confirmation_from_file_dict(payload: Dict[str, Any]) -> ProductionExecutorConfirmation:
+    if not isinstance(payload, dict):
+        raise ValueError("Confirmation payload must be a JSON object.")
+    if payload.get("version") != _CONFIRMATION_FILE_VERSION:
+        raise ValueError(
+            f"Unsupported confirmation file version: {payload.get('version')!r}"
+        )
+    if "confirmation_phrase" in payload:
+        raise ValueError("Confirmation file must not contain confirmation_phrase.")
+    if not payload.get("phrase_verified"):
+        raise ValueError("Confirmation file phrase_verified must be true.")
+    confirmation_id = str(payload.get("confirmation_id") or "").strip()
+    if not confirmation_id:
+        raise ValueError("Confirmation file missing confirmation_id.")
+    return ProductionExecutorConfirmation(
+        confirmation_id=confirmation_id,
+        ticket_id=str(payload["ticket_id"]),
+        plan_id=str(payload["plan_id"]),
+        unlock_token_id=str(payload["unlock_token_id"]),
+        dispatch_request_id=str(payload["dispatch_request_id"]),
+        operator_id=str(payload["operator_id"]),
+        operator_name=str(payload["operator_name"]),
+        confirmation_reason=str(payload["confirmation_reason"]),
+        confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+        created_at=str(payload["created_at"]),
+        expires_at=str(payload["expires_at"]),
+        consumed=bool(payload.get("consumed")),
+        consumed_at=str(payload.get("consumed_at") or ""),
+    )
+
+
+def write_confirmation(
+    confirmation: ProductionExecutorConfirmation,
+    confirmation_dir: Optional[Path] = None,
+) -> Path:
+    """Persist confirmation metadata under Hermes home without storing the phrase."""
+    base_dir = confirmation_dir or default_confirmation_dir()
+    _validate_confirmation_paths(confirmation.confirmation_id, base_dir)
+    path = _confirmation_path(confirmation.confirmation_id, base_dir)
+    _atomic_write_json(path, confirmation_to_file_dict(confirmation))
+    return path
+
+
+def read_confirmation(
+    confirmation_id: str,
+    *,
+    confirmation_dir: Optional[Path] = None,
+    reject_consumed: bool = True,
+) -> ProductionExecutorConfirmation:
+    """Load a persisted confirmation by id."""
+    base_dir = confirmation_dir or default_confirmation_dir()
+    _validate_confirmation_paths(confirmation_id, base_dir)
+    path = _confirmation_path(confirmation_id, base_dir)
+    if not path.is_file():
+        raise KeyError(f"Confirmation not found: {confirmation_id}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Confirmation JSON is corrupted for id {confirmation_id}."
+        ) from exc
+    confirmation = confirmation_from_file_dict(payload)
+    if confirmation.confirmation_id != confirmation_id:
+        raise ValueError("Confirmation file confirmation_id does not match path.")
+    if reject_consumed and confirmation.consumed:
+        raise ValueError(f"Confirmation {confirmation_id} has already been consumed.")
+    return confirmation
+
+
+def mark_confirmation_consumed_file(
+    confirmation_id: str,
+    *,
+    consumed_at: str | None = None,
+    confirmation_dir: Optional[Path] = None,
+) -> ProductionExecutorConfirmation:
+    """Mark a persisted confirmation consumed."""
+    confirmation = read_confirmation(
+        confirmation_id,
+        confirmation_dir=confirmation_dir,
+        reject_consumed=True,
+    )
+    consumed = ProductionExecutorConfirmation(
+        confirmation_id=confirmation.confirmation_id,
+        ticket_id=confirmation.ticket_id,
+        plan_id=confirmation.plan_id,
+        unlock_token_id=confirmation.unlock_token_id,
+        dispatch_request_id=confirmation.dispatch_request_id,
+        operator_id=confirmation.operator_id,
+        operator_name=confirmation.operator_name,
+        confirmation_reason=confirmation.confirmation_reason,
+        confirmation_phrase=confirmation.confirmation_phrase,
+        created_at=confirmation.created_at,
+        expires_at=confirmation.expires_at,
+        consumed=True,
+        consumed_at=consumed_at or _utc_now_iso(),
+    )
+    write_confirmation(consumed, confirmation_dir=confirmation_dir)
+    return consumed
+
+
 def create_production_executor_confirmation(
     *,
     ticket_id: str,
@@ -132,6 +314,8 @@ def create_production_executor_confirmation(
     confirmation_phrase: str,
     ttl_seconds: int = DEFAULT_CONFIRMATION_TTL_SECONDS,
     confirmation_store: Optional[ProductionExecutorConfirmationStore] = None,
+    persist_to_file: bool = False,
+    confirmation_dir: Optional[Path] = None,
 ) -> ProductionExecutorConfirmation:
     """Mint a new production executor confirmation record."""
     if not operator_id.strip():
@@ -164,6 +348,8 @@ def create_production_executor_confirmation(
     )
     store = confirmation_store or get_default_production_executor_confirmation_store()
     store.save(confirmation)
+    if persist_to_file:
+        write_confirmation(confirmation, confirmation_dir=confirmation_dir)
     return confirmation
 
 
@@ -198,3 +384,37 @@ def assert_confirmation_valid(
         )
     if confirmation.confirmation_phrase != REQUIRED_CONFIRMATION_PHRASE:
         raise ValueError("Confirmation phrase is invalid.")
+
+
+def validate_confirmation_for_cli_execution(
+    confirmation: ProductionExecutorConfirmation,
+    *,
+    bundle: "DispatchExecutionBundle",
+    expected_confirmation_id: str,
+) -> None:
+    """Fail-closed validation for CLI dispatch run confirmation files."""
+    if confirmation.confirmation_id != expected_confirmation_id:
+        raise ValueError("Confirmation id does not match CLI input.")
+    if confirmation.consumed:
+        raise ValueError(
+            f"Confirmation {confirmation.confirmation_id} has already been consumed."
+        )
+    if confirmation.ticket_id != bundle.ticket_id:
+        raise ValueError("Confirmation ticket_id does not match bundle ticket_id.")
+    if confirmation.dispatch_request_id != bundle.dispatch_request_id:
+        raise ValueError(
+            "Confirmation dispatch_request_id does not match bundle dispatch_request_id."
+        )
+    if confirmation.unlock_token_id != bundle.unlock_token_id:
+        raise ValueError(
+            "Confirmation unlock_token_id does not match bundle unlock_token_id."
+        )
+    if confirmation.plan_id != bundle.plan_id:
+        raise ValueError("Confirmation plan_id does not match bundle plan_id.")
+
+    now = datetime.now(timezone.utc)
+    expires = datetime.fromisoformat(confirmation.expires_at)
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if now >= expires:
+        raise ValueError(f"Confirmation {confirmation.confirmation_id} has expired.")

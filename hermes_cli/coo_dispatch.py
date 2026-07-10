@@ -1,13 +1,15 @@
-"""CLI skeleton: `hermes coo dispatch` (Phase 10L / 10N).
+"""CLI: `hermes coo dispatch` (Phase 10L / 10N / 10Q).
 
-confirm-run creates production executor confirmation records only.
-run is parser/validation skeleton only — no dispatch execution.
+confirm-run creates production executor confirmation records.
+run loads persisted bundle + confirmation and dispatches via injected runner only.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import sys
+from typing import Callable, Optional
 
 PRODUCTION_ROOT_HARD_DENY = (
     "/opt/data/multi-content-pipeline",
@@ -27,6 +29,19 @@ def assert_pipeline_root_allowed_for_cli(pipeline_root: str) -> None:
             raise ValueError(
                 f"pipeline_root {pipeline_root!r} is hard-denied for CLI dispatch run"
             )
+
+
+def assert_cli_pipeline_root_trusted(pipeline_root: str) -> str:
+    """Resolve and validate CLI pipeline_root before any filesystem writes.
+
+    Bundle snapshots do not currently carry a trusted pipeline_root field, so
+    validation is limited to symlink-resolved hard-deny policy checks.
+    """
+    if not pipeline_root.strip():
+        raise ValueError("pipeline_root is required")
+    resolved = os.path.realpath(os.path.expanduser(pipeline_root))
+    assert_pipeline_root_allowed_for_cli(resolved)
+    return resolved
 
 
 def register_cli(parser: argparse.ArgumentParser) -> None:
@@ -64,12 +79,17 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     run_parser = subparsers.add_parser(
         "run",
-        help="Dispatch run skeleton (validation only — execution not implemented)",
+        help="Run approved dispatch from persisted bundle + confirmation files",
+    )
+    run_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id (bundle file key)",
     )
     run_parser.add_argument(
         "--unlock-token-id",
         required=True,
-        help="Dispatch unlock token id",
+        help="Dispatch unlock token id (must match bundle)",
     )
     run_parser.add_argument(
         "--confirmation-id",
@@ -89,7 +109,11 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     run_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Validate inputs only; do not execute dispatch",
+        help=(
+            "Validate-only: load bundle and confirmation files, run fail-closed "
+            "checks, and exit without invoking the production runner or consuming "
+            "persisted records"
+        ),
     )
     run_parser.set_defaults(handler=_cmd_run)
 
@@ -114,6 +138,7 @@ def _cmd_confirm_run(args: argparse.Namespace) -> int:
         operator_name=args.operator_name,
         confirmation_reason=args.reason,
         confirmation_phrase=args.phrase,
+        persist_to_file=True,
     )
     print(f"confirmation_id: {confirmation.confirmation_id}")
     print(f"expires_at: {confirmation.expires_at}")
@@ -122,13 +147,38 @@ def _cmd_confirm_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    assert_pipeline_root_allowed_for_cli(args.pipeline_root)
-    print("Dispatch run is NOT executed by this command (skeleton only).")
-    print(f"unlock_token_id: {args.unlock_token_id}")
-    print(f"confirmation_id: {args.confirmation_id}")
-    print(f"requester_id: {args.requester_id}")
-    print(f"pipeline_root: {args.pipeline_root}")
-    print(f"dry_run: {args.dry_run}")
+    return run_coo_dispatch_from_args(args)
+
+
+def run_coo_dispatch_from_args(
+    args: argparse.Namespace,
+    *,
+    subprocess_runner=None,
+) -> int:
+    """Execute dispatch run from parsed CLI args (runner injectable for tests)."""
+    from agent.coo.dispatch_cli_run import execute_coo_dispatch_run
+
+    try:
+        result = execute_coo_dispatch_run(
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+            unlock_token_id=args.unlock_token_id,
+            requester_id=args.requester_id,
+            pipeline_root=args.pipeline_root,
+            dry_run=bool(args.dry_run),
+            subprocess_runner=subprocess_runner,
+        )
+    except (ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"ticket_id: {result.ticket_id}")
+    print(f"confirmation_id: {result.confirmation_id}")
+    print(f"dispatch_request_id: {result.dispatch_request_id}")
+    print(f"status: {result.status}")
+    print(f"consumed: {result.consumed}")
+    if result.dry_run_only:
+        print("status: validation-only (--dry-run; runner not invoked, nothing consumed)")
     return 0
 
 

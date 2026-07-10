@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import inspect
 import subprocess
+import tempfile
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from agent.coo.dispatch_bundle_store import read_bundle
 from agent.coo.execution_dispatch_runtime import (
     DispatchExecutionRequestStore,
     DispatchExecutionRunStatus,
@@ -1213,6 +1215,121 @@ class TestGatewayDispatchProductionPolicyThreading(unittest.TestCase):
         self.assertIs(kwargs["confirmation_store"], confirmation_store)
         self.assertEqual(kwargs["audit_dir"], audit_dir)
         self.assertIs(kwargs["dry_run_store"], dry_run_store)
+
+
+class TestGatewayDispatchBundlePersistence(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.hermes_home = Path(self.tmp.name) / ".hermes"
+        self.hermes_home.mkdir()
+        self.bundle_dir = self.hermes_home / "coo" / "dispatch-bundles"
+        self.get_home_patch = patch(
+            "agent.coo.dispatch_bundle_store.get_hermes_home",
+            return_value=self.hermes_home,
+        )
+        self.get_home_patch.start()
+
+        get_default_ticket_store().clear()
+        get_default_dispatch_plan_store().clear()
+        get_default_execution_run_store().clear()
+        get_default_execution_request_store().clear()
+        get_default_execute_request_store().clear()
+        get_default_execute_gate_store().clear()
+        get_default_dispatch_unlock_token_store().clear()
+        get_default_dispatch_execution_request_store().clear()
+        get_default_dispatch_execution_run_store().clear()
+
+    def tearDown(self) -> None:
+        self.get_home_patch.stop()
+        self.tmp.cleanup()
+
+    def test_prepare_writes_bundle_file(self) -> None:
+        ctx = _seed_approved_dispatch_pipeline()
+        ticket = ctx["ticket"]
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            result = prepare_dispatch_for_gateway_ticket(
+                ticket.ticket_id,
+                requester_id=ticket.requester_id,
+                ticket_store=ctx["ticket_store"],
+                plan_store=ctx["plan_store"],
+                run_store=ctx["run_store"],
+                dry_run_request_store=ctx["dry_run_request_store"],
+                execute_request_store=ctx["execute_request_store"],
+                gate_store=ctx["gate_store"],
+                token_store=ctx["token_store"],
+                dispatch_request_store=ctx["dispatch_request_store"],
+                bundle_dir=self.bundle_dir,
+            )
+        bundle = read_bundle(ticket.ticket_id, bundle_dir=self.bundle_dir)
+        self.assertEqual(bundle.unlock_token_id, result["unlock_token"]["token_id"])
+        self.assertEqual(
+            bundle.dispatch_request_id,
+            result["dispatch_request"]["dispatch_request_id"],
+        )
+
+    def test_remint_then_prepare_updates_bundle(self) -> None:
+        ctx = _seed_approved_dispatch_pipeline()
+        ticket = ctx["ticket"]
+        prepare = prepare_dispatch_for_gateway_ticket(
+            ticket.ticket_id,
+            requester_id=ticket.requester_id,
+            ticket_store=ctx["ticket_store"],
+            plan_store=ctx["plan_store"],
+            run_store=ctx["run_store"],
+            dry_run_request_store=ctx["dry_run_request_store"],
+            execute_request_store=ctx["execute_request_store"],
+            gate_store=ctx["gate_store"],
+            token_store=ctx["token_store"],
+            dispatch_request_store=ctx["dispatch_request_store"],
+            bundle_dir=self.bundle_dir,
+        )
+        old_token_id = prepare["unlock_token"]["token_id"]
+        old_token = ctx["token_store"].get(old_token_id)
+        assert old_token is not None
+        old_token.expires_at = (
+            datetime.now(timezone.utc) - timedelta(minutes=5)
+        ).isoformat()
+        ctx["token_store"].save(old_token)
+
+        remint = maybe_remint_dispatch_token_for_gateway_ticket(
+            ticket.ticket_id,
+            requester_id=ticket.requester_id,
+            ticket_store=ctx["ticket_store"],
+            plan_store=ctx["plan_store"],
+            run_store=ctx["run_store"],
+            dry_run_request_store=ctx["dry_run_request_store"],
+            execute_request_store=ctx["execute_request_store"],
+            gate_store=ctx["gate_store"],
+            token_store=ctx["token_store"],
+            bundle_dir=self.bundle_dir,
+        )
+        after_remint = read_bundle(ticket.ticket_id, bundle_dir=self.bundle_dir)
+        self.assertEqual(after_remint.unlock_token_id, remint["unlock_token"]["token_id"])
+        self.assertTrue(after_remint.snapshot.get("_remint_pending_prepare"))
+
+        reprepared = prepare_dispatch_for_gateway_ticket(
+            ticket.ticket_id,
+            requester_id=ticket.requester_id,
+            ticket_store=ctx["ticket_store"],
+            plan_store=ctx["plan_store"],
+            run_store=ctx["run_store"],
+            dry_run_request_store=ctx["dry_run_request_store"],
+            execute_request_store=ctx["execute_request_store"],
+            gate_store=ctx["gate_store"],
+            token_store=ctx["token_store"],
+            dispatch_request_store=ctx["dispatch_request_store"],
+            bundle_dir=self.bundle_dir,
+        )
+        after_prepare = read_bundle(ticket.ticket_id, bundle_dir=self.bundle_dir)
+        self.assertEqual(
+            after_prepare.unlock_token_id,
+            reprepared["unlock_token"]["token_id"],
+        )
+        self.assertEqual(
+            after_prepare.dispatch_request_id,
+            reprepared["dispatch_request"]["dispatch_request_id"],
+        )
+        self.assertNotIn("_remint_pending_prepare", after_prepare.snapshot)
 
 
 if __name__ == "__main__":
