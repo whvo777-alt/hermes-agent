@@ -185,6 +185,17 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     audit_list_parser.set_defaults(handler=_cmd_audit_list)
 
+    audit_find_parser = audit_subparsers.add_parser(
+        "find",
+        help="Find audit records for an execution ticket id",
+    )
+    audit_find_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id to match against audit snapshot evidence",
+    )
+    audit_find_parser.set_defaults(handler=_cmd_audit_find)
+
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hermes coo dispatch")
@@ -305,6 +316,22 @@ def _cmd_audit_list(args: argparse.Namespace) -> int:
         return 1
 
     print(format_dispatch_audit_list(entries))
+    return 0
+
+
+def _cmd_audit_find(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_audit import (
+        find_dispatch_execution_audits_for_ticket,
+        format_dispatch_audit_find,
+    )
+
+    try:
+        entries = find_dispatch_execution_audits_for_ticket(args.ticket_id)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_audit_find(args.ticket_id, entries))
     return 0
 
 

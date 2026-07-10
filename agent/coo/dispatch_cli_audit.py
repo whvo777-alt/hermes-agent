@@ -1,4 +1,4 @@
-"""CLI dispatch execution audit read — Phase 11C / 11F.
+"""CLI dispatch execution audit read — Phase 11C / 11F / 11G.
 
 Read-only lookup and listing of persisted dispatch execution audit records.
 No writes, subprocess, factory, runner, or dispatch execution.
@@ -45,6 +45,7 @@ class CooDispatchAuditListEntry:
     """Safe read-only list entry for a dispatch execution audit record."""
 
     dispatch_run_id: str
+    ticket_id: str
     audit_id: str
     timestamp: str
     confirmation_id: str
@@ -74,6 +75,23 @@ def _normalize_dispatch_run_id(dispatch_run_id: str) -> str:
     if "/" in normalized or "\\" in normalized or normalized in {".", ".."}:
         raise ValueError("dispatch_run_id must not contain path separators.")
     return normalized
+
+
+def _normalize_ticket_id(ticket_id: str) -> str:
+    normalized = (ticket_id or "").strip()
+    if not normalized:
+        raise ValueError("ticket_id is required")
+    if "/" in normalized or "\\" in normalized or normalized in {".", ".."}:
+        raise ValueError("ticket_id must not contain path separators.")
+    return normalized
+
+
+def _audit_ticket_id(audit: DispatchExecutionAudit) -> str:
+    snapshot = audit.snapshot if isinstance(audit.snapshot, dict) else {}
+    ticket = snapshot.get("ticket") if isinstance(snapshot, dict) else {}
+    if isinstance(ticket, dict):
+        return str(ticket.get("ticket_id") or "")
+    return ""
 
 
 def _validate_audit_read_path(
@@ -164,6 +182,7 @@ def _audit_to_list_entry(audit: DispatchExecutionAudit) -> CooDispatchAuditListE
     summary = _audit_to_summary(audit)
     return CooDispatchAuditListEntry(
         dispatch_run_id=summary.dispatch_run_id,
+        ticket_id=_audit_ticket_id(audit),
         audit_id=summary.audit_id,
         timestamp=summary.timestamp,
         confirmation_id=summary.confirmation_id,
@@ -204,6 +223,21 @@ def list_dispatch_execution_audits(
 
     entries.sort(key=lambda item: item.timestamp, reverse=True)
     return tuple(entries)
+
+
+def find_dispatch_execution_audits_for_ticket(
+    ticket_id: str,
+    *,
+    audit_dir: Path | None = None,
+) -> tuple[CooDispatchAuditListEntry, ...]:
+    """Return audit list entries whose snapshot ticket id matches the CLI input."""
+    normalized_ticket_id = _normalize_ticket_id(ticket_id)
+    matches = tuple(
+        entry
+        for entry in list_dispatch_execution_audits(audit_dir=audit_dir)
+        if entry.ticket_id == normalized_ticket_id
+    )
+    return matches
 
 
 def summarize_dispatch_execution_audit(
@@ -263,6 +297,31 @@ def format_dispatch_audit_list(entries: tuple[CooDispatchAuditListEntry, ...]) -
     for index, entry in enumerate(entries):
         if index:
             lines.append("")
+        lines.extend(
+            [
+                f"dispatch_run_id: {entry.dispatch_run_id}",
+                f"audit_id: {entry.audit_id}",
+                f"timestamp: {entry.timestamp}",
+                f"confirmation_id: {entry.confirmation_id}",
+                f"pre_execution_checklist: {entry.pre_execution_checklist}",
+                f"checks_passed_count: {entry.checks_passed_count}",
+                f"checks_failed_count: {entry.checks_failed_count}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def format_dispatch_audit_find(
+    ticket_id: str,
+    entries: tuple[CooDispatchAuditListEntry, ...],
+) -> str:
+    """Render safe audit matches for a ticket without paths or snapshot dumps."""
+    lines = [
+        f"ticket_id: {ticket_id}",
+        f"match_count: {len(entries)}",
+    ]
+    for index, entry in enumerate(entries):
+        lines.append("")
         lines.extend(
             [
                 f"dispatch_run_id: {entry.dispatch_run_id}",

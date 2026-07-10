@@ -1,4 +1,4 @@
-"""Phase 11C / 11F tests — read-only dispatch execution audit CLI."""
+"""Phase 11C / 11F / 11G tests — read-only dispatch execution audit CLI."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent.coo.dispatch_cli_audit import (
+    find_dispatch_execution_audits_for_ticket,
+    format_dispatch_audit_find,
     format_dispatch_audit_list,
     format_dispatch_audit_summary,
     list_dispatch_execution_audits,
@@ -297,6 +299,71 @@ class TestDispatchAuditCli(unittest.TestCase):
         args = parser.parse_args(["audit", "list"])
         self.assertEqual(args.coo_dispatch_command, "audit")
         self.assertEqual(args.coo_dispatch_audit_command, "list")
+
+    def test_find_dispatch_execution_audits_for_ticket(self) -> None:
+        seeded = _seed_audit_record(audit_dir=self.audit_dir)
+        ticket_id = seeded["ticket"].ticket_id
+        entries = find_dispatch_execution_audits_for_ticket(
+            ticket_id,
+            audit_dir=self.audit_dir,
+        )
+        output = format_dispatch_audit_find(ticket_id, entries)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].ticket_id, ticket_id)
+        self.assertEqual(entries[0].dispatch_run_id, seeded["audit"].dispatch_run_id)
+        self.assertIn(f"ticket_id: {ticket_id}", output)
+        self.assertIn("match_count: 1", output)
+        self.assertNotIn("/tmp/fake-pipeline", output)
+
+    def test_find_no_matches_returns_empty(self) -> None:
+        _seed_audit_record(audit_dir=self.audit_dir)
+        entries = find_dispatch_execution_audits_for_ticket(
+            "missing-ticket-id",
+            audit_dir=self.audit_dir,
+        )
+        output = format_dispatch_audit_find("missing-ticket-id", entries)
+        self.assertEqual(entries, ())
+        self.assertIn("match_count: 0", output)
+
+    def test_find_empty_ticket_id_rejected(self) -> None:
+        with self.assertRaises(ValueError) as exc:
+            find_dispatch_execution_audits_for_ticket("  ", audit_dir=self.audit_dir)
+        self.assertIn("required", str(exc.exception))
+
+    def test_audit_find_cli_exit_zero(self) -> None:
+        seeded = _seed_audit_record(audit_dir=self.audit_dir)
+        ticket_id = seeded["ticket"].ticket_id
+        stdout = io.StringIO()
+        with (
+            patch.object(sys, "stdout", stdout),
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+        ):
+            exit_code = main(
+                [
+                    "audit",
+                    "find",
+                    "--ticket-id",
+                    ticket_id,
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertIn("match_count: 1", stdout.getvalue())
+        self.assertIn(seeded["audit"].dispatch_run_id, stdout.getvalue())
+
+    def test_audit_find_parser_registered(self) -> None:
+        parser = build_coo_dispatch_parser()
+        args = parser.parse_args(
+            [
+                "audit",
+                "find",
+                "--ticket-id",
+                "ticket-1",
+            ]
+        )
+        self.assertEqual(args.coo_dispatch_command, "audit")
+        self.assertEqual(args.coo_dispatch_audit_command, "find")
+        self.assertEqual(args.ticket_id, "ticket-1")
 
 
 if __name__ == "__main__":
