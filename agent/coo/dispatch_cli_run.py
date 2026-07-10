@@ -67,7 +67,6 @@ from agent.coo.production_executor_factory import (
     _ALLOWED_FACTORY_ENTRYPOINT,
     build_pipeline_dispatch_executor,
 )
-from agent.coo.production_executor_policy import ProductionExecutorPolicy
 from hermes_constants import get_hermes_home
 
 if TYPE_CHECKING:
@@ -290,6 +289,29 @@ def _persist_dispatch_consumption(
         ) from exc
 
 
+def _resolve_run_executor_policy(
+    *,
+    pipeline_root: str,
+    merged_config: Mapping[str, Any] | None,
+) -> "ProductionExecutorPolicy":
+    """Load config executor policy and fail-closed unless run is explicitly allowed."""
+    from agent.coo.dispatch_executor_config import load_dispatch_executor_policy
+    from agent.coo.production_executor_policy import (
+        ProductionExecutorPolicy,
+        _root_allowed,
+    )
+
+    policy = load_dispatch_executor_policy(merged_config)
+    if not policy.enabled:
+        raise ValueError("production executor policy is disabled")
+    root_ok, root_reason = _root_allowed(pipeline_root, policy.allowed_pipeline_roots)
+    if not root_ok:
+        raise ValueError(
+            root_reason or "pipeline_root is not allowed by executor policy"
+        )
+    return policy
+
+
 def execute_coo_dispatch_run(
     *,
     ticket_id: str,
@@ -364,6 +386,11 @@ def execute_coo_dispatch_run(
     if subprocess_runner is None:
         raise ValueError("production runner is not configured")
 
+    policy = _resolve_run_executor_policy(
+        pipeline_root=pipeline_root,
+        merged_config=merged_config,
+    )
+
     stores = hydrate_dispatch_stores_from_bundle(bundle)
     token = stores["token"]
     dispatch_request = stores["dispatch_request"]
@@ -374,10 +401,6 @@ def execute_coo_dispatch_run(
     resolved_audit_dir = audit_dir or (get_hermes_home() / "coo" / "audit")
     resolved_evidence_dir = evidence_dir or (get_hermes_home() / "coo" / "execution-evidence")
 
-    policy = ProductionExecutorPolicy(
-        enabled=True,
-        allowed_pipeline_roots=(pipeline_root,),
-    )
     executor = build_pipeline_dispatch_executor(
         policy,
         pipeline_root=pipeline_root,

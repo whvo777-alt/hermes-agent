@@ -49,6 +49,31 @@ def _mock_runner_timeout(argv, cwd, env, timeout):
     return _TIMEOUT_EXIT_CODE, "", "timeout"
 
 
+def _enabled_executor_config(pipeline_root: Path) -> dict:
+    return {
+        "coo": {
+            "dispatch": {
+                "executor": {
+                    "enabled": True,
+                    "allowed_pipeline_roots": [str(pipeline_root)],
+                }
+            }
+        }
+    }
+
+
+_DEFAULT_DISABLED_EXECUTOR_CONFIG = {
+    "coo": {
+        "dispatch": {
+            "executor": {
+                "enabled": False,
+                "allowed_pipeline_roots": [],
+            }
+        }
+    }
+}
+
+
 class _CooDispatchRunFixture:
     def __init__(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -143,6 +168,7 @@ class _CooDispatchRunTestBase(unittest.TestCase):
             pipeline_root=str(self.fixture.pipeline_root),
             bundle_dir=self.fixture.bundle_dir,
             confirmation_dir=self.fixture.confirmation_dir,
+            merged_config=_enabled_executor_config(self.fixture.pipeline_root),
         )
         base.update(overrides)
         return base
@@ -174,6 +200,7 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
                 bundle_dir=self.fixture.bundle_dir,
                 confirmation_dir=self.fixture.confirmation_dir,
                 subprocess_runner=_mock_runner_success,
+                merged_config=_enabled_executor_config(self.fixture.pipeline_root),
             )
         self.assertTrue(result.consumed)
         self.assertEqual(result.status, DispatchExecutionRunStatus.COMPLETED.value)
@@ -202,6 +229,10 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
             patch.object(sys, "stdout", stdout),
             patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
             patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+            patch(
+                "hermes_cli.config.load_config",
+                return_value=_enabled_executor_config(self.fixture.pipeline_root),
+            ),
         ):
             exit_code = run_coo_dispatch_from_args(
                 args,
@@ -410,6 +441,10 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
             patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
             patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
             patch(
+                "hermes_cli.config.load_config",
+                return_value=_enabled_executor_config(self.fixture.pipeline_root),
+            ),
+            patch(
                 "agent.coo.dispatch_cli_run.mark_bundle_consumed",
                 side_effect=ValueError("bundle consume failed"),
             ),
@@ -503,6 +538,102 @@ class TestCooDispatchRunFailures(_CooDispatchRunTestBase):
             )
         self.assertIn("hard-denied", str(exc.exception))
         self._assert_not_consumed()
+
+
+class TestCooDispatchRunExecutorPolicy(_CooDispatchRunTestBase):
+    def setUp(self) -> None:
+        self.fixture = _CooDispatchRunFixture()
+        self.fixture.start()
+        self.seeded = self.fixture.seed_bundle_and_confirmation()
+
+    def tearDown(self) -> None:
+        self.fixture.stop()
+
+    def test_executor_disabled_rejects_before_run(self) -> None:
+        runner_calls = {"count": 0}
+
+        def counting_runner(*args, **kwargs):
+            runner_calls["count"] += 1
+            return _mock_runner_success(*args, **kwargs)
+
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+            patch(
+                "agent.coo.dispatch_cli_run.run_approved_dispatch",
+                side_effect=AssertionError("no runner"),
+            ),
+        ):
+            with self.assertRaises(ValueError) as exc:
+                execute_coo_dispatch_run(
+                    **self._run_kwargs(
+                        subprocess_runner=counting_runner,
+                        merged_config=_DEFAULT_DISABLED_EXECUTOR_CONFIG,
+                    ),
+                )
+        self.assertIn("disabled", str(exc.exception).lower())
+        self.assertEqual(runner_calls["count"], 0)
+        bundle = read_bundle(
+            self.seeded["ticket"].ticket_id,
+            bundle_dir=self.fixture.bundle_dir,
+        )
+        self.assertEqual(bundle.consumed_at, "")
+        loaded = read_confirmation(
+            self.seeded["confirmation"].confirmation_id,
+            confirmation_dir=self.fixture.confirmation_dir,
+        )
+        self.assertFalse(loaded.consumed)
+
+    def test_allowlist_mismatch_rejects_before_run(self) -> None:
+        runner_calls = {"count": 0}
+
+        def counting_runner(*args, **kwargs):
+            runner_calls["count"] += 1
+            return _mock_runner_success(*args, **kwargs)
+
+        mismatched_config = {
+            "coo": {
+                "dispatch": {
+                    "executor": {
+                        "enabled": True,
+                        "allowed_pipeline_roots": ["/tmp/other-isolated-root"],
+                    }
+                }
+            }
+        }
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+            patch(
+                "agent.coo.dispatch_cli_run.run_approved_dispatch",
+                side_effect=AssertionError("no runner"),
+            ),
+        ):
+            with self.assertRaises(ValueError) as exc:
+                execute_coo_dispatch_run(
+                    **self._run_kwargs(
+                        subprocess_runner=counting_runner,
+                        merged_config=mismatched_config,
+                    ),
+                )
+        self.assertIn("outside allowed_pipeline_roots", str(exc.exception))
+        self.assertEqual(runner_calls["count"], 0)
+        bundle = read_bundle(
+            self.seeded["ticket"].ticket_id,
+            bundle_dir=self.fixture.bundle_dir,
+        )
+        self.assertEqual(bundle.consumed_at, "")
+
+    def test_enabled_allowlist_match_allows_mock_runner_path(self) -> None:
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+        ):
+            result = execute_coo_dispatch_run(
+                **self._run_kwargs(subprocess_runner=_mock_runner_success),
+            )
+        self.assertTrue(result.consumed)
+        self.assertEqual(result.status, DispatchExecutionRunStatus.COMPLETED.value)
 
 
 class TestCooDispatchBundleRejection(unittest.TestCase):
