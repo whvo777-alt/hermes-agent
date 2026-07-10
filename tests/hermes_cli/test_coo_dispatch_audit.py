@@ -1,4 +1,4 @@
-"""Phase 11C tests — read-only dispatch execution audit CLI."""
+"""Phase 11C / 11F tests — read-only dispatch execution audit CLI."""
 
 from __future__ import annotations
 
@@ -11,7 +11,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent.coo.dispatch_cli_audit import (
+    format_dispatch_audit_list,
     format_dispatch_audit_summary,
+    list_dispatch_execution_audits,
     summarize_dispatch_execution_audit,
 )
 from agent.coo.dispatch_execution_audit import (
@@ -243,6 +245,58 @@ class TestDispatchAuditCli(unittest.TestCase):
         self.assertEqual(args.coo_dispatch_command, "audit")
         self.assertEqual(args.coo_dispatch_audit_command, "show")
         self.assertEqual(args.dispatch_run_id, "run-1")
+
+    def test_list_dispatch_execution_audits(self) -> None:
+        first = _seed_audit_record(
+            audit_dir=self.audit_dir,
+            dispatch_run_id="run-audit-cli-a",
+        )
+        second = _seed_audit_record(
+            audit_dir=self.audit_dir,
+            dispatch_run_id="run-audit-cli-b",
+            checklist_all_passed=False,
+        )
+        entries = list_dispatch_execution_audits(audit_dir=self.audit_dir)
+        output = format_dispatch_audit_list(entries)
+        self.assertEqual(len(entries), 2)
+        self.assertIn("audit_count: 2", output)
+        self.assertIn(first["audit"].dispatch_run_id, output)
+        self.assertIn(second["audit"].dispatch_run_id, output)
+        self.assertNotIn("/tmp/fake-pipeline", output)
+        self.assertNotIn("node pipeline.js", output)
+
+    def test_list_empty_audit_dir(self) -> None:
+        entries = list_dispatch_execution_audits(audit_dir=self.audit_dir)
+        output = format_dispatch_audit_list(entries)
+        self.assertEqual(entries, ())
+        self.assertEqual(output, "audit_count: 0")
+
+    def test_list_corrupted_audit_rejected(self) -> None:
+        _seed_audit_record(audit_dir=self.audit_dir, dispatch_run_id="run-audit-good")
+        corrupt_path = self.audit_dir / "run-audit-bad.json"
+        corrupt_path.write_text("{bad", encoding="utf-8")
+        with self.assertRaises(ValueError) as exc:
+            list_dispatch_execution_audits(audit_dir=self.audit_dir)
+        self.assertIn("corrupted", str(exc.exception).lower())
+
+    def test_audit_list_cli_exit_zero(self) -> None:
+        seeded = _seed_audit_record(audit_dir=self.audit_dir)
+        stdout = io.StringIO()
+        with (
+            patch.object(sys, "stdout", stdout),
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+        ):
+            exit_code = main(["audit", "list"])
+        self.assertEqual(exit_code, 0)
+        self.assertIn("audit_count: 1", stdout.getvalue())
+        self.assertIn(seeded["audit"].dispatch_run_id, stdout.getvalue())
+
+    def test_audit_list_parser_registered(self) -> None:
+        parser = build_coo_dispatch_parser()
+        args = parser.parse_args(["audit", "list"])
+        self.assertEqual(args.coo_dispatch_command, "audit")
+        self.assertEqual(args.coo_dispatch_audit_command, "list")
 
 
 if __name__ == "__main__":

@@ -179,6 +179,12 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     audit_show_parser.set_defaults(handler=_cmd_audit_show)
 
+    audit_list_parser = audit_subparsers.add_parser(
+        "list",
+        help="List safe summaries for persisted dispatch execution audit records",
+    )
+    audit_list_parser.set_defaults(handler=_cmd_audit_list)
+
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hermes coo dispatch")
@@ -283,6 +289,22 @@ def _cmd_audit_show(args: argparse.Namespace) -> int:
         return 1
 
     print(format_dispatch_audit_summary(summary))
+    return 0
+
+
+def _cmd_audit_list(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_audit import (
+        format_dispatch_audit_list,
+        list_dispatch_execution_audits,
+    )
+
+    try:
+        entries = list_dispatch_execution_audits()
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_audit_list(entries))
     return 0
 
 

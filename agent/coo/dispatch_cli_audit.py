@@ -1,7 +1,7 @@
-"""CLI dispatch execution audit read — Phase 11C.
+"""CLI dispatch execution audit read — Phase 11C / 11F.
 
-Read-only lookup of persisted dispatch execution audit records. No writes,
-subprocess, factory, runner, or dispatch execution.
+Read-only lookup and listing of persisted dispatch execution audit records.
+No writes, subprocess, factory, runner, or dispatch execution.
 """
 
 from __future__ import annotations
@@ -38,6 +38,19 @@ class CooDispatchAuditSummary:
     checks_passed_count: int
     checks_failed_count: int
     snapshot_blocks: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CooDispatchAuditListEntry:
+    """Safe read-only list entry for a dispatch execution audit record."""
+
+    dispatch_run_id: str
+    audit_id: str
+    timestamp: str
+    confirmation_id: str
+    pre_execution_checklist: str
+    checks_passed_count: int
+    checks_failed_count: int
 
 
 def _assert_audit_path_within_hermes_home(
@@ -82,6 +95,17 @@ def _validate_audit_read_path(
         label="path",
     )
     return path
+
+
+def _validate_audit_dir_read_path(audit_dir: Path) -> Path:
+    hermes_root = get_hermes_home().resolve()
+    resolved_base = audit_dir.resolve()
+    _assert_audit_path_within_hermes_home(
+        resolved_base,
+        hermes_root,
+        label="directory",
+    )
+    return resolved_base
 
 
 def _checklist_counts(checklist: dict[str, Any]) -> tuple[str, int, int]:
@@ -136,6 +160,52 @@ def _audit_to_summary(audit: DispatchExecutionAudit) -> CooDispatchAuditSummary:
     )
 
 
+def _audit_to_list_entry(audit: DispatchExecutionAudit) -> CooDispatchAuditListEntry:
+    summary = _audit_to_summary(audit)
+    return CooDispatchAuditListEntry(
+        dispatch_run_id=summary.dispatch_run_id,
+        audit_id=summary.audit_id,
+        timestamp=summary.timestamp,
+        confirmation_id=summary.confirmation_id,
+        pre_execution_checklist=summary.pre_execution_checklist,
+        checks_passed_count=summary.checks_passed_count,
+        checks_failed_count=summary.checks_failed_count,
+    )
+
+
+def list_dispatch_execution_audits(
+    *,
+    audit_dir: Path | None = None,
+) -> tuple[CooDispatchAuditListEntry, ...]:
+    """List persisted audit records under Hermes home in newest-first order."""
+    base_dir = audit_dir or default_audit_dir()
+    _validate_audit_dir_read_path(base_dir)
+    if not base_dir.is_dir():
+        return ()
+
+    entries: list[CooDispatchAuditListEntry] = []
+    for path in sorted(base_dir.glob("*.json")):
+        dispatch_run_id = path.stem
+        if not dispatch_run_id or "/" in dispatch_run_id or "\\" in dispatch_run_id:
+            raise ValueError("audit directory contains an invalid dispatch run id.")
+        _validate_audit_read_path(dispatch_run_id, base_dir)
+        try:
+            audit = read_dispatch_execution_audit(
+                dispatch_run_id,
+                audit_dir=base_dir,
+            )
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Dispatch execution audit JSON is corrupted for id {dispatch_run_id}."
+            ) from exc
+        if audit is None:
+            continue
+        entries.append(_audit_to_list_entry(audit))
+
+    entries.sort(key=lambda item: item.timestamp, reverse=True)
+    return tuple(entries)
+
+
 def summarize_dispatch_execution_audit(
     dispatch_run_id: str,
     *,
@@ -184,4 +254,24 @@ def format_dispatch_audit_summary(summary: CooDispatchAuditSummary) -> str:
     ]
     if summary.snapshot_blocks:
         lines.append(f"snapshot_blocks: {','.join(summary.snapshot_blocks)}")
+    return "\n".join(lines)
+
+
+def format_dispatch_audit_list(entries: tuple[CooDispatchAuditListEntry, ...]) -> str:
+    """Render a safe audit list without paths, commands, tokens, or snapshots."""
+    lines = [f"audit_count: {len(entries)}"]
+    for index, entry in enumerate(entries):
+        if index:
+            lines.append("")
+        lines.extend(
+            [
+                f"dispatch_run_id: {entry.dispatch_run_id}",
+                f"audit_id: {entry.audit_id}",
+                f"timestamp: {entry.timestamp}",
+                f"confirmation_id: {entry.confirmation_id}",
+                f"pre_execution_checklist: {entry.pre_execution_checklist}",
+                f"checks_passed_count: {entry.checks_passed_count}",
+                f"checks_failed_count: {entry.checks_failed_count}",
+            ]
+        )
     return "\n".join(lines)
