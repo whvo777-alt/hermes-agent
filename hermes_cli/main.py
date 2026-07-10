@@ -12179,7 +12179,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
     {
         "acp", "auth", "backup", "bundles", "checkpoints", "claw", "completion",
         "computer-use",
-        "config", "cron", "curator", "dashboard", "serve", "debug", "doctor",
+        "config", "coo", "cron", "curator", "dashboard", "serve", "debug", "doctor",
         "dump", "fallback", "gateway", "hooks", "import", "insights",
         "gui", "desktop", "kanban", "login", "logout", "logs", "lsp", "mcp", "memory", "migrate", "moa",
         "journey", "memory-graph", "learning",
@@ -13098,6 +13098,47 @@ def main():
         _register_curator_cli(curator_parser)
     except Exception as _exc:
         logging.getLogger(__name__).debug("curator CLI wiring failed: %s", _exc)
+
+    # =========================================================================
+    # coo command — COO dispatch bundle / confirmation CLI (no real execution)
+    # =========================================================================
+    coo_parser = subparsers.add_parser(
+        "coo",
+        help="COO orchestration commands",
+        description=(
+            "Cross-process CLI for dispatch bundle persistence and production "
+            "executor confirmation. Real Repository2 execution is not enabled "
+            "from this entrypoint."
+        ),
+    )
+    coo_subparsers = coo_parser.add_subparsers(dest="coo_command")
+
+    dispatch_parser = coo_subparsers.add_parser(
+        "dispatch",
+        help="Dispatch bundle and confirmation file CLI",
+        description=(
+            "confirm-run persists operator confirmation; run loads bundle and "
+            "confirmation files (fail-closed without a configured runner)."
+        ),
+    )
+    try:
+        from hermes_cli.coo_dispatch import register_cli as _register_coo_dispatch_cli
+
+        _register_coo_dispatch_cli(dispatch_parser)
+    except Exception as _exc:
+        logging.getLogger(__name__).debug("coo dispatch CLI wiring failed: %s", _exc)
+
+    def cmd_coo(args):  # noqa: ANN001
+        if getattr(args, "coo_command", None) == "dispatch":
+            handler = getattr(args, "handler", None)
+            if handler is not None:
+                return int(handler(args) or 0)
+            dispatch_parser.print_help()
+            return 0
+        coo_parser.print_help()
+        return 0
+
+    coo_parser.set_defaults(func=cmd_coo)
 
     # =========================================================================
     # pets command — petdex animated mascots (CLI / TUI / desktop display)

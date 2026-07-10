@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -328,6 +329,235 @@ class TestCooDispatchCli(unittest.TestCase):
                             ]
                         )
             self.assertEqual(exit_code, 0)
+
+
+class TestCooDispatchMainEntrypoint(unittest.TestCase):
+    """Phase 10R — hermes coo dispatch registered in main.py."""
+
+    _CONFIRM_RUN_ARGS = [
+        "confirm-run",
+        "--ticket-id",
+        "ticket-1",
+        "--plan-id",
+        "plan-1",
+        "--unlock-token-id",
+        "token-1",
+        "--dispatch-request-id",
+        "req-1",
+        "--operator-id",
+        "op-1",
+        "--operator-name",
+        "Operator",
+        "--reason",
+        "test",
+        "--phrase",
+        "CONFIRM-REPOSITORY2-EXECUTION",
+    ]
+
+    @contextmanager
+    def _main_patches(self):
+        import hermes_cli.main as hermes_main
+
+        with (
+            patch.object(hermes_main, "_try_termux_fast_tui_launch", return_value=False),
+            patch.object(hermes_main, "_try_termux_fast_cli_launch", return_value=False),
+            patch.object(hermes_main, "_plugin_cli_discovery_needed", return_value=False),
+            patch.object(hermes_main, "_prepare_agent_startup"),
+        ):
+            yield
+
+    def test_main_entrypoint_dispatch_help(self) -> None:
+        import hermes_cli.main as hermes_main
+
+        argv_backup = sys.argv[:]
+        sys.argv = ["hermes", "coo", "dispatch", "--help"]
+        buf = io.StringIO()
+        try:
+            with self._main_patches():
+                with patch.object(sys, "stdout", buf):
+                    with self.assertRaises(SystemExit) as ctx:
+                        hermes_main.main()
+            self.assertEqual(ctx.exception.code, 0)
+        finally:
+            sys.argv = argv_backup
+        output = buf.getvalue()
+        self.assertIn("confirm-run", output)
+        self.assertIn("run", output)
+
+    def test_main_entrypoint_confirm_run_parser(self) -> None:
+        import hermes_cli.main as hermes_main
+
+        captured: dict[str, str] = {}
+
+        def fake_confirm_run(args) -> int:
+            captured["coo_dispatch_command"] = args.coo_dispatch_command
+            captured["ticket_id"] = args.ticket_id
+            return 0
+
+        argv_backup = sys.argv[:]
+        sys.argv = ["hermes", "coo", "dispatch", *self._CONFIRM_RUN_ARGS]
+        try:
+            with self._main_patches():
+                with patch("hermes_cli.coo_dispatch._cmd_confirm_run", fake_confirm_run):
+                    hermes_main.main()
+        finally:
+            sys.argv = argv_backup
+        self.assertEqual(captured["coo_dispatch_command"], "confirm-run")
+        self.assertEqual(captured["ticket_id"], "ticket-1")
+
+    def test_main_entrypoint_run_dry_run_parser(self) -> None:
+        import hermes_cli.main as hermes_main
+
+        captured: dict[str, object] = {}
+
+        def fake_run(args) -> int:
+            captured["coo_dispatch_command"] = args.coo_dispatch_command
+            captured["dry_run"] = bool(args.dry_run)
+            return 0
+
+        argv_backup = sys.argv[:]
+        sys.argv = [
+            "hermes",
+            "coo",
+            "dispatch",
+            "run",
+            "--ticket-id",
+            "ticket-1",
+            "--unlock-token-id",
+            "token-1",
+            "--confirmation-id",
+            "confirm-1",
+            "--requester-id",
+            "requester-1",
+            "--pipeline-root",
+            "/tmp/fake-pipeline",
+            "--dry-run",
+        ]
+        try:
+            with self._main_patches():
+                with patch("hermes_cli.coo_dispatch._cmd_run", fake_run):
+                    hermes_main.main()
+        finally:
+            sys.argv = argv_backup
+        self.assertEqual(captured["coo_dispatch_command"], "run")
+        self.assertTrue(captured["dry_run"])
+
+    def test_main_entrypoint_run_fail_closed_without_runner(self) -> None:
+        import hermes_cli.main as hermes_main
+        from agent.coo.gateway_execution_dispatch import prepare_dispatch_for_gateway_ticket
+        from agent.coo.production_executor_confirmation import (
+            REQUIRED_CONFIRMATION_PHRASE,
+            create_production_executor_confirmation,
+        )
+        from agent.coo.tests.test_gateway_execution_dispatch import _seed_approved_dispatch_pipeline
+
+        fixture_tmp = tempfile.TemporaryDirectory()
+        hermes_home = Path(fixture_tmp.name) / ".hermes"
+        hermes_home.mkdir()
+        pipeline_root = Path(fixture_tmp.name) / "fake-pipeline"
+        pipeline_root.mkdir()
+        bundle_dir = hermes_home / "coo" / "dispatch-bundles"
+        confirmation_dir = hermes_home / "coo" / "confirmations"
+        ctx = _seed_approved_dispatch_pipeline()
+        ticket = ctx["ticket"]
+        with (
+            patch(
+                "agent.coo.dispatch_bundle_store.get_hermes_home",
+                return_value=hermes_home,
+            ),
+            patch(
+                "agent.coo.production_executor_confirmation.get_hermes_home",
+                return_value=hermes_home,
+            ),
+            patch(
+                "agent.coo.dispatch_cli_run.get_hermes_home",
+                return_value=hermes_home,
+            ),
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+        ):
+            prepare = prepare_dispatch_for_gateway_ticket(
+                ticket.ticket_id,
+                requester_id=ticket.requester_id,
+                ticket_store=ctx["ticket_store"],
+                plan_store=ctx["plan_store"],
+                run_store=ctx["run_store"],
+                dry_run_request_store=ctx["dry_run_request_store"],
+                execute_request_store=ctx["execute_request_store"],
+                gate_store=ctx["gate_store"],
+                token_store=ctx["token_store"],
+                dispatch_request_store=ctx["dispatch_request_store"],
+                bundle_dir=bundle_dir,
+            )
+            confirmation = create_production_executor_confirmation(
+                ticket_id=ticket.ticket_id,
+                plan_id=prepare["unlock_token"]["plan_id"],
+                unlock_token_id=prepare["unlock_token"]["token_id"],
+                dispatch_request_id=prepare["dispatch_request"]["dispatch_request_id"],
+                operator_id="op-cli",
+                operator_name="CLI Operator",
+                confirmation_reason="cli run test",
+                confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+                persist_to_file=True,
+                confirmation_dir=confirmation_dir,
+            )
+            argv_backup = sys.argv[:]
+            sys.argv = [
+                "hermes",
+                "coo",
+                "dispatch",
+                "run",
+                "--ticket-id",
+                ticket.ticket_id,
+                "--unlock-token-id",
+                prepare["unlock_token"]["token_id"],
+                "--confirmation-id",
+                confirmation.confirmation_id,
+                "--requester-id",
+                ticket.requester_id,
+                "--pipeline-root",
+                str(pipeline_root),
+            ]
+            stderr = io.StringIO()
+            try:
+                with self._main_patches():
+                    with patch.object(sys, "stderr", stderr):
+                        hermes_main.main()
+            finally:
+                sys.argv = argv_backup
+            self.assertIn("production runner is not configured", stderr.getvalue())
+        fixture_tmp.cleanup()
+
+    def test_main_entrypoint_avoids_repository2_paths(self) -> None:
+        import hermes_cli.main as hermes_main
+
+        for denied in PRODUCTION_ROOT_HARD_DENY:
+            argv_backup = sys.argv[:]
+            sys.argv = [
+                "hermes",
+                "coo",
+                "dispatch",
+                "run",
+                "--ticket-id",
+                "ticket-1",
+                "--unlock-token-id",
+                "token-1",
+                "--confirmation-id",
+                "confirm-1",
+                "--requester-id",
+                "requester-1",
+                "--pipeline-root",
+                denied,
+                "--dry-run",
+            ]
+            stderr = io.StringIO()
+            try:
+                with self._main_patches():
+                    with patch.object(sys, "stderr", stderr):
+                        hermes_main.main()
+            finally:
+                sys.argv = argv_backup
+            self.assertIn("hard-denied", stderr.getvalue())
 
 
 if __name__ == "__main__":
