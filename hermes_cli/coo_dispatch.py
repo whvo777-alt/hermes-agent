@@ -212,8 +212,14 @@ def run_coo_dispatch_from_args(
     print(f"dispatch_request_id: {result.dispatch_request_id}")
     print(f"status: {result.status}")
     print(f"consumed: {result.consumed}")
+    if result.preflight is not None:
+        from agent.coo.dispatch_cli_preflight import format_dispatch_preflight_summary
+
+        print(format_dispatch_preflight_summary(result.preflight))
     if result.dry_run_only:
-        print("status: validation-only (--dry-run; runner not invoked, nothing consumed)")
+        print("status: preflight-only (--dry-run; runner not invoked, nothing consumed)")
+        if result.preflight is not None and not result.preflight.all_passed:
+            return 1
     return 0
 
 

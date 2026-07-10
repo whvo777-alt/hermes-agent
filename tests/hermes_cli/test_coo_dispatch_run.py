@@ -227,9 +227,12 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
             dry_run=True,
             bundle_dir=self.fixture.bundle_dir,
             confirmation_dir=self.fixture.confirmation_dir,
+            merged_config={"coo": {"dispatch": {"executor": {"enabled": False}}}},
         )
         self.assertFalse(result.consumed)
-        self.assertEqual(result.status, "validated")
+        self.assertEqual(result.status, "preflight_failed")
+        self.assertIsNotNone(result.preflight)
+        self.assertFalse(result.preflight.all_passed)
         bundle = read_bundle(ticket.ticket_id, bundle_dir=self.fixture.bundle_dir)
         self.assertEqual(bundle.consumed_at, "")
         loaded = read_confirmation(
@@ -238,7 +241,36 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
         )
         self.assertFalse(loaded.consumed)
 
-    def test_dry_run_cli_output_states_validation_only(self) -> None:
+    def test_dry_run_preflight_pass_with_enabled_allowlist(self) -> None:
+        ticket = self.seeded["ticket"]
+        prepare = self.seeded["prepare"]
+        confirmation = self.seeded["confirmation"]
+        enabled_config = {
+            "coo": {
+                "dispatch": {
+                    "executor": {
+                        "enabled": True,
+                        "allowed_pipeline_roots": [str(self.fixture.pipeline_root)],
+                    }
+                }
+            }
+        }
+        result = execute_coo_dispatch_run(
+            ticket_id=ticket.ticket_id,
+            confirmation_id=confirmation.confirmation_id,
+            unlock_token_id=prepare["unlock_token"]["token_id"],
+            requester_id=ticket.requester_id,
+            pipeline_root=str(self.fixture.pipeline_root),
+            dry_run=True,
+            bundle_dir=self.fixture.bundle_dir,
+            confirmation_dir=self.fixture.confirmation_dir,
+            merged_config=enabled_config,
+        )
+        self.assertEqual(result.status, "preflight_passed")
+        self.assertTrue(result.preflight is not None and result.preflight.all_passed)
+        self.assertFalse(result.consumed)
+
+    def test_dry_run_cli_output_states_preflight_summary(self) -> None:
         ticket = self.seeded["ticket"]
         prepare = self.seeded["prepare"]
         confirmation = self.seeded["confirmation"]
@@ -253,10 +285,12 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
         stdout = io.StringIO()
         with patch.object(sys, "stdout", stdout):
             exit_code = run_coo_dispatch_from_args(args)
-        self.assertEqual(exit_code, 0)
+        self.assertEqual(exit_code, 1)
         output = stdout.getvalue()
-        self.assertIn("validation-only", output)
+        self.assertIn("preflight: failed", output)
+        self.assertIn("preflight-only", output)
         self.assertIn("consumed: False", output)
+        self.assertIn("failed_checks: policy_enabled", output)
 
     def test_hydrate_preserves_snapshot_ids_and_status(self) -> None:
         ticket = self.seeded["ticket"]
@@ -305,6 +339,8 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
         self.assertNotIn(prepare["unlock_token"]["token_id"], combined)
         self.assertNotIn(json.dumps(bundle.snapshot), combined)
         self.assertNotIn(confirmation_json, combined)
+        self.assertNotIn(str(self.fixture.pipeline_root), combined)
+        self.assertIn("preflight:", combined)
         for secret_key in ("API_KEY", "PASSWORD", "SECRET", "TOKEN="):
             self.assertNotIn(secret_key, combined)
 

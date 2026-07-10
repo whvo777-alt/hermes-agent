@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
 
 from agent.coo.dispatch_bundle_store import (
     DispatchExecutionBundle,
@@ -70,6 +70,9 @@ from agent.coo.production_executor_factory import (
 from agent.coo.production_executor_policy import ProductionExecutorPolicy
 from hermes_constants import get_hermes_home
 
+if TYPE_CHECKING:
+    from agent.coo.dispatch_cli_preflight import CooDispatchPreflightSummary
+
 
 @dataclass(frozen=True)
 class CooDispatchRunResult:
@@ -81,6 +84,7 @@ class CooDispatchRunResult:
     status: str
     consumed: bool
     dry_run_only: bool = False
+    preflight: Optional["CooDispatchPreflightSummary"] = None
 
 
 def _object_from_dict(
@@ -105,15 +109,10 @@ def _object_from_dict(
     return cls(**kwargs)
 
 
-def hydrate_dispatch_stores_from_bundle(
+def hydrate_dispatch_evidence_from_bundle(
     bundle: DispatchExecutionBundle,
 ) -> Dict[str, Any]:
-    """Populate in-memory stores from a validated bundle snapshot.
-
-    Evidence-only restore: every record is rebuilt exclusively from the
-    persisted snapshot dicts. No new ticket/token/request/gate IDs are minted,
-    no remint/prepare helpers are invoked, and no statuses are recomputed.
-    """
+    """Rebuild policy-check evidence objects from a bundle snapshot only."""
     snap = bundle.snapshot
     ticket = _object_from_dict(
         ExecutionTicket,
@@ -169,6 +168,36 @@ def hydrate_dispatch_stores_from_bundle(
         token=token,
         dispatch_request=dispatch_request,
     )
+    return {
+        "ticket": ticket,
+        "plan": plan,
+        "dry_run": dry_run,
+        "dry_run_request": dry_run_request,
+        "execute_request": execute_request,
+        "gate": gate,
+        "token": token,
+        "dispatch_request": dispatch_request,
+    }
+
+
+def hydrate_dispatch_stores_from_bundle(
+    bundle: DispatchExecutionBundle,
+) -> Dict[str, Any]:
+    """Populate in-memory stores from a validated bundle snapshot.
+
+    Evidence-only restore: every record is rebuilt exclusively from the
+    persisted snapshot dicts. No new ticket/token/request/gate IDs are minted,
+    no remint/prepare helpers are invoked, and no statuses are recomputed.
+    """
+    evidence = hydrate_dispatch_evidence_from_bundle(bundle)
+    ticket = evidence["ticket"]
+    plan = evidence["plan"]
+    dry_run = evidence["dry_run"]
+    dry_run_request = evidence["dry_run_request"]
+    execute_request = evidence["execute_request"]
+    gate = evidence["gate"]
+    token = evidence["token"]
+    dispatch_request = evidence["dispatch_request"]
 
     ticket_store = ExecutionTicketStore()
     plan_store = ExecutionDispatchPlanStore()
@@ -274,6 +303,7 @@ def execute_coo_dispatch_run(
     audit_dir: Path | None = None,
     evidence_dir: Path | None = None,
     subprocess_runner: SubprocessRunner | None = None,
+    merged_config: Mapping[str, Any] | None = None,
 ) -> CooDispatchRunResult:
     """Load persisted state, validate, and run dispatch (mock runner in tests only)."""
     if not ticket_id.strip():
@@ -313,13 +343,22 @@ def execute_coo_dispatch_run(
     )
 
     if dry_run:
+        from agent.coo.dispatch_cli_preflight import run_dispatch_policy_preflight
+
+        preflight = run_dispatch_policy_preflight(
+            bundle=bundle,
+            confirmation=confirmation,
+            pipeline_root=pipeline_root,
+            merged_config=merged_config,
+        )
         return CooDispatchRunResult(
             ticket_id=bundle.ticket_id,
             confirmation_id=confirmation.confirmation_id,
             dispatch_request_id=bundle.dispatch_request_id,
-            status="validated",
+            status="preflight_passed" if preflight.all_passed else "preflight_failed",
             consumed=False,
             dry_run_only=True,
+            preflight=preflight,
         )
 
     if subprocess_runner is None:
