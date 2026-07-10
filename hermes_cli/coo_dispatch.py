@@ -144,6 +144,30 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     status_parser.set_defaults(handler=_cmd_status)
 
+    readiness_parser = subparsers.add_parser(
+        "readiness",
+        help=(
+            "Read-only operator readiness check before dispatch run "
+            "(config, persistence, policy preflight)"
+        ),
+    )
+    readiness_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id (bundle file key)",
+    )
+    readiness_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    readiness_parser.add_argument(
+        "--pipeline-root",
+        required=True,
+        help="Isolated pipeline root for readiness preflight (production root hard-denied)",
+    )
+    readiness_parser.set_defaults(handler=_cmd_readiness)
+
     config_parser = subparsers.add_parser(
         "config",
         help="Read-only dispatch executor config commands",
@@ -215,6 +239,21 @@ def _cmd_status(args: argparse.Namespace) -> int:
     if summary.preflight == "failed":
         return 1
     return 0
+
+
+def _cmd_readiness(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_readiness import (
+        evaluate_dispatch_operator_readiness,
+        format_dispatch_readiness_summary,
+    )
+
+    summary = evaluate_dispatch_operator_readiness(
+        ticket_id=args.ticket_id,
+        confirmation_id=args.confirmation_id,
+        pipeline_root=args.pipeline_root,
+    )
+    print(format_dispatch_readiness_summary(summary))
+    return 0 if summary.ready else 1
 
 
 def _cmd_config_validate(args: argparse.Namespace) -> int:
