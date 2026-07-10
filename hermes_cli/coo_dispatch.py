@@ -1,11 +1,32 @@
-"""CLI skeleton: `hermes coo dispatch confirm-run` (Phase 10L).
+"""CLI skeleton: `hermes coo dispatch` (Phase 10L / 10N).
 
-Creates production executor confirmation records only — no dispatch execution.
+confirm-run creates production executor confirmation records only.
+run is parser/validation skeleton only — no dispatch execution.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
+
+PRODUCTION_ROOT_HARD_DENY = (
+    "/opt/data/multi-content-pipeline",
+)
+
+
+def assert_pipeline_root_allowed_for_cli(pipeline_root: str) -> None:
+    """Reject production Repository2 roots and any path inside them."""
+    candidate = os.path.realpath(os.path.expanduser(pipeline_root))
+    for denied in PRODUCTION_ROOT_HARD_DENY:
+        production_root = os.path.realpath(denied)
+        try:
+            is_inside = os.path.commonpath([candidate, production_root]) == production_root
+        except ValueError:
+            is_inside = False
+        if is_inside:
+            raise ValueError(
+                f"pipeline_root {pipeline_root!r} is hard-denied for CLI dispatch run"
+            )
 
 
 def register_cli(parser: argparse.ArgumentParser) -> None:
@@ -41,6 +62,37 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     confirm_parser.set_defaults(handler=_cmd_confirm_run)
 
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Dispatch run skeleton (validation only — execution not implemented)",
+    )
+    run_parser.add_argument(
+        "--unlock-token-id",
+        required=True,
+        help="Dispatch unlock token id",
+    )
+    run_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    run_parser.add_argument(
+        "--requester-id",
+        required=True,
+        help="Ticket requester id authorized for dispatch",
+    )
+    run_parser.add_argument(
+        "--pipeline-root",
+        required=True,
+        help="Isolated pipeline root for dispatch (production root hard-denied)",
+    )
+    run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate inputs only; do not execute dispatch",
+    )
+    run_parser.set_defaults(handler=_cmd_run)
+
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hermes coo dispatch")
@@ -66,6 +118,17 @@ def _cmd_confirm_run(args: argparse.Namespace) -> int:
     print(f"confirmation_id: {confirmation.confirmation_id}")
     print(f"expires_at: {confirmation.expires_at}")
     print("Dispatch run is NOT executed by this command.")
+    return 0
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    assert_pipeline_root_allowed_for_cli(args.pipeline_root)
+    print("Dispatch run is NOT executed by this command (skeleton only).")
+    print(f"unlock_token_id: {args.unlock_token_id}")
+    print(f"confirmation_id: {args.confirmation_id}")
+    print(f"requester_id: {args.requester_id}")
+    print(f"pipeline_root: {args.pipeline_root}")
+    print(f"dry_run: {args.dry_run}")
     return 0
 
 
