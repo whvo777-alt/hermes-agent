@@ -141,21 +141,23 @@ def build_coo_dispatch_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_confirm_run(args: argparse.Namespace) -> int:
-    from agent.coo.production_executor_confirmation import (
-        create_production_executor_confirmation,
-    )
+    from agent.coo.dispatch_cli_confirm import execute_coo_dispatch_confirm_run
 
-    confirmation = create_production_executor_confirmation(
-        ticket_id=args.ticket_id,
-        plan_id=args.plan_id,
-        unlock_token_id=args.unlock_token_id,
-        dispatch_request_id=args.dispatch_request_id,
-        operator_id=args.operator_id,
-        operator_name=args.operator_name,
-        confirmation_reason=args.reason,
-        confirmation_phrase=args.phrase,
-        persist_to_file=True,
-    )
+    try:
+        confirmation = execute_coo_dispatch_confirm_run(
+            ticket_id=args.ticket_id,
+            plan_id=args.plan_id,
+            unlock_token_id=args.unlock_token_id,
+            dispatch_request_id=args.dispatch_request_id,
+            operator_id=args.operator_id,
+            operator_name=args.operator_name,
+            confirmation_reason=args.reason,
+            confirmation_phrase=args.phrase,
+        )
+    except (ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     print(f"confirmation_id: {confirmation.confirmation_id}")
     print(f"expires_at: {confirmation.expires_at}")
     print("Dispatch run is NOT executed by this command.")

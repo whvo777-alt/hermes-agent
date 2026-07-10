@@ -139,24 +139,52 @@ class TestCooDispatchCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             hermes_home = Path(tmp) / ".hermes"
             hermes_home.mkdir()
+            bundle_dir = hermes_home / "coo" / "dispatch-bundles"
             confirmation_dir = hermes_home / "coo" / "confirmations"
-            with patch(
-                "agent.coo.production_executor_confirmation.get_hermes_home",
-                return_value=hermes_home,
+            with (
+                patch(
+                    "agent.coo.dispatch_bundle_store.get_hermes_home",
+                    return_value=hermes_home,
+                ),
+                patch(
+                    "agent.coo.production_executor_confirmation.get_hermes_home",
+                    return_value=hermes_home,
+                ),
+                patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
             ):
+                from agent.coo.gateway_execution_dispatch import prepare_dispatch_for_gateway_ticket
+                from agent.coo.tests.test_gateway_execution_dispatch import (
+                    _seed_approved_dispatch_pipeline,
+                )
+
+                ctx = _seed_approved_dispatch_pipeline()
+                ticket = ctx["ticket"]
+                prepare = prepare_dispatch_for_gateway_ticket(
+                    ticket.ticket_id,
+                    requester_id=ticket.requester_id,
+                    ticket_store=ctx["ticket_store"],
+                    plan_store=ctx["plan_store"],
+                    run_store=ctx["run_store"],
+                    dry_run_request_store=ctx["dry_run_request_store"],
+                    execute_request_store=ctx["execute_request_store"],
+                    gate_store=ctx["gate_store"],
+                    token_store=ctx["token_store"],
+                    dispatch_request_store=ctx["dispatch_request_store"],
+                    bundle_dir=bundle_dir,
+                )
                 stdout = io.StringIO()
                 with patch.object(sys, "stdout", stdout):
                     exit_code = main(
                         [
                             "confirm-run",
                             "--ticket-id",
-                            "ticket-cli-1",
+                            ticket.ticket_id,
                             "--plan-id",
-                            "plan-cli-1",
+                            prepare["unlock_token"]["plan_id"],
                             "--unlock-token-id",
-                            "token-cli-1",
+                            prepare["unlock_token"]["token_id"],
                             "--dispatch-request-id",
-                            "req-cli-1",
+                            prepare["dispatch_request"]["dispatch_request_id"],
                             "--operator-id",
                             "op-cli",
                             "--operator-name",
@@ -293,41 +321,68 @@ class TestCooDispatchCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             hermes_home = Path(tmp) / ".hermes"
             hermes_home.mkdir()
-            with patch(
-                "agent.coo.production_executor_confirmation.get_hermes_home",
-                return_value=hermes_home,
-            ):
-                with patch.object(
+            bundle_dir = hermes_home / "coo" / "dispatch-bundles"
+            with (
+                patch(
+                    "agent.coo.dispatch_bundle_store.get_hermes_home",
+                    return_value=hermes_home,
+                ),
+                patch(
+                    "agent.coo.production_executor_confirmation.get_hermes_home",
+                    return_value=hermes_home,
+                ),
+                patch.object(
                     subprocess,
                     "run",
                     side_effect=AssertionError("no subprocess"),
-                ):
-                    with patch.object(
-                        subprocess,
-                        "Popen",
-                        side_effect=AssertionError("no subprocess"),
-                    ):
-                        exit_code = main(
-                            [
-                                "confirm-run",
-                                "--ticket-id",
-                                "ticket-1",
-                                "--plan-id",
-                                "plan-1",
-                                "--unlock-token-id",
-                                "token-1",
-                                "--dispatch-request-id",
-                                "req-1",
-                                "--operator-id",
-                                "op-1",
-                                "--operator-name",
-                                "Operator",
-                                "--reason",
-                                "test",
-                                "--phrase",
-                                "CONFIRM-REPOSITORY2-EXECUTION",
-                            ]
-                        )
+                ),
+                patch.object(
+                    subprocess,
+                    "Popen",
+                    side_effect=AssertionError("no subprocess"),
+                ),
+            ):
+                from agent.coo.gateway_execution_dispatch import prepare_dispatch_for_gateway_ticket
+                from agent.coo.tests.test_gateway_execution_dispatch import (
+                    _seed_approved_dispatch_pipeline,
+                )
+
+                ctx = _seed_approved_dispatch_pipeline()
+                ticket = ctx["ticket"]
+                prepare = prepare_dispatch_for_gateway_ticket(
+                    ticket.ticket_id,
+                    requester_id=ticket.requester_id,
+                    ticket_store=ctx["ticket_store"],
+                    plan_store=ctx["plan_store"],
+                    run_store=ctx["run_store"],
+                    dry_run_request_store=ctx["dry_run_request_store"],
+                    execute_request_store=ctx["execute_request_store"],
+                    gate_store=ctx["gate_store"],
+                    token_store=ctx["token_store"],
+                    dispatch_request_store=ctx["dispatch_request_store"],
+                    bundle_dir=bundle_dir,
+                )
+                exit_code = main(
+                    [
+                        "confirm-run",
+                        "--ticket-id",
+                        ticket.ticket_id,
+                        "--plan-id",
+                        prepare["unlock_token"]["plan_id"],
+                        "--unlock-token-id",
+                        prepare["unlock_token"]["token_id"],
+                        "--dispatch-request-id",
+                        prepare["dispatch_request"]["dispatch_request_id"],
+                        "--operator-id",
+                        "op-1",
+                        "--operator-name",
+                        "Operator",
+                        "--reason",
+                        "test",
+                        "--phrase",
+                        "CONFIRM-REPOSITORY2-EXECUTION",
+                    ]
+                )
             self.assertEqual(exit_code, 0)
 
 
