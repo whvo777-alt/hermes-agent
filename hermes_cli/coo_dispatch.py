@@ -117,6 +117,22 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     run_parser.set_defaults(handler=_cmd_run)
 
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Read-only summary of persisted dispatch bundle and confirmation files",
+    )
+    status_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id (bundle file key)",
+    )
+    status_parser.add_argument(
+        "--confirmation-id",
+        default=None,
+        help="Optional production executor confirmation id to include in summary",
+    )
+    status_parser.set_defaults(handler=_cmd_status)
+
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hermes coo dispatch")
@@ -148,6 +164,25 @@ def _cmd_confirm_run(args: argparse.Namespace) -> int:
 
 def _cmd_run(args: argparse.Namespace) -> int:
     return run_coo_dispatch_from_args(args)
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_status import (
+        format_dispatch_status_summary,
+        summarize_dispatch_persistence_status,
+    )
+
+    try:
+        summary = summarize_dispatch_persistence_status(
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+        )
+    except (ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_status_summary(summary))
+    return 0
 
 
 def run_coo_dispatch_from_args(
