@@ -12,14 +12,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from agent.coo.dispatch_bundle_store import (
-    read_bundle,
-    validate_bundle_for_cli_execution,
-)
+from agent.coo.dispatch_bundle_store import read_bundle
 from agent.coo.dispatch_executor_config import load_dispatch_executor_policy
-from agent.coo.production_executor_confirmation import (
-    read_confirmation,
-    validate_confirmation_for_cli_execution,
+from agent.coo.dispatch_cli_validation_core import (
+    DispatchPreRunValidationFailure,
+    re_raise_dispatch_pre_run_failure,
+    validate_dispatch_pre_run,
 )
 
 
@@ -118,57 +116,34 @@ def summarize_dispatch_persistence_status(
     pipeline_root_attested: bool | None = None
     pipeline_root_matches: bool | None = None
 
-    if preflight_requested:
-        assert normalized_confirmation_id is not None
-        assert normalized_pipeline_root is not None
-        validate_bundle_for_cli_execution(bundle)
-        confirmation = read_confirmation(
-            normalized_confirmation_id,
-            confirmation_dir=confirmation_dir,
-            reject_consumed=True,
-        )
-        validate_confirmation_for_cli_execution(
-            confirmation,
-            bundle=bundle,
-            expected_confirmation_id=normalized_confirmation_id,
-        )
-        resolved_confirmation_id = confirmation.confirmation_id
-        confirmation_consumed = bool(confirmation.consumed)
-        confirmation_expired = _confirmation_is_expired(confirmation.expires_at)
-        pipeline_root_attested = True
-
-        from agent.coo.dispatch_pipeline_root_trust import (
-            assert_pipeline_root_matches_attestation,
-        )
-
-        try:
-            assert_pipeline_root_matches_attestation(
-                cli_pipeline_root=normalized_pipeline_root,
-                attested_pipeline_root=confirmation.attested_pipeline_root,
-            )
-            pipeline_root_matches = True
-        except ValueError as match_exc:
-            pipeline_root_matches = False
-            raise ValueError(
-                "pipeline_root does not match attested confirmation pipeline root."
-            ) from match_exc
-
     preflight_status = "not_requested"
     checks_passed_count: int | None = None
     checks_failed_count: int | None = None
     failed_checks: tuple[str, ...] = ()
 
     if preflight_requested:
-        from agent.coo.dispatch_cli_preflight import run_dispatch_policy_preflight
-
-        assert confirmation is not None
+        assert normalized_confirmation_id is not None
         assert normalized_pipeline_root is not None
-        preflight_summary = run_dispatch_policy_preflight(
-            bundle=bundle,
-            confirmation=confirmation,
-            pipeline_root=normalized_pipeline_root,
-            merged_config=merged_config,
-        )
+        try:
+            validated = validate_dispatch_pre_run(
+                ticket_id=normalized_ticket_id,
+                confirmation_id=normalized_confirmation_id,
+                pipeline_root=normalized_pipeline_root,
+                bundle_dir=bundle_dir,
+                confirmation_dir=confirmation_dir,
+                merged_config=merged_config,
+            )
+        except DispatchPreRunValidationFailure as exc:
+            re_raise_dispatch_pre_run_failure(exc)
+
+        confirmation = validated.confirmation
+        bundle = validated.bundle
+        resolved_confirmation_id = confirmation.confirmation_id
+        confirmation_consumed = bool(confirmation.consumed)
+        confirmation_expired = _confirmation_is_expired(confirmation.expires_at)
+        pipeline_root_attested = True
+        pipeline_root_matches = True
+        preflight_summary = validated.preflight
         preflight_status = "passed" if preflight_summary.all_passed else "failed"
         checks_passed_count = len(preflight_summary.passed_check_names)
         checks_failed_count = len(preflight_summary.failed_check_names)

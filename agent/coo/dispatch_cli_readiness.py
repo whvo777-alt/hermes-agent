@@ -1,4 +1,4 @@
-"""CLI dispatch operator readiness — Phase 10Z.
+"""CLI dispatch operator readiness — Phase 10Z / 11B validation core.
 
 Read-only orchestration of executor config, bundle/confirmation persistence,
 and policy preflight before a real dispatch run. No writes, consume, subprocess,
@@ -11,24 +11,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from agent.coo.dispatch_bundle_store import (
-    read_bundle,
-    validate_bundle_for_cli_execution,
+from agent.coo.dispatch_cli_validation_core import (
+    STEP_BUNDLE_PERSISTENCE,
+    STEP_CLI_ARGS,
+    STEP_CONFIRMATION_PERSISTENCE,
+    STEP_EXECUTOR_CONFIG,
+    STEP_PIPELINE_ROOT_ATTESTATION,
+    STEP_PIPELINE_ROOT_TRUST,
+    STEP_POLICY_PREFLIGHT,
+    DispatchPreRunValidationFailure,
+    validate_dispatch_pre_run,
 )
-from agent.coo.dispatch_cli_config_validate import validate_dispatch_executor_config
-from agent.coo.dispatch_cli_preflight import run_dispatch_policy_preflight
-from agent.coo.production_executor_confirmation import (
-    read_confirmation,
-    validate_confirmation_for_cli_execution,
-)
-
-STEP_CLI_ARGS = "cli_args"
-STEP_PIPELINE_ROOT_TRUST = "pipeline_root_trust"
-STEP_EXECUTOR_CONFIG = "executor_config"
-STEP_BUNDLE_PERSISTENCE = "bundle_persistence"
-STEP_CONFIRMATION_PERSISTENCE = "confirmation_persistence"
-STEP_PIPELINE_ROOT_ATTESTATION = "pipeline_root_attestation"
-STEP_POLICY_PREFLIGHT = "policy_preflight"
 
 
 @dataclass(frozen=True)
@@ -50,12 +43,16 @@ def _fail(
     config_valid: bool = False,
     persistence_valid: bool = False,
     preflight: str = "not_run",
+    checks_passed_count: Optional[int] = None,
+    checks_failed_count: Optional[int] = None,
 ) -> CooDispatchReadinessSummary:
     return CooDispatchReadinessSummary(
         ready=False,
         config_valid=config_valid,
         persistence_valid=persistence_valid,
         preflight=preflight,
+        checks_passed_count=checks_passed_count,
+        checks_failed_count=checks_failed_count,
         failed_steps=(failed_step,),
     )
 
@@ -70,75 +67,33 @@ def evaluate_dispatch_operator_readiness(
     merged_config: Mapping[str, Any] | None = None,
 ) -> CooDispatchReadinessSummary:
     """Run ordered readiness checks without mutating persisted dispatch state."""
-    normalized_ticket_id = (ticket_id or "").strip()
-    normalized_confirmation_id = (confirmation_id or "").strip()
-    normalized_pipeline_root = (pipeline_root or "").strip()
-    if not normalized_ticket_id or not normalized_confirmation_id or not normalized_pipeline_root:
-        return _fail(failed_step=STEP_CLI_ARGS)
-
-    from hermes_cli.coo_dispatch import assert_cli_pipeline_root_trusted
-
     try:
-        trusted_pipeline_root = assert_cli_pipeline_root_trusted(normalized_pipeline_root)
-    except ValueError:
-        return _fail(failed_step=STEP_PIPELINE_ROOT_TRUST)
-
-    try:
-        config_summary = validate_dispatch_executor_config(merged_config)
-    except ValueError:
-        return _fail(failed_step=STEP_EXECUTOR_CONFIG)
-
-    try:
-        bundle = read_bundle(
-            normalized_ticket_id,
+        validated = validate_dispatch_pre_run(
+            ticket_id=ticket_id,
+            confirmation_id=confirmation_id,
+            pipeline_root=pipeline_root,
             bundle_dir=bundle_dir,
-            reject_consumed=True,
+            confirmation_dir=confirmation_dir,
+            merged_config=merged_config,
         )
-        if bundle.ticket_id != normalized_ticket_id:
-            raise ValueError("ticket_id mismatch")
-        validate_bundle_for_cli_execution(bundle)
-    except (ValueError, KeyError):
+    except DispatchPreRunValidationFailure as exc:
+        preflight = "failed" if exc.step == STEP_POLICY_PREFLIGHT else "not_run"
+        return _fail(
+            failed_step=exc.step,
+            config_valid=exc.config_valid,
+            persistence_valid=exc.persistence_valid,
+            preflight=preflight,
+            checks_passed_count=(
+                len(exc.preflight.passed_check_names) if exc.preflight else None
+            ),
+            checks_failed_count=(
+                len(exc.preflight.failed_check_names) if exc.preflight else None
+            ),
+        )
+    except KeyError:
         return _fail(failed_step=STEP_BUNDLE_PERSISTENCE, config_valid=True)
 
-    try:
-        confirmation = read_confirmation(
-            normalized_confirmation_id,
-            confirmation_dir=confirmation_dir,
-            reject_consumed=True,
-        )
-        validate_confirmation_for_cli_execution(
-            confirmation,
-            bundle=bundle,
-            expected_confirmation_id=normalized_confirmation_id,
-        )
-    except (ValueError, KeyError):
-        return _fail(
-            failed_step=STEP_CONFIRMATION_PERSISTENCE,
-            config_valid=True,
-        )
-
-    try:
-        from agent.coo.dispatch_pipeline_root_trust import (
-            assert_pipeline_root_matches_attestation,
-        )
-
-        assert_pipeline_root_matches_attestation(
-            cli_pipeline_root=normalized_pipeline_root,
-            attested_pipeline_root=confirmation.attested_pipeline_root,
-        )
-    except ValueError:
-        return _fail(
-            failed_step=STEP_PIPELINE_ROOT_ATTESTATION,
-            config_valid=True,
-            persistence_valid=True,
-        )
-
-    preflight_summary = run_dispatch_policy_preflight(
-        bundle=bundle,
-        confirmation=confirmation,
-        pipeline_root=trusted_pipeline_root,
-        merged_config=merged_config,
-    )
+    preflight_summary = validated.preflight
     if not preflight_summary.all_passed:
         return CooDispatchReadinessSummary(
             ready=False,

@@ -15,8 +15,6 @@ from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
 from agent.coo.dispatch_bundle_store import (
     DispatchExecutionBundle,
     mark_bundle_consumed,
-    read_bundle,
-    validate_bundle_for_cli_execution,
 )
 from agent.coo.execution_dispatch_runtime import (
     DispatchExecutionMode,
@@ -56,11 +54,8 @@ from agent.coo.execution_ticket import (
 )
 from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
 from agent.coo.production_executor_confirmation import (
-    ProductionExecutorConfirmation,
     ProductionExecutorConfirmationStore,
     mark_confirmation_consumed_file,
-    read_confirmation,
-    validate_confirmation_for_cli_execution,
 )
 from agent.coo.production_executor_factory import (
     SubprocessRunner,
@@ -339,12 +334,31 @@ def execute_coo_dispatch_run(
     if not pipeline_root.strip():
         raise ValueError("pipeline_root is required")
 
-    from hermes_cli.coo_dispatch import assert_cli_pipeline_root_trusted
+    if not dry_run and subprocess_runner is None:
+        raise ValueError("production runner is not configured")
 
-    trusted_pipeline_root = assert_cli_pipeline_root_trusted(pipeline_root)
+    from agent.coo.dispatch_cli_validation_core import (
+        DispatchPreRunValidationFailure,
+        re_raise_dispatch_pre_run_failure,
+        validate_dispatch_pre_run,
+    )
 
-    bundle = read_bundle(ticket_id, bundle_dir=bundle_dir, reject_consumed=True)
-    validate_bundle_for_cli_execution(bundle)
+    try:
+        validated = validate_dispatch_pre_run(
+            ticket_id=ticket_id,
+            confirmation_id=confirmation_id,
+            pipeline_root=pipeline_root,
+            bundle_dir=bundle_dir,
+            confirmation_dir=confirmation_dir,
+            merged_config=merged_config,
+        )
+    except DispatchPreRunValidationFailure as exc:
+        re_raise_dispatch_pre_run_failure(exc)
+
+    bundle = validated.bundle
+    confirmation = validated.confirmation
+    trusted_pipeline_root = validated.trusted_pipeline_root
+    preflight = validated.preflight
 
     if bundle.unlock_token_id != unlock_token_id:
         raise ValueError(
@@ -353,33 +367,7 @@ def execute_coo_dispatch_run(
     if bundle.requester_id != requester_id:
         raise ValueError("CLI requester_id does not match bundle requester_id.")
 
-    confirmation = read_confirmation(
-        confirmation_id,
-        confirmation_dir=confirmation_dir,
-        reject_consumed=True,
-    )
-    validate_confirmation_for_cli_execution(
-        confirmation,
-        bundle=bundle,
-        expected_confirmation_id=confirmation_id,
-    )
-
-    from agent.coo.dispatch_pipeline_root_trust import assert_pipeline_root_matches_attestation
-
-    assert_pipeline_root_matches_attestation(
-        cli_pipeline_root=pipeline_root,
-        attested_pipeline_root=confirmation.attested_pipeline_root,
-    )
-
     if dry_run:
-        from agent.coo.dispatch_cli_preflight import run_dispatch_policy_preflight
-
-        preflight = run_dispatch_policy_preflight(
-            bundle=bundle,
-            confirmation=confirmation,
-            pipeline_root=trusted_pipeline_root,
-            merged_config=merged_config,
-        )
         return CooDispatchRunResult(
             ticket_id=bundle.ticket_id,
             confirmation_id=confirmation.confirmation_id,
@@ -390,8 +378,15 @@ def execute_coo_dispatch_run(
             preflight=preflight,
         )
 
-    if subprocess_runner is None:
-        raise ValueError("production runner is not configured")
+    if not preflight.all_passed:
+        try:
+            _resolve_run_executor_policy(
+                pipeline_root=trusted_pipeline_root,
+                merged_config=merged_config,
+            )
+        except ValueError:
+            raise
+        raise ValueError("dispatch policy preflight failed")
 
     policy = _resolve_run_executor_policy(
         pipeline_root=trusted_pipeline_root,

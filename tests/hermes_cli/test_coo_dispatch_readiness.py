@@ -329,8 +329,13 @@ class TestDispatchOperatorReadiness(unittest.TestCase):
         self.assertEqual(summary.failed_steps, (STEP_BUNDLE_PERSISTENCE,))
 
     def test_missing_confirmation_not_ready(self) -> None:
+        confirmation = self.seeded["confirmation"]
+        confirmation_path = (
+            self.fixture.confirmation_dir / f"{confirmation.confirmation_id}.json"
+        )
+        confirmation_path.unlink()
         summary = evaluate_dispatch_operator_readiness(
-            **self._readiness_kwargs(confirmation_id="missing-confirmation")
+            **self._readiness_kwargs(confirmation_id=confirmation.confirmation_id)
         )
         self.assertFalse(summary.ready)
         self.assertEqual(summary.failed_steps, (STEP_CONFIRMATION_PERSISTENCE,))
