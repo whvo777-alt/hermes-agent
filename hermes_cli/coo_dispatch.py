@@ -181,6 +181,25 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     validate_parser.set_defaults(handler=_cmd_config_validate)
 
+    audit_parser = subparsers.add_parser(
+        "audit",
+        help="Read-only dispatch execution audit commands",
+    )
+    audit_subparsers = audit_parser.add_subparsers(
+        dest="coo_dispatch_audit_command",
+        required=True,
+    )
+    audit_show_parser = audit_subparsers.add_parser(
+        "show",
+        help="Show a safe summary for a persisted dispatch execution audit record",
+    )
+    audit_show_parser.add_argument(
+        "--dispatch-run-id",
+        required=True,
+        help="Dispatch execution run id (audit file key)",
+    )
+    audit_show_parser.set_defaults(handler=_cmd_audit_show)
+
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hermes coo dispatch")
@@ -269,6 +288,22 @@ def _cmd_config_validate(args: argparse.Namespace) -> int:
         return 1
 
     print(format_dispatch_executor_config_validation_summary(summary))
+    return 0
+
+
+def _cmd_audit_show(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_audit import (
+        format_dispatch_audit_summary,
+        summarize_dispatch_execution_audit,
+    )
+
+    try:
+        summary = summarize_dispatch_execution_audit(args.dispatch_run_id)
+    except (ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_audit_summary(summary))
     return 0
 
 

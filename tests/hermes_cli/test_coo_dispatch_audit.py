@@ -1,0 +1,249 @@
+"""Phase 11C tests — read-only dispatch execution audit CLI."""
+
+from __future__ import annotations
+
+import io
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from agent.coo.dispatch_cli_audit import (
+    format_dispatch_audit_summary,
+    summarize_dispatch_execution_audit,
+)
+from agent.coo.dispatch_execution_audit import (
+    build_dispatch_execution_audit,
+    write_dispatch_execution_audit,
+)
+from agent.coo.execution_dispatch_runtime import (
+    DispatchExecutionRequest,
+    DispatchExecutionRun,
+    DispatchExecutionRunStatus,
+    DispatchUnlockTokenStore,
+    create_dispatch_unlock_token,
+)
+from agent.coo.production_executor_confirmation import (
+    REQUIRED_CONFIRMATION_PHRASE,
+    create_production_executor_confirmation,
+)
+from agent.coo.production_executor_policy import ProductionExecutorPolicy
+from agent.coo.tests.test_execution_dispatch_runtime import _approved_unlock_context
+from hermes_cli.coo_dispatch import build_coo_dispatch_parser, main
+
+
+def _seed_audit_record(
+    *,
+    audit_dir: Path,
+    dispatch_run_id: str = "run-audit-cli-1",
+    checklist_all_passed: bool = True,
+) -> dict:
+    ticket, plan, dry_run, dry_run_request, execute_request, gate = _approved_unlock_context()
+    token_store = DispatchUnlockTokenStore()
+    token = create_dispatch_unlock_token(
+        ticket,
+        plan,
+        dry_run,
+        dry_run_request,
+        execute_request,
+        gate,
+        requested_by=ticket.requester_id,
+        token_store=token_store,
+    )
+    dispatch_request = DispatchExecutionRequest(
+        dispatch_request_id="req-audit-cli",
+        execute_request_id=token.execute_request_id,
+        gate_id=gate.gate_id,
+        ticket_id=ticket.ticket_id,
+        plan_id=plan.plan_id,
+        dry_run_run_id=token.dry_run_run_id,
+        unlock_token_id=token.token_id,
+        target_skills=list(token.target_skills),
+        requested_by=ticket.requester_id,
+        requested_at="2026-07-07T00:00:00+00:00",
+    )
+    confirmation = create_production_executor_confirmation(
+        ticket_id=ticket.ticket_id,
+        plan_id=plan.plan_id,
+        unlock_token_id=token.token_id,
+        dispatch_request_id=dispatch_request.dispatch_request_id,
+        operator_id="op-audit-cli",
+        operator_name="Audit CLI Operator",
+        confirmation_reason="audit cli test",
+        confirmation_phrase=REQUIRED_CONFIRMATION_PHRASE,
+    )
+    run = DispatchExecutionRun(
+        dispatch_run_id=dispatch_run_id,
+        dispatch_request_id=dispatch_request.dispatch_request_id,
+        ticket_id=ticket.ticket_id,
+        plan_id=plan.plan_id,
+        status=DispatchExecutionRunStatus.RUNNING,
+    )
+    checklist = {
+        "all_passed": checklist_all_passed,
+        "checks": [
+            {"name": "policy_enabled", "passed": checklist_all_passed},
+            {"name": "pipeline_root_allowed", "passed": checklist_all_passed},
+        ],
+    }
+    audit = build_dispatch_execution_audit(
+        dispatch_run=run,
+        ticket=ticket,
+        plan=plan,
+        dry_run=dry_run,
+        gate=gate,
+        token=token,
+        dispatch_request=dispatch_request,
+        executor_policy=ProductionExecutorPolicy(
+            enabled=True,
+            allowed_pipeline_roots=("/tmp/fake-pipeline",),
+        ),
+        pipeline_root="/tmp/fake-pipeline",
+        entrypoint="node pipeline.js",
+        run_date=plan.run_date,
+        pre_execution_checklist=checklist,
+        requested_by=ticket.requester_id,
+        operator_id=confirmation.operator_id,
+        operator_name=confirmation.operator_name,
+        confirmation_id=confirmation.confirmation_id,
+    )
+    write_dispatch_execution_audit(audit, audit_dir)
+    return {
+        "audit": audit,
+        "confirmation": confirmation,
+        "ticket": ticket,
+    }
+
+
+class TestDispatchAuditCli(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.hermes_home = Path(self.tmp.name) / ".hermes"
+        self.hermes_home.mkdir()
+        self.audit_dir = self.hermes_home / "coo" / "audit"
+        self.home_patch = patch(
+            "agent.coo.dispatch_execution_audit.get_hermes_home",
+            return_value=self.hermes_home,
+        )
+        self.cli_home_patch = patch(
+            "agent.coo.dispatch_cli_audit.get_hermes_home",
+            return_value=self.hermes_home,
+        )
+        self.home_patch.start()
+        self.cli_home_patch.start()
+
+    def tearDown(self) -> None:
+        self.cli_home_patch.stop()
+        self.home_patch.stop()
+        self.tmp.cleanup()
+
+    def test_summarize_existing_audit_record(self) -> None:
+        seeded = _seed_audit_record(audit_dir=self.audit_dir)
+        audit = seeded["audit"]
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+        ):
+            summary = summarize_dispatch_execution_audit(
+                audit.dispatch_run_id,
+                audit_dir=self.audit_dir,
+            )
+        output = format_dispatch_audit_summary(summary)
+        self.assertEqual(summary.audit_id, audit.audit_id)
+        self.assertEqual(summary.dispatch_run_id, audit.dispatch_run_id)
+        self.assertTrue(summary.executor_enabled)
+        self.assertTrue(summary.pipeline_root_recorded)
+        self.assertEqual(summary.pre_execution_checklist, "passed")
+        self.assertEqual(summary.checks_passed_count, 2)
+        self.assertEqual(summary.checks_failed_count, 0)
+        self.assertIn("ticket", summary.snapshot_blocks)
+        self.assertIn(f"audit_id: {audit.audit_id}", output)
+        self.assertIn("pre_execution_checklist: passed", output)
+        self.assertNotIn("node pipeline.js", output)
+        self.assertNotIn("/tmp/fake-pipeline", output)
+        self.assertNotIn('"snapshot"', output)
+
+    def test_missing_audit_rejected(self) -> None:
+        with self.assertRaises(KeyError) as exc:
+            summarize_dispatch_execution_audit(
+                "missing-run-id",
+                audit_dir=self.audit_dir,
+            )
+        self.assertIn("not found", str(exc.exception))
+
+    def test_empty_dispatch_run_id_rejected(self) -> None:
+        with self.assertRaises(ValueError) as exc:
+            summarize_dispatch_execution_audit("   ", audit_dir=self.audit_dir)
+        self.assertIn("required", str(exc.exception))
+
+    def test_path_separator_dispatch_run_id_rejected(self) -> None:
+        with self.assertRaises(ValueError) as exc:
+            summarize_dispatch_execution_audit("../escape", audit_dir=self.audit_dir)
+        self.assertIn("path separators", str(exc.exception))
+
+    def test_failed_checklist_summary(self) -> None:
+        seeded = _seed_audit_record(
+            audit_dir=self.audit_dir,
+            dispatch_run_id="run-audit-cli-failed",
+            checklist_all_passed=False,
+        )
+        summary = summarize_dispatch_execution_audit(
+            seeded["audit"].dispatch_run_id,
+            audit_dir=self.audit_dir,
+        )
+        self.assertEqual(summary.pre_execution_checklist, "failed")
+        self.assertEqual(summary.checks_failed_count, 2)
+
+    def test_audit_show_cli_exit_zero(self) -> None:
+        seeded = _seed_audit_record(audit_dir=self.audit_dir)
+        audit = seeded["audit"]
+        stdout = io.StringIO()
+        with (
+            patch.object(sys, "stdout", stdout),
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+        ):
+            exit_code = main(
+                [
+                    "audit",
+                    "show",
+                    "--dispatch-run-id",
+                    audit.dispatch_run_id,
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertIn(f"dispatch_run_id: {audit.dispatch_run_id}", stdout.getvalue())
+
+    def test_audit_show_cli_missing_exit_one(self) -> None:
+        stderr = io.StringIO()
+        with patch.object(sys, "stderr", stderr):
+            exit_code = main(
+                [
+                    "audit",
+                    "show",
+                    "--dispatch-run-id",
+                    "missing-run-id",
+                ]
+            )
+        self.assertEqual(exit_code, 1)
+        self.assertIn("not found", stderr.getvalue())
+
+    def test_audit_show_parser_registered(self) -> None:
+        parser = build_coo_dispatch_parser()
+        args = parser.parse_args(
+            [
+                "audit",
+                "show",
+                "--dispatch-run-id",
+                "run-1",
+            ]
+        )
+        self.assertEqual(args.coo_dispatch_command, "audit")
+        self.assertEqual(args.coo_dispatch_audit_command, "show")
+        self.assertEqual(args.dispatch_run_id, "run-1")
+
+
+if __name__ == "__main__":
+    unittest.main()
