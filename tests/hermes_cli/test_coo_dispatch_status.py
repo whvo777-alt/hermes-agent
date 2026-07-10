@@ -34,6 +34,18 @@ from agent.coo.dispatch_cli_status import (
 from hermes_cli.coo_dispatch import build_coo_dispatch_parser, main
 
 
+_DEFAULT_MERGED_CONFIG = {
+    "coo": {
+        "dispatch": {
+            "executor": {
+                "enabled": False,
+                "allowed_pipeline_roots": [],
+            }
+        }
+    }
+}
+
+
 def _seed_bundle_and_confirmation(
     *,
     bundle_dir: Path,
@@ -133,8 +145,14 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         )
         self.home_patch_bundle.start()
         self.home_patch_confirmation.start()
+        self.config_patch = patch(
+            "hermes_cli.config.load_config",
+            return_value=dict(_DEFAULT_MERGED_CONFIG),
+        )
+        self.config_patch.start()
 
     def tearDown(self) -> None:
+        self.config_patch.stop()
         self.home_patch_confirmation.stop()
         self.home_patch_bundle.stop()
         self.tmp.cleanup()
@@ -148,12 +166,15 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             ticket_id=ticket.ticket_id,
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            merged_config=_DEFAULT_MERGED_CONFIG,
         )
         output = format_dispatch_status_summary(summary)
         self.assertIn(f"ticket_id: {ticket.ticket_id}", output)
         self.assertIn("bundle_consumed: false", output)
         self.assertIn("remint_pending_prepare: false", output)
         self.assertNotIn("confirmation_id:", output)
+        self.assertIn("executor_enabled: false", output)
+        self.assertIn("executor_allowlist_count: 0", output)
 
     def test_bundle_and_confirmation_summary(self) -> None:
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
@@ -165,11 +186,40 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             confirmation_id=confirmation.confirmation_id,
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            merged_config=_DEFAULT_MERGED_CONFIG,
         )
         output = format_dispatch_status_summary(summary)
         self.assertIn(f"confirmation_id: {confirmation.confirmation_id}", output)
         self.assertIn("confirmation_consumed: false", output)
         self.assertIn("confirmation_expired: false", output)
+        self.assertIn("executor_enabled: false", output)
+        self.assertIn("executor_allowlist_count: 0", output)
+
+    def test_status_output_includes_executor_count_without_paths(self) -> None:
+        ticket, _token, _dispatch_request, _confirmation = _seed_bundle_and_confirmation(
+            bundle_dir=self.bundle_dir,
+            confirmation_dir=self.confirmation_dir,
+        )
+        merged = {
+            "coo": {
+                "dispatch": {
+                    "executor": {
+                        "enabled": False,
+                        "allowed_pipeline_roots": ["/tmp/hermes-isolated-stub"],
+                    }
+                }
+            }
+        }
+        summary = summarize_dispatch_persistence_status(
+            ticket_id=ticket.ticket_id,
+            bundle_dir=self.bundle_dir,
+            confirmation_dir=self.confirmation_dir,
+            merged_config=merged,
+        )
+        output = format_dispatch_status_summary(summary)
+        self.assertIn("executor_enabled: false", output)
+        self.assertIn("executor_allowlist_count: 1", output)
+        self.assertNotIn("/tmp/hermes-isolated-stub", output)
 
     def test_missing_bundle_rejected(self) -> None:
         with self.assertRaises(KeyError):
@@ -177,6 +227,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
                 ticket_id="missing-ticket",
                 bundle_dir=self.bundle_dir,
                 confirmation_dir=self.confirmation_dir,
+                merged_config=_DEFAULT_MERGED_CONFIG,
             )
 
     def test_corrupted_bundle_rejected(self) -> None:
@@ -191,6 +242,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
                 ticket_id=ticket.ticket_id,
                 bundle_dir=self.bundle_dir,
                 confirmation_dir=self.confirmation_dir,
+                merged_config=_DEFAULT_MERGED_CONFIG,
             )
         self.assertIn("corrupted", str(exc.exception))
 
@@ -216,6 +268,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
                 confirmation_id=other.confirmation_id,
                 bundle_dir=self.bundle_dir,
                 confirmation_dir=self.confirmation_dir,
+                merged_config=_DEFAULT_MERGED_CONFIG,
             )
         self.assertIn("ticket_id", str(exc.exception))
 
@@ -233,6 +286,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             confirmation_id=confirmation.confirmation_id,
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            merged_config=_DEFAULT_MERGED_CONFIG,
         )
         output = format_dispatch_status_summary(summary)
         self.assertIn("bundle_consumed: true", output)
@@ -250,12 +304,16 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             confirmation_id=confirmation.confirmation_id,
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
+            merged_config=_DEFAULT_MERGED_CONFIG,
         )
         output = format_dispatch_status_summary(summary)
         self.assertNotIn(REQUIRED_CONFIRMATION_PHRASE, output)
         self.assertNotIn(token.token_id, output)
         self.assertNotIn('"snapshot"', output)
         self.assertNotIn("unlock_token", output.lower())
+        self.assertIn("executor_enabled: false", output)
+        self.assertIn("executor_allowlist_count: 0", output)
+        self.assertNotIn("/opt/data/multi-content-pipeline", output)
 
     def test_subprocess_not_used_by_status_cli(self) -> None:
         ticket, _token, _dispatch_request, _confirmation = _seed_bundle_and_confirmation(

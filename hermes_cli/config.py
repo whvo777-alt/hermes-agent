@@ -3123,6 +3123,17 @@ DEFAULT_CONFIG = {
         "region": "global",
     },
 
+    # COO dispatch executor policy — disabled by default. CLI hard-deny still
+    # blocks the production Repository2 root even when enabled=true.
+    "coo": {
+        "dispatch": {
+            "executor": {
+                "enabled": False,
+                "allowed_pipeline_roots": [],
+            },
+        },
+    },
+
     # Config schema version - bump this when adding new required fields
     "_config_version": 33,
 }

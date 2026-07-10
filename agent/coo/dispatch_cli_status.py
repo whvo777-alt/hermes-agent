@@ -9,9 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 from agent.coo.dispatch_bundle_store import read_bundle
+from agent.coo.dispatch_executor_config import load_dispatch_executor_policy
 from agent.coo.production_executor_confirmation import read_confirmation
 
 
@@ -30,6 +31,8 @@ class CooDispatchStatusSummary:
     confirmation_id: str = ""
     confirmation_consumed: Optional[bool] = None
     confirmation_expired: Optional[bool] = None
+    executor_enabled: bool = False
+    executor_allowlist_count: int = 0
 
 
 def _confirmation_is_expired(expires_at: str) -> bool:
@@ -45,8 +48,10 @@ def summarize_dispatch_persistence_status(
     confirmation_id: str | None = None,
     bundle_dir: Path | None = None,
     confirmation_dir: Path | None = None,
+    merged_config: Mapping[str, Any] | None = None,
 ) -> CooDispatchStatusSummary:
     """Load persisted bundle/confirmation files and build a safe status summary."""
+    policy = load_dispatch_executor_policy(merged_config)
     normalized_ticket_id = ticket_id.strip()
     if not normalized_ticket_id:
         raise ValueError("ticket_id is required")
@@ -106,6 +111,8 @@ def summarize_dispatch_persistence_status(
         confirmation_id=resolved_confirmation_id,
         confirmation_consumed=confirmation_consumed,
         confirmation_expired=confirmation_expired,
+        executor_enabled=policy.enabled,
+        executor_allowlist_count=len(policy.allowed_pipeline_roots),
     )
 
 
@@ -129,4 +136,10 @@ def format_dispatch_status_summary(summary: CooDispatchStatusSummary) -> str:
                 f"confirmation_expired: {str(summary.confirmation_expired).lower()}",
             ]
         )
+    lines.extend(
+        [
+            f"executor_enabled: {str(summary.executor_enabled).lower()}",
+            f"executor_allowlist_count: {summary.executor_allowlist_count}",
+        ]
+    )
     return "\n".join(lines)
