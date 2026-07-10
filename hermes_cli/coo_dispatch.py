@@ -144,6 +144,20 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     status_parser.set_defaults(handler=_cmd_status)
 
+    config_parser = subparsers.add_parser(
+        "config",
+        help="Read-only dispatch executor config commands",
+    )
+    config_subparsers = config_parser.add_subparsers(
+        dest="coo_dispatch_config_command",
+        required=True,
+    )
+    validate_parser = config_subparsers.add_parser(
+        "validate",
+        help="Validate coo.dispatch.executor config without dispatch execution",
+    )
+    validate_parser.set_defaults(handler=_cmd_config_validate)
+
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hermes coo dispatch")
@@ -200,6 +214,22 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(format_dispatch_status_summary(summary))
     if summary.preflight == "failed":
         return 1
+    return 0
+
+
+def _cmd_config_validate(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_config_validate import (
+        format_dispatch_executor_config_validation_summary,
+        validate_dispatch_executor_config,
+    )
+
+    try:
+        summary = validate_dispatch_executor_config()
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_executor_config_validation_summary(summary))
     return 0
 
 
