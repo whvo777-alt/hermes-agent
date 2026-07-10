@@ -155,6 +155,19 @@ class TestDispatchPreRunValidationCore(unittest.TestCase):
         )
         self.assertEqual(result.trusted_pipeline_root, str(self.fixture.pipeline_root.resolve()))
 
+    def test_validation_core_imports_pipeline_root_trust_helpers(self) -> None:
+        import agent.coo.dispatch_cli_validation_core as validation_core
+        import agent.coo.dispatch_pipeline_root_trust as pipeline_root_trust
+
+        self.assertIs(
+            validation_core.assert_cli_pipeline_root_trusted,
+            pipeline_root_trust.assert_cli_pipeline_root_trusted,
+        )
+        self.assertIs(
+            validation_core.assert_pipeline_root_matches_attestation,
+            pipeline_root_trust.assert_pipeline_root_matches_attestation,
+        )
+
     def test_config_failure(self) -> None:
         with self.assertRaises(DispatchPreRunValidationFailure) as exc:
             validate_dispatch_pre_run(

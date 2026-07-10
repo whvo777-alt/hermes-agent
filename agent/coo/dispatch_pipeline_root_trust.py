@@ -1,4 +1,4 @@
-"""Shared pipeline root trust checks for COO dispatch CLI (Phase 11A)."""
+"""Shared pipeline root trust checks for COO dispatch CLI (Phase 11A / 11D)."""
 
 from __future__ import annotations
 
@@ -37,6 +37,22 @@ def assert_pipeline_root_trusted(pipeline_root: str) -> str:
     resolved = resolve_pipeline_root(pipeline_root)
     assert_pipeline_root_allowed(resolved)
     return resolved
+
+
+def assert_cli_pipeline_root_trusted(pipeline_root: str) -> str:
+    """Resolve and validate CLI pipeline_root before filesystem writes or pre-run checks."""
+    return assert_pipeline_root_trusted(pipeline_root)
+
+
+def assert_pipeline_root_allowed_for_cli(pipeline_root: str) -> None:
+    """Reject production Repository2 roots and any path inside them."""
+    resolved = os.path.realpath(os.path.expanduser(pipeline_root))
+    try:
+        assert_pipeline_root_allowed(resolved)
+    except ValueError as exc:
+        raise ValueError(
+            f"pipeline_root {pipeline_root!r} is hard-denied for CLI dispatch run"
+        ) from exc
 
 
 def validate_stored_attested_pipeline_root(attested: str) -> str:

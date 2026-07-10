@@ -1,4 +1,4 @@
-"""Shared dispatch pre-run validation — Phase 11B.
+"""Shared dispatch pre-run validation — Phase 11B / 11D.
 
 Single ordered validation path for readiness, run, and status preflight.
 No writes, consume, subprocess, factory, or runner invocation.
@@ -20,7 +20,10 @@ from agent.coo.dispatch_cli_preflight import (
     CooDispatchPreflightSummary,
     run_dispatch_policy_preflight,
 )
-from agent.coo.dispatch_pipeline_root_trust import assert_pipeline_root_matches_attestation
+from agent.coo.dispatch_pipeline_root_trust import (
+    assert_cli_pipeline_root_trusted,
+    assert_pipeline_root_matches_attestation,
+)
 from agent.coo.production_executor_confirmation import (
     ProductionExecutorConfirmation,
     read_confirmation,
@@ -103,8 +106,6 @@ def validate_dispatch_pre_run(
             STEP_CLI_ARGS,
             ValueError("ticket_id, confirmation_id, and pipeline_root are required"),
         )
-
-    from hermes_cli.coo_dispatch import assert_cli_pipeline_root_trusted
 
     try:
         trusted_pipeline_root = assert_cli_pipeline_root_trusted(normalized_pipeline_root)

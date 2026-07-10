@@ -1,4 +1,4 @@
-"""Phase 11A tests — pipeline root trust and attestation helpers."""
+"""Phase 11A / 11D tests — pipeline root trust and attestation helpers."""
 
 from __future__ import annotations
 
@@ -9,6 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent.coo.dispatch_pipeline_root_trust import (
+    PRODUCTION_ROOT_HARD_DENY,
+    assert_cli_pipeline_root_trusted,
+    assert_pipeline_root_allowed_for_cli,
     assert_pipeline_root_matches_attestation,
     assert_pipeline_root_trusted,
     validate_stored_attested_pipeline_root,
@@ -66,3 +69,19 @@ class TestDispatchPipelineRootTrust(unittest.TestCase):
                     cli_pipeline_root=str(root_b),
                     attested_pipeline_root=attested,
                 )
+
+    def test_cli_trusted_alias_matches_trusted_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "isolated"
+            root.mkdir()
+            self.assertEqual(
+                assert_cli_pipeline_root_trusted(str(root)),
+                assert_pipeline_root_trusted(str(root)),
+            )
+
+    def test_cli_hard_deny_helper_message(self) -> None:
+        self.assertIn("/opt/data/multi-content-pipeline", PRODUCTION_ROOT_HARD_DENY)
+        with self.assertRaises(ValueError) as exc:
+            assert_pipeline_root_allowed_for_cli("/opt/data/multi-content-pipeline")
+        self.assertIn("hard-denied", str(exc.exception))
+        self.assertIn("CLI dispatch run", str(exc.exception))

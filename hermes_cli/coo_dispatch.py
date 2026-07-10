@@ -7,35 +7,14 @@ run loads persisted bundle + confirmation and dispatches via injected runner onl
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from typing import Callable, Optional
 
 from agent.coo.dispatch_pipeline_root_trust import (
     PRODUCTION_ROOT_HARD_DENY,
-    assert_pipeline_root_allowed,
-    assert_pipeline_root_trusted,
+    assert_cli_pipeline_root_trusted,
+    assert_pipeline_root_allowed_for_cli,
 )
-
-
-def assert_pipeline_root_allowed_for_cli(pipeline_root: str) -> None:
-    """Reject production Repository2 roots and any path inside them."""
-    resolved = os.path.realpath(os.path.expanduser(pipeline_root))
-    try:
-        assert_pipeline_root_allowed(resolved)
-    except ValueError as exc:
-        raise ValueError(
-            f"pipeline_root {pipeline_root!r} is hard-denied for CLI dispatch run"
-        ) from exc
-
-
-def assert_cli_pipeline_root_trusted(pipeline_root: str) -> str:
-    """Resolve and validate CLI pipeline_root before any filesystem writes.
-
-    Bundle snapshots do not currently carry a trusted pipeline_root field, so
-    validation is limited to symlink-resolved hard-deny policy checks.
-    """
-    return assert_pipeline_root_trusted(pipeline_root)
 
 
 def register_cli(parser: argparse.ArgumentParser) -> None:
