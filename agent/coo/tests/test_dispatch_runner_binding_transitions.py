@@ -17,11 +17,37 @@ from agent.coo.dispatch_runner_binding_state import (
     DispatchRunnerBindingStateError,
     DispatchRunnerBindingTransitionError,
     _KNOWN_STATE_FILE_KEYS,
+    bind_dispatch_runner_binding,
     default_runner_binding_state_path,
     load_dispatch_runner_binding_state,
     reset_dispatch_runner_binding,
     stage_dispatch_runner_binding,
 )
+
+
+def _enabled_config(pipeline_root: str) -> dict:
+    return {
+        "coo": {
+            "dispatch": {
+                "executor": {
+                    "enabled": True,
+                    "allowed_pipeline_roots": [pipeline_root],
+                }
+            }
+        }
+    }
+
+
+_DEFAULT_DISABLED_CONFIG = {
+    "coo": {
+        "dispatch": {
+            "executor": {
+                "enabled": False,
+                "allowed_pipeline_roots": [],
+            }
+        }
+    }
+}
 
 
 def _hermes_home(tmp_path: Path) -> Path:
@@ -141,6 +167,12 @@ class TestDispatchRunnerBindingTransitions(unittest.TestCase):
                     stage_dispatch_runner_binding(operator_id="", reason="ok")
                 with self.assertRaises(ValueError):
                     reset_dispatch_runner_binding(operator_id="op-1", reason="  ")
+                with self.assertRaises(ValueError):
+                    bind_dispatch_runner_binding(
+                        operator_id="",
+                        reason="bind",
+                        merged_config=_DEFAULT_DISABLED_CONFIG,
+                    )
 
     def test_atomic_write_uses_temp_file_and_replace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -187,6 +219,199 @@ class TestDispatchRunnerBindingTransitions(unittest.TestCase):
             ):
                 binding = load_dispatch_runner_binding_state()
         self.assertEqual(binding.state, RUNNER_BINDING_STATE_STAGED)
+
+
+class TestDispatchRunnerBindingBindTransition(unittest.TestCase):
+    def test_bind_from_staged_with_enabled_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            isolated_root = str(Path(tmp) / "fake-pipeline")
+            Path(isolated_root).mkdir()
+            with patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=hermes_home,
+            ):
+                stage_dispatch_runner_binding(operator_id="op-1", reason="stage")
+                binding = bind_dispatch_runner_binding(
+                    operator_id="op-bind",
+                    reason="record bound state",
+                    merged_config=_enabled_config(isolated_root),
+                )
+                payload = json.loads(
+                    (hermes_home / "coo" / "dispatch-runner-binding.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+        self.assertEqual(binding.state, RUNNER_BINDING_STATE_BOUND)
+        self.assertEqual(set(payload), _KNOWN_STATE_FILE_KEYS)
+        self.assertNotIn("runner_command", payload)
+        self.assertNotIn("token", payload)
+        self.assertNotIn(isolated_root, json.dumps(payload))
+
+    def test_bind_rejects_unbound(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            isolated_root = str(Path(tmp) / "fake-pipeline")
+            Path(isolated_root).mkdir()
+            with patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=hermes_home,
+            ):
+                with self.assertRaises(DispatchRunnerBindingTransitionError):
+                    bind_dispatch_runner_binding(
+                        operator_id="op-1",
+                        reason="bind",
+                        merged_config=_enabled_config(isolated_root),
+                    )
+
+    def test_bind_rejects_disabled_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            with patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=hermes_home,
+            ):
+                stage_dispatch_runner_binding(operator_id="op-1", reason="stage")
+                with self.assertRaises(DispatchRunnerBindingTransitionError) as exc:
+                    bind_dispatch_runner_binding(
+                        operator_id="op-1",
+                        reason="bind",
+                        merged_config=_DEFAULT_DISABLED_CONFIG,
+                    )
+        self.assertIn("executor_disabled", str(exc.exception))
+
+    def test_bind_rejects_invalid_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            with patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=hermes_home,
+            ):
+                stage_dispatch_runner_binding(operator_id="op-1", reason="stage")
+                with self.assertRaises(DispatchRunnerBindingTransitionError) as exc:
+                    bind_dispatch_runner_binding(
+                        operator_id="op-1",
+                        reason="bind",
+                        merged_config="not-a-mapping",
+                    )
+        self.assertIn("executor_config_invalid", str(exc.exception))
+
+    def test_bind_rejects_empty_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            with patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=hermes_home,
+            ):
+                stage_dispatch_runner_binding(operator_id="op-1", reason="stage")
+                with self.assertRaises(DispatchRunnerBindingTransitionError):
+                    bind_dispatch_runner_binding(
+                        operator_id="op-1",
+                        reason="bind",
+                        merged_config={
+                            "coo": {
+                                "dispatch": {
+                                    "executor": {
+                                        "enabled": True,
+                                        "allowed_pipeline_roots": [],
+                                    }
+                                }
+                            }
+                        },
+                    )
+
+    def test_bind_rejects_production_root_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            with patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=hermes_home,
+            ):
+                stage_dispatch_runner_binding(operator_id="op-1", reason="stage")
+                with self.assertRaises(DispatchRunnerBindingTransitionError):
+                    bind_dispatch_runner_binding(
+                        operator_id="op-1",
+                        reason="bind",
+                        merged_config={
+                            "coo": {
+                                "dispatch": {
+                                    "executor": {
+                                        "enabled": True,
+                                        "allowed_pipeline_roots": [
+                                            "/opt/data/multi-content-pipeline",
+                                        ],
+                                    }
+                                }
+                            }
+                        },
+                    )
+
+    def test_bind_idempotent_when_already_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            isolated_root = str(Path(tmp) / "fake-pipeline")
+            Path(isolated_root).mkdir()
+            with patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=hermes_home,
+            ):
+                stage_dispatch_runner_binding(operator_id="op-1", reason="stage")
+                first = bind_dispatch_runner_binding(
+                    operator_id="op-bind",
+                    reason="bind",
+                    merged_config=_enabled_config(isolated_root),
+                )
+                path = hermes_home / "coo" / "dispatch-runner-binding.json"
+                before_mtime = path.stat().st_mtime_ns
+                second = bind_dispatch_runner_binding(
+                    operator_id="op-2",
+                    reason="again",
+                    merged_config=_enabled_config(isolated_root),
+                )
+                after_mtime = path.stat().st_mtime_ns
+        self.assertEqual(first.state, RUNNER_BINDING_STATE_BOUND)
+        self.assertEqual(second.state, RUNNER_BINDING_STATE_BOUND)
+        self.assertEqual(second.updated_at, first.updated_at)
+        self.assertEqual(after_mtime, before_mtime)
+
+    def test_bind_rejects_corrupted_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            isolated_root = str(Path(tmp) / "fake-pipeline")
+            Path(isolated_root).mkdir()
+            state_path = hermes_home / "coo" / "dispatch-runner-binding.json"
+            state_path.write_text("{bad-json", encoding="utf-8")
+            with patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=hermes_home,
+            ):
+                with self.assertRaises(DispatchRunnerBindingStateError):
+                    bind_dispatch_runner_binding(
+                        operator_id="op-1",
+                        reason="bind",
+                        merged_config=_enabled_config(isolated_root),
+                    )
+
+    def test_bind_atomic_write_uses_replace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            isolated_root = str(Path(tmp) / "fake-pipeline")
+            Path(isolated_root).mkdir()
+            with patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=hermes_home,
+            ):
+                stage_dispatch_runner_binding(operator_id="op-1", reason="stage")
+                with patch(
+                    "agent.coo.dispatch_runner_binding_state.os.replace",
+                    wraps=os.replace,
+                ) as replace_mock:
+                    bind_dispatch_runner_binding(
+                        operator_id="op-bind",
+                        reason="bind",
+                        merged_config=_enabled_config(isolated_root),
+                    )
+        self.assertEqual(replace_mock.call_count, 1)
 
 
 if __name__ == "__main__":

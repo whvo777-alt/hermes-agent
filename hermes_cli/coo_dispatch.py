@@ -248,6 +248,18 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     binding_reset_parser.set_defaults(handler=_cmd_binding_reset)
 
+    binding_bind_parser = binding_subparsers.add_parser(
+        "bind",
+        help="Transition runner binding from staged to bound (state record only)",
+    )
+    binding_bind_parser.add_argument("--operator-id", required=True, help="Operator identity id")
+    binding_bind_parser.add_argument(
+        "--reason",
+        required=True,
+        help="Human-readable reason for binding runner state",
+    )
+    binding_bind_parser.set_defaults(handler=_cmd_binding_bind)
+
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hermes coo dispatch")
@@ -444,6 +456,27 @@ def _cmd_binding_reset(args: argparse.Namespace) -> int:
         summary = execute_dispatch_binding_reset(
             operator_id=args.operator_id,
             reason=args.reason,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_binding_transition_summary(summary))
+    return 0
+
+
+def _cmd_binding_bind(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_binding import (
+        execute_dispatch_binding_bind,
+        format_dispatch_binding_transition_summary,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        summary = execute_dispatch_binding_bind(
+            operator_id=args.operator_id,
+            reason=args.reason,
+            merged_config=load_config(),
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)

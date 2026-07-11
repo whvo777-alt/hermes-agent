@@ -1,7 +1,7 @@
-"""Dispatch runner binding state — Phase 11I read-only / Phase 11J transitions.
+"""Dispatch runner binding state — Phase 11I–12C.
 
 Persists runner binding lifecycle under Hermes home without subprocess, runner
-injection, or bound-state transitions. Missing state file means unbound.
+injection, or automatic execution. Missing state file means unbound.
 """
 
 from __future__ import annotations
@@ -250,6 +250,44 @@ def reset_dispatch_runner_binding(
         return current
     return _write_binding_state(
         state=RUNNER_BINDING_STATE_UNBOUND,
+        operator_id=operator_id,
+        reason=reason,
+        state_path=state_path,
+    )
+
+
+def bind_dispatch_runner_binding(
+    *,
+    operator_id: str,
+    reason: str,
+    merged_config: Mapping[str, Any] | None = None,
+    state_path: Path | None = None,
+) -> CooDispatchRunnerBindingState:
+    """Transition staged → bound. Idempotent when already bound."""
+    _validate_operator_fields(operator_id, reason)
+    current = load_dispatch_runner_binding_state(state_path)
+    if current.state == RUNNER_BINDING_STATE_BOUND:
+        return current
+    if current.state != RUNNER_BINDING_STATE_STAGED:
+        raise DispatchRunnerBindingTransitionError(
+            "Runner binding bind requires staged state."
+        )
+
+    from agent.coo.dispatch_cli_enablement import (
+        evaluate_dispatch_runtime_enablement,
+        format_dispatch_runtime_enablement_failure,
+    )
+
+    runtime_enablement = evaluate_dispatch_runtime_enablement(merged_config)
+    if not runtime_enablement.enablement_ready:
+        raise DispatchRunnerBindingTransitionError(
+            format_dispatch_runtime_enablement_failure(
+                runtime_enablement.blocked_reasons
+            )
+        )
+
+    return _write_binding_state(
+        state=RUNNER_BINDING_STATE_BOUND,
         operator_id=operator_id,
         reason=reason,
         state_path=state_path,

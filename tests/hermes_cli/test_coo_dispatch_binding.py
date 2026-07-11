@@ -14,6 +14,19 @@ from unittest.mock import patch
 from hermes_cli.coo_dispatch import build_coo_dispatch_parser, main
 
 
+def _enabled_config(pipeline_root: str) -> dict:
+    return {
+        "coo": {
+            "dispatch": {
+                "executor": {
+                    "enabled": True,
+                    "allowed_pipeline_roots": [pipeline_root],
+                }
+            }
+        }
+    }
+
+
 def _hermes_home(tmp_path: Path) -> Path:
     home = tmp_path / ".hermes"
     (home / "coo").mkdir(parents=True)
@@ -142,12 +155,124 @@ class TestCooDispatchBindingCli(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("operator_id", stderr.getvalue())
 
+    def test_binding_bind_from_staged_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            isolated_root = str(Path(tmp) / "fake-pipeline")
+            Path(isolated_root).mkdir()
+            with (
+                patch(
+                    "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                    return_value=hermes_home,
+                ),
+                patch(
+                    "hermes_cli.config.load_config",
+                    return_value=_enabled_config(isolated_root),
+                ),
+                patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+                patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+                patch(
+                    "agent.coo.dispatch_cli_run.build_pipeline_dispatch_executor",
+                    side_effect=AssertionError("no factory"),
+                ),
+                patch(
+                    "agent.coo.dispatch_cli_run.run_approved_dispatch",
+                    side_effect=AssertionError("no runner"),
+                ),
+            ):
+                stage_exit = main(
+                    [
+                        "binding",
+                        "stage",
+                        "--operator-id",
+                        "op-1",
+                        "--reason",
+                        "prepare",
+                    ]
+                )
+                bind_stdout = io.StringIO()
+                with patch.object(sys, "stdout", bind_stdout):
+                    bind_exit = main(
+                        [
+                            "binding",
+                            "bind",
+                            "--operator-id",
+                            "op-bind",
+                            "--reason",
+                            "record bound",
+                        ]
+                    )
+                payload = json.loads(
+                    (hermes_home / "coo" / "dispatch-runner-binding.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+        self.assertEqual(stage_exit, 0)
+        self.assertEqual(bind_exit, 0)
+        self.assertIn("transition: staged_to_bound", bind_stdout.getvalue())
+        self.assertEqual(payload["state"], "bound")
+        self.assertNotIn("runner_command", payload)
+        self.assertNotIn(isolated_root, bind_stdout.getvalue())
+
+    def test_binding_bind_rejects_unbound(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            isolated_root = str(Path(tmp) / "fake-pipeline")
+            Path(isolated_root).mkdir()
+            with (
+                patch(
+                    "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                    return_value=hermes_home,
+                ),
+                patch(
+                    "hermes_cli.config.load_config",
+                    return_value=_enabled_config(isolated_root),
+                ),
+            ):
+                stderr = io.StringIO()
+                with patch.object(sys, "stderr", stderr):
+                    exit_code = main(
+                        [
+                            "binding",
+                            "bind",
+                            "--operator-id",
+                            "op-1",
+                            "--reason",
+                            "bind",
+                        ]
+                    )
+        self.assertEqual(exit_code, 1)
+        self.assertIn("staged", stderr.getvalue().lower())
+
+    def test_binding_bind_rejects_empty_operator_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hermes_home = _hermes_home(Path(tmp))
+            with patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=hermes_home,
+            ):
+                stderr = io.StringIO()
+                with patch.object(sys, "stderr", stderr):
+                    exit_code = main(
+                        [
+                            "binding",
+                            "bind",
+                            "--operator-id",
+                            " ",
+                            "--reason",
+                            "bind",
+                        ]
+                    )
+        self.assertEqual(exit_code, 1)
+        self.assertIn("operator_id", stderr.getvalue())
+
     def test_binding_parsers_registered(self) -> None:
         parser = build_coo_dispatch_parser()
         for args in (
             ["binding", "status"],
             ["binding", "stage", "--operator-id", "op", "--reason", "why"],
             ["binding", "reset", "--operator-id", "op", "--reason", "why"],
+            ["binding", "bind", "--operator-id", "op", "--reason", "why"],
         ):
             parsed = parser.parse_args(args)
             self.assertEqual(parsed.coo_dispatch_command, "binding")
