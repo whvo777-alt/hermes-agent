@@ -21,10 +21,12 @@ from agent.coo.dispatch_bundle_store import (
 from agent.coo.dispatch_cli_readiness import (
     STEP_BUNDLE_PERSISTENCE,
     STEP_CONFIRMATION_PERSISTENCE,
+    STEP_DISPATCH_ENABLEMENT,
     STEP_EXECUTOR_CONFIG,
     STEP_PIPELINE_ROOT_TRUST,
     STEP_PIPELINE_ROOT_ATTESTATION,
     STEP_POLICY_PREFLIGHT,
+    STEP_RUNNER_BINDING_STATE,
     evaluate_dispatch_operator_readiness,
     format_dispatch_readiness_summary,
 )
@@ -88,7 +90,27 @@ class _CooDispatchReadinessFixture:
                 "agent.coo.production_executor_confirmation.get_hermes_home",
                 return_value=self.hermes_home,
             ),
+            patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=self.hermes_home,
+            ),
         ]
+
+    def write_binding_state(self, state: str) -> None:
+        (self.hermes_home / "coo").mkdir(parents=True, exist_ok=True)
+        binding_path = self.hermes_home / "coo" / "dispatch-runner-binding.json"
+        binding_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "state": state,
+                    "updated_at": "2026-07-11T00:00:00+00:00",
+                    "operator_id": "test-op",
+                    "reason": "test",
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def start(self) -> None:
         for item in self._patches:
@@ -129,6 +151,7 @@ class _CooDispatchReadinessFixture:
             persist_to_file=True,
             confirmation_dir=self.confirmation_dir,
         )
+        self.write_binding_state("bound")
         return {"ticket": ticket, "prepare": prepare, "confirmation": confirmation}
 
 
@@ -267,9 +290,9 @@ class TestDispatchOperatorReadiness(unittest.TestCase):
         )
         output = format_dispatch_readiness_summary(summary)
         self.assertFalse(summary.ready)
-        self.assertEqual(summary.failed_steps, (STEP_POLICY_PREFLIGHT,))
+        self.assertEqual(summary.failed_steps, (STEP_DISPATCH_ENABLEMENT,))
         self.assertIn("readiness: not_ready", output)
-        self.assertIn(f"failed_steps: {STEP_POLICY_PREFLIGHT}", output)
+        self.assertIn(f"failed_steps: {STEP_DISPATCH_ENABLEMENT}", output)
 
     def test_invalid_executor_config_not_ready(self) -> None:
         summary = evaluate_dispatch_operator_readiness(
@@ -562,10 +585,33 @@ class TestDispatchOperatorReadinessManualPersistence(unittest.TestCase):
             "agent.coo.production_executor_confirmation.get_hermes_home",
             return_value=self.hermes_home,
         )
+        self.home_patch_binding = patch(
+            "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+            return_value=self.hermes_home,
+        )
         self.home_patch_bundle.start()
         self.home_patch_confirm.start()
+        self.home_patch_binding.start()
+        self._write_binding_state("bound")
+
+    def _write_binding_state(self, state: str) -> None:
+        (self.hermes_home / "coo").mkdir(parents=True, exist_ok=True)
+        binding_path = self.hermes_home / "coo" / "dispatch-runner-binding.json"
+        binding_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "state": state,
+                    "updated_at": "2026-07-11T00:00:00+00:00",
+                    "operator_id": "test-op",
+                    "reason": "test",
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def tearDown(self) -> None:
+        self.home_patch_binding.stop()
         self.home_patch_confirm.stop()
         self.home_patch_bundle.stop()
         self.tmp.cleanup()

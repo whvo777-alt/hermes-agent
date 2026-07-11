@@ -20,6 +20,10 @@ RUNNER_BINDING_STATE_UNBOUND = "unbound"
 RUNNER_BINDING_STATE_STAGED = "staged"
 RUNNER_BINDING_STATE_BOUND = "bound"
 
+REASON_RUNNER_BINDING_UNBOUND = "runner_binding_unbound"
+REASON_RUNNER_BINDING_STAGED = "runner_binding_staged"
+REASON_RUNNER_BINDING_STATE_INVALID = "runner_binding_state_invalid"
+
 _KNOWN_BINDING_STATES = frozenset(
     {
         RUNNER_BINDING_STATE_UNBOUND,
@@ -254,6 +258,33 @@ def reset_dispatch_runner_binding(
 
 def runner_binding_state_is_bound(binding: CooDispatchRunnerBindingState) -> bool:
     return binding.state_valid and binding.state == RUNNER_BINDING_STATE_BOUND
+
+
+def validate_dispatch_runner_binding_for_run(
+    binding_state: CooDispatchRunnerBindingState | None = None,
+) -> CooDispatchRunnerBindingState:
+    """Fail-closed unless runner binding state is bound."""
+    try:
+        binding = (
+            binding_state
+            if binding_state is not None
+            else load_dispatch_runner_binding_state()
+        )
+    except DispatchRunnerBindingStateError as exc:
+        raise ValueError(
+            f"runner binding gate failed: {REASON_RUNNER_BINDING_STATE_INVALID}"
+        ) from exc
+
+    if binding.state == RUNNER_BINDING_STATE_BOUND:
+        return binding
+    if binding.state == RUNNER_BINDING_STATE_STAGED:
+        raise ValueError(f"runner binding gate failed: {REASON_RUNNER_BINDING_STAGED}")
+    raise ValueError(f"runner binding gate failed: {REASON_RUNNER_BINDING_UNBOUND}")
+
+
+def format_runner_binding_gate_failure(reason: str) -> str:
+    """Render a safe runner binding gate failure without paths or secrets."""
+    return f"runner binding gate failed: {reason}"
 
 
 def format_runner_binding_state_summary(binding: CooDispatchRunnerBindingState) -> str:

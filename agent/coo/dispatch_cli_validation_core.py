@@ -15,6 +15,10 @@ from agent.coo.dispatch_bundle_store import (
 )
 from agent.coo.dispatch_cli_bundle_validation import load_validated_dispatch_bundle_for_cli
 from agent.coo.dispatch_cli_config_validate import validate_dispatch_executor_config
+from agent.coo.dispatch_cli_enablement import (
+    evaluate_dispatch_runtime_enablement,
+    format_dispatch_runtime_enablement_failure,
+)
 from agent.coo.dispatch_cli_preflight import (
     CooDispatchPreflightSummary,
     run_dispatch_policy_preflight,
@@ -23,6 +27,7 @@ from agent.coo.dispatch_pipeline_root_trust import (
     assert_cli_pipeline_root_trusted,
     assert_pipeline_root_matches_attestation,
 )
+from agent.coo.dispatch_runner_binding_state import validate_dispatch_runner_binding_for_run
 from agent.coo.production_executor_confirmation import (
     ProductionExecutorConfirmation,
     read_confirmation,
@@ -32,6 +37,8 @@ from agent.coo.production_executor_confirmation import (
 STEP_CLI_ARGS = "cli_args"
 STEP_PIPELINE_ROOT_TRUST = "pipeline_root_trust"
 STEP_EXECUTOR_CONFIG = "executor_config"
+STEP_RUNNER_BINDING_STATE = "runner_binding_state"
+STEP_DISPATCH_ENABLEMENT = "dispatch_enablement"
 STEP_BUNDLE_PERSISTENCE = "bundle_persistence"
 STEP_CONFIRMATION_PERSISTENCE = "confirmation_persistence"
 STEP_PIPELINE_ROOT_ATTESTATION = "pipeline_root_attestation"
@@ -48,7 +55,7 @@ class CooDispatchPreRunValidationResult:
     preflight: CooDispatchPreflightSummary
 
 
-@dataclass(frozen=True)
+@dataclass
 class DispatchPreRunValidationFailure(Exception):
     """Structured pre-run validation failure for readiness soft mapping."""
 
@@ -115,6 +122,23 @@ def validate_dispatch_pre_run(
         validate_dispatch_executor_config(merged_config)
     except ValueError as exc:
         raise_dispatch_pre_run_failure(STEP_EXECUTOR_CONFIG, exc)
+
+    try:
+        validate_dispatch_runner_binding_for_run()
+    except ValueError as exc:
+        raise_dispatch_pre_run_failure(STEP_RUNNER_BINDING_STATE, exc, config_valid=True)
+
+    runtime_enablement = evaluate_dispatch_runtime_enablement(merged_config)
+    if not runtime_enablement.enablement_ready:
+        raise_dispatch_pre_run_failure(
+            STEP_DISPATCH_ENABLEMENT,
+            ValueError(
+                format_dispatch_runtime_enablement_failure(
+                    runtime_enablement.blocked_reasons
+                )
+            ),
+            config_valid=True,
+        )
 
     try:
         bundle = load_validated_dispatch_bundle_for_cli(

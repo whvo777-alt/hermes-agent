@@ -65,7 +65,27 @@ class _PreflightFixture:
                 "agent.coo.dispatch_cli_run.get_hermes_home",
                 return_value=self.hermes_home,
             ),
+            patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=self.hermes_home,
+            ),
         ]
+
+    def write_binding_state(self, state: str) -> None:
+        (self.hermes_home / "coo").mkdir(parents=True, exist_ok=True)
+        binding_path = self.hermes_home / "coo" / "dispatch-runner-binding.json"
+        binding_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "state": state,
+                    "updated_at": "2026-07-11T00:00:00+00:00",
+                    "operator_id": "test-op",
+                    "reason": "test",
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def start(self) -> None:
         for item in self._patches:
@@ -107,6 +127,7 @@ class _PreflightFixture:
             confirmation_dir=self.confirmation_dir,
         )
         bundle = read_bundle(ticket.ticket_id, bundle_dir=self.bundle_dir)
+        self.write_binding_state("bound")
         return {
             "ticket": ticket,
             "prepare": prepare,
@@ -203,19 +224,19 @@ class TestDispatchCliPreflight(unittest.TestCase):
         ticket = self.seeded["ticket"]
         prepare = self.seeded["prepare"]
         confirmation = self.seeded["confirmation"]
-        result = execute_coo_dispatch_run(
-            ticket_id=ticket.ticket_id,
-            confirmation_id=confirmation.confirmation_id,
-            unlock_token_id=prepare["unlock_token"]["token_id"],
-            requester_id=ticket.requester_id,
-            pipeline_root=str(self.fixture.pipeline_root),
-            dry_run=True,
-            bundle_dir=self.fixture.bundle_dir,
-            confirmation_dir=self.fixture.confirmation_dir,
-            merged_config={"coo": {"dispatch": {"executor": {"enabled": False}}}},
-        )
-        self.assertFalse(result.preflight is not None and result.preflight.all_passed)
-        self.assertFalse(result.consumed)
+        with self.assertRaises(ValueError) as exc:
+            execute_coo_dispatch_run(
+                ticket_id=ticket.ticket_id,
+                confirmation_id=confirmation.confirmation_id,
+                unlock_token_id=prepare["unlock_token"]["token_id"],
+                requester_id=ticket.requester_id,
+                pipeline_root=str(self.fixture.pipeline_root),
+                dry_run=True,
+                bundle_dir=self.fixture.bundle_dir,
+                confirmation_dir=self.fixture.confirmation_dir,
+                merged_config={"coo": {"dispatch": {"executor": {"enabled": False}}}},
+            )
+        self.assertIn("executor_disabled", str(exc.exception))
         bundle = read_bundle(ticket.ticket_id, bundle_dir=self.fixture.bundle_dir)
         self.assertEqual(bundle.consumed_at, "")
         loaded = read_confirmation(

@@ -29,6 +29,7 @@ REASON_PRODUCTION_ROOT_IN_ALLOWLIST = "production_root_in_allowlist"
 REASON_RUNNER_ALREADY_BOUND = "runner_already_bound"
 REASON_RUNNER_BINDING_STAGED = "runner_binding_staged"
 REASON_RUNNER_BINDING_STATE_INVALID = "runner_binding_state_invalid"
+REASON_RUNNER_BINDING_UNBOUND = "runner_binding_unbound"
 REASON_READINESS_PREFLIGHT_UNAVAILABLE = "readiness_preflight_unavailable"
 
 RUNNER_BINDING_STATE_INVALID = "invalid"
@@ -130,6 +131,44 @@ def evaluate_dispatch_enablement(
         runner_binding_state=rendered_binding_state,
         blocked_reasons=tuple(blocked),
     )
+
+
+def evaluate_dispatch_runtime_enablement(
+    merged_config: Mapping[str, Any] | None = None,
+) -> CooDispatchEnablementSummary:
+    """Config-only enablement gate for pre-run validation (binding checked separately)."""
+    blocked: list[str] = []
+
+    try:
+        policy = load_dispatch_executor_policy(merged_config)
+    except ValueError:
+        policy = None
+        blocked.append(REASON_EXECUTOR_CONFIG_INVALID)
+
+    if policy is not None:
+        if not policy.enabled:
+            blocked.append(REASON_EXECUTOR_DISABLED)
+        if not policy.allowed_pipeline_roots:
+            blocked.append(REASON_EXECUTOR_ALLOWLIST_EMPTY)
+        elif _production_root_in_allowlist(policy):
+            blocked.append(REASON_PRODUCTION_ROOT_IN_ALLOWLIST)
+
+    if not _readiness_preflight_system_available():
+        blocked.append(REASON_READINESS_PREFLIGHT_UNAVAILABLE)
+
+    return CooDispatchEnablementSummary(
+        enablement_ready=not blocked,
+        runner_bound=False,
+        runner_binding_state="",
+        blocked_reasons=tuple(blocked),
+    )
+
+
+def format_dispatch_runtime_enablement_failure(blocked_reasons: tuple[str, ...]) -> str:
+    """Render a safe runtime enablement failure without paths or secrets."""
+    if not blocked_reasons:
+        return "dispatch enablement gate failed"
+    return f"dispatch enablement gate failed: {','.join(blocked_reasons)}"
 
 
 def format_dispatch_enablement_summary(summary: CooDispatchEnablementSummary) -> str:

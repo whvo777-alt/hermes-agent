@@ -15,10 +15,12 @@ from agent.coo.dispatch_cli_validation_core import (
     STEP_BUNDLE_PERSISTENCE,
     STEP_CLI_ARGS,
     STEP_CONFIRMATION_PERSISTENCE,
+    STEP_DISPATCH_ENABLEMENT,
     STEP_EXECUTOR_CONFIG,
     STEP_PIPELINE_ROOT_ATTESTATION,
     STEP_PIPELINE_ROOT_TRUST,
     STEP_POLICY_PREFLIGHT,
+    STEP_RUNNER_BINDING_STATE,
     DispatchPreRunValidationFailure,
     validate_dispatch_pre_run,
 )

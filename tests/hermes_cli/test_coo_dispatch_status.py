@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -152,16 +153,39 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             "agent.coo.production_executor_confirmation.get_hermes_home",
             return_value=self.hermes_home,
         )
+        self.home_patch_binding = patch(
+            "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+            return_value=self.hermes_home,
+        )
         self.home_patch_bundle.start()
         self.home_patch_confirmation.start()
+        self.home_patch_binding.start()
         self.config_patch = patch(
             "hermes_cli.config.load_config",
             return_value=dict(_DEFAULT_MERGED_CONFIG),
         )
         self.config_patch.start()
+        self._write_binding_state("bound")
+
+    def _write_binding_state(self, state: str) -> None:
+        (self.hermes_home / "coo").mkdir(parents=True, exist_ok=True)
+        binding_path = self.hermes_home / "coo" / "dispatch-runner-binding.json"
+        binding_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "state": state,
+                    "updated_at": "2026-07-11T00:00:00+00:00",
+                    "operator_id": "test-op",
+                    "reason": "test",
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def tearDown(self) -> None:
         self.config_patch.stop()
+        self.home_patch_binding.stop()
         self.home_patch_confirmation.stop()
         self.home_patch_bundle.stop()
         self.tmp.cleanup()
@@ -194,22 +218,17 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             tmp_path=Path(self.tmp.name),
         )
         pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
-        summary = summarize_dispatch_persistence_status(
-            ticket_id=ticket.ticket_id,
-            confirmation_id=confirmation.confirmation_id,
-            pipeline_root=pipeline_root,
-            bundle_dir=self.bundle_dir,
-            confirmation_dir=self.confirmation_dir,
-            merged_config=_DEFAULT_MERGED_CONFIG,
-        )
-        output = format_dispatch_status_summary(summary)
-        self.assertIn(f"confirmation_id: {confirmation.confirmation_id}", output)
-        self.assertIn("confirmation_consumed: false", output)
-        self.assertIn("confirmation_expired: false", output)
-        self.assertIn("executor_enabled: false", output)
-        self.assertIn("executor_allowlist_count: 0", output)
-        self.assertIn("preflight: failed", output)
-        self.assertIn("failed_checks: policy_enabled", output)
+        self._write_binding_state("bound")
+        with self.assertRaises(ValueError) as exc:
+            summarize_dispatch_persistence_status(
+                ticket_id=ticket.ticket_id,
+                confirmation_id=confirmation.confirmation_id,
+                pipeline_root=pipeline_root,
+                bundle_dir=self.bundle_dir,
+                confirmation_dir=self.confirmation_dir,
+                merged_config=_DEFAULT_MERGED_CONFIG,
+            )
+        self.assertIn("executor_disabled", str(exc.exception))
 
     def test_status_preflight_pass_with_enabled_allowlist(self) -> None:
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
@@ -312,14 +331,25 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             attested_pipeline_root=_seeded_pipeline_root(Path(self.tmp.name)),
         )
         write_confirmation(other, confirmation_dir=self.confirmation_dir)
+        pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
+        enabled_config = {
+            "coo": {
+                "dispatch": {
+                    "executor": {
+                        "enabled": True,
+                        "allowed_pipeline_roots": [pipeline_root],
+                    }
+                }
+            }
+        }
         with self.assertRaises(ValueError) as exc:
             summarize_dispatch_persistence_status(
                 ticket_id=ticket.ticket_id,
                 confirmation_id=other.confirmation_id,
-                pipeline_root=_seeded_pipeline_root(Path(self.tmp.name)),
+                pipeline_root=pipeline_root,
                 bundle_dir=self.bundle_dir,
                 confirmation_dir=self.confirmation_dir,
-                merged_config=_DEFAULT_MERGED_CONFIG,
+                merged_config=enabled_config,
             )
         self.assertIn("ticket_id", str(exc.exception))
 
@@ -414,13 +444,23 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             tmp_path=Path(self.tmp.name),
         )
         pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
+        enabled_config = {
+            "coo": {
+                "dispatch": {
+                    "executor": {
+                        "enabled": True,
+                        "allowed_pipeline_roots": [pipeline_root],
+                    }
+                }
+            }
+        }
         summary = summarize_dispatch_persistence_status(
             ticket_id=ticket.ticket_id,
             confirmation_id=confirmation.confirmation_id,
             pipeline_root=pipeline_root,
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
-            merged_config=_DEFAULT_MERGED_CONFIG,
+            merged_config=enabled_config,
         )
         output = format_dispatch_status_summary(summary)
         self.assertNotIn(REQUIRED_CONFIRMATION_PHRASE, output)
@@ -428,10 +468,10 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
         self.assertNotIn('"snapshot"', output)
         self.assertNotIn("unlock_token", output.lower())
         self.assertNotIn(pipeline_root, output)
-        self.assertIn("executor_enabled: false", output)
-        self.assertIn("executor_allowlist_count: 0", output)
+        self.assertIn("executor_enabled: true", output)
+        self.assertIn("executor_allowlist_count: 1", output)
         self.assertNotIn("/opt/data/multi-content-pipeline", output)
-        self.assertIn("preflight: failed", output)
+        self.assertIn("preflight: passed", output)
 
     def test_subprocess_not_used_by_status_cli(self) -> None:
         ticket, _token, _dispatch_request, _confirmation = _seed_bundle_and_confirmation(
@@ -457,8 +497,8 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             tmp_path=Path(self.tmp.name),
         )
         pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
-        stdout = io.StringIO()
-        with patch.object(sys, "stdout", stdout):
+        stderr = io.StringIO()
+        with patch.object(sys, "stderr", stderr):
             exit_code = main(
                 [
                     "status",
@@ -471,7 +511,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
                 ]
             )
         self.assertEqual(exit_code, 1)
-        self.assertIn("preflight: failed", stdout.getvalue())
+        self.assertIn("executor_disabled", stderr.getvalue())
 
     def test_status_preflight_cli_passes_with_enabled_allowlist(self) -> None:
         ticket, _token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(
@@ -517,13 +557,23 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
             tmp_path=Path(self.tmp.name),
         )
         pipeline_root = _seeded_pipeline_root(Path(self.tmp.name))
+        enabled_config = {
+            "coo": {
+                "dispatch": {
+                    "executor": {
+                        "enabled": True,
+                        "allowed_pipeline_roots": [pipeline_root],
+                    }
+                }
+            }
+        }
         summary = summarize_dispatch_persistence_status(
             ticket_id=ticket.ticket_id,
             confirmation_id=confirmation.confirmation_id,
             pipeline_root=pipeline_root,
             bundle_dir=self.bundle_dir,
             confirmation_dir=self.confirmation_dir,
-            merged_config=_DEFAULT_MERGED_CONFIG,
+            merged_config=enabled_config,
         )
         output = format_dispatch_status_summary(summary)
         self.assertTrue(summary.pipeline_root_attested)

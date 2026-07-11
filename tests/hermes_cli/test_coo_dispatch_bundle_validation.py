@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -51,7 +52,27 @@ class _BundleValidationFixture:
                 "agent.coo.production_executor_confirmation.get_hermes_home",
                 return_value=self.hermes_home,
             ),
+            patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=self.hermes_home,
+            ),
         ]
+
+    def write_binding_state(self, state: str) -> None:
+        (self.hermes_home / "coo").mkdir(parents=True, exist_ok=True)
+        binding_path = self.hermes_home / "coo" / "dispatch-runner-binding.json"
+        binding_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "state": state,
+                    "updated_at": "2026-07-11T00:00:00+00:00",
+                    "operator_id": "test-op",
+                    "reason": "test",
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def start(self) -> None:
         for item in self._patches:
@@ -100,6 +121,7 @@ class TestDispatchBundleValidationCore(unittest.TestCase):
         self.fixture = _BundleValidationFixture()
         self.fixture.start()
         self.seeded = self.fixture.seed_bundle_and_confirmation()
+        self.fixture.write_binding_state("bound")
 
     def tearDown(self) -> None:
         self.fixture.stop()

@@ -103,6 +103,26 @@ class _CooDispatchRunFixture:
             "agent.coo.dispatch_execution_audit.get_hermes_home",
             return_value=self.hermes_home,
         )
+        self.binding_home_patch = patch(
+            "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+            return_value=self.hermes_home,
+        )
+
+    def write_binding_state(self, state: str) -> None:
+        (self.hermes_home / "coo").mkdir(parents=True, exist_ok=True)
+        binding_path = self.hermes_home / "coo" / "dispatch-runner-binding.json"
+        binding_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "state": state,
+                    "updated_at": "2026-07-11T00:00:00+00:00",
+                    "operator_id": "test-op",
+                    "reason": "test",
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def start(self) -> None:
         self.home_patch.start()
@@ -110,8 +130,10 @@ class _CooDispatchRunFixture:
         self.cli_home_patch.start()
         self.factory_home_patch.start()
         self.audit_home_patch.start()
+        self.binding_home_patch.start()
 
     def stop(self) -> None:
+        self.binding_home_patch.stop()
         self.audit_home_patch.stop()
         self.factory_home_patch.stop()
         self.cli_home_patch.stop()
@@ -149,6 +171,7 @@ class _CooDispatchRunFixture:
             persist_to_file=True,
             confirmation_dir=self.confirmation_dir,
         )
+        self.write_binding_state("bound")
         return {
             "ticket": ticket,
             "prepare": prepare,
@@ -250,21 +273,19 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
         ticket = self.seeded["ticket"]
         prepare = self.seeded["prepare"]
         confirmation = self.seeded["confirmation"]
-        result = execute_coo_dispatch_run(
-            ticket_id=ticket.ticket_id,
-            confirmation_id=confirmation.confirmation_id,
-            unlock_token_id=prepare["unlock_token"]["token_id"],
-            requester_id=ticket.requester_id,
-            pipeline_root=str(self.fixture.pipeline_root),
-            dry_run=True,
-            bundle_dir=self.fixture.bundle_dir,
-            confirmation_dir=self.fixture.confirmation_dir,
-            merged_config={"coo": {"dispatch": {"executor": {"enabled": False}}}},
-        )
-        self.assertFalse(result.consumed)
-        self.assertEqual(result.status, "preflight_failed")
-        self.assertIsNotNone(result.preflight)
-        self.assertFalse(result.preflight.all_passed)
+        with self.assertRaises(ValueError) as exc:
+            execute_coo_dispatch_run(
+                ticket_id=ticket.ticket_id,
+                confirmation_id=confirmation.confirmation_id,
+                unlock_token_id=prepare["unlock_token"]["token_id"],
+                requester_id=ticket.requester_id,
+                pipeline_root=str(self.fixture.pipeline_root),
+                dry_run=True,
+                bundle_dir=self.fixture.bundle_dir,
+                confirmation_dir=self.fixture.confirmation_dir,
+                merged_config={"coo": {"dispatch": {"executor": {"enabled": False}}}},
+            )
+        self.assertIn("executor_disabled", str(exc.exception))
         bundle = read_bundle(ticket.ticket_id, bundle_dir=self.fixture.bundle_dir)
         self.assertEqual(bundle.consumed_at, "")
         loaded = read_confirmation(
@@ -302,7 +323,7 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
         self.assertTrue(result.preflight is not None and result.preflight.all_passed)
         self.assertFalse(result.consumed)
 
-    def test_dry_run_cli_output_states_preflight_summary(self) -> None:
+    def test_dry_run_cli_output_states_enablement_gate_failure(self) -> None:
         ticket = self.seeded["ticket"]
         prepare = self.seeded["prepare"]
         confirmation = self.seeded["confirmation"]
@@ -314,15 +335,17 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
             pipeline_root=str(self.fixture.pipeline_root),
             dry_run=True,
         )
-        stdout = io.StringIO()
-        with patch.object(sys, "stdout", stdout):
+        stderr = io.StringIO()
+        with (
+            patch(
+                "hermes_cli.config.load_config",
+                return_value=_DEFAULT_DISABLED_EXECUTOR_CONFIG,
+            ),
+            patch.object(sys, "stderr", stderr),
+        ):
             exit_code = run_coo_dispatch_from_args(args)
         self.assertEqual(exit_code, 1)
-        output = stdout.getvalue()
-        self.assertIn("preflight: failed", output)
-        self.assertIn("preflight-only", output)
-        self.assertIn("consumed: False", output)
-        self.assertIn("failed_checks: policy_enabled", output)
+        self.assertIn("executor_disabled", stderr.getvalue())
 
     def test_hydrate_preserves_snapshot_ids_and_status(self) -> None:
         ticket = self.seeded["ticket"]
@@ -362,6 +385,10 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
         stdout = io.StringIO()
         stderr = io.StringIO()
         with (
+            patch(
+                "hermes_cli.config.load_config",
+                return_value=_enabled_executor_config(self.fixture.pipeline_root),
+            ),
             patch.object(sys, "stdout", stdout),
             patch.object(sys, "stderr", stderr),
         ):
@@ -372,7 +399,7 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
         self.assertNotIn(json.dumps(bundle.snapshot), combined)
         self.assertNotIn(confirmation_json, combined)
         self.assertNotIn(str(self.fixture.pipeline_root), combined)
-        self.assertIn("preflight:", combined)
+        self.assertIn("preflight: passed", combined)
         for secret_key in ("API_KEY", "PASSWORD", "SECRET", "TOKEN="):
             self.assertNotIn(secret_key, combined)
 
@@ -572,7 +599,7 @@ class TestCooDispatchRunExecutorPolicy(_CooDispatchRunTestBase):
                         merged_config=_DEFAULT_DISABLED_EXECUTOR_CONFIG,
                     ),
                 )
-        self.assertIn("disabled", str(exc.exception).lower())
+        self.assertIn("executor_disabled", str(exc.exception).lower())
         self.assertEqual(runner_calls["count"], 0)
         bundle = read_bundle(
             self.seeded["ticket"].ticket_id,

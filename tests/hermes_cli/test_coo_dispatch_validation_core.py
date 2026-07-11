@@ -17,8 +17,10 @@ from agent.coo.dispatch_cli_status import summarize_dispatch_persistence_status
 from agent.coo.dispatch_cli_validation_core import (
     STEP_BUNDLE_PERSISTENCE,
     STEP_CONFIRMATION_PERSISTENCE,
+    STEP_DISPATCH_ENABLEMENT,
     STEP_EXECUTOR_CONFIG,
     STEP_PIPELINE_ROOT_ATTESTATION,
+    STEP_RUNNER_BINDING_STATE,
     DispatchPreRunValidationFailure,
     validate_dispatch_pre_run,
 )
@@ -74,7 +76,27 @@ class _ValidationCoreFixture:
                 "agent.coo.production_executor_confirmation.get_hermes_home",
                 return_value=self.hermes_home,
             ),
+            patch(
+                "agent.coo.dispatch_runner_binding_state.get_hermes_home",
+                return_value=self.hermes_home,
+            ),
         ]
+
+    def write_binding_state(self, state: str) -> None:
+        (self.hermes_home / "coo").mkdir(parents=True, exist_ok=True)
+        binding_path = self.hermes_home / "coo" / "dispatch-runner-binding.json"
+        binding_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "state": state,
+                    "updated_at": "2026-07-11T00:00:00+00:00",
+                    "operator_id": "test-op",
+                    "reason": "test",
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def start(self) -> None:
         for item in self._patches:
@@ -137,6 +159,7 @@ class TestDispatchPreRunValidationCore(unittest.TestCase):
         self.fixture = _ValidationCoreFixture()
         self.fixture.start()
         self.seeded = self.fixture.seed_bundle_and_confirmation()
+        self.fixture.write_binding_state("bound")
 
     def tearDown(self) -> None:
         self.fixture.stop()
@@ -220,25 +243,112 @@ class TestDispatchPreRunValidationCore(unittest.TestCase):
         self.assertEqual(exc.exception.step, STEP_PIPELINE_ROOT_ATTESTATION)
 
     def test_policy_preflight_failure_returns_failed_summary(self) -> None:
+        from agent.coo.dispatch_cli_preflight import CooDispatchPreflightSummary
+
+        failed_preflight = CooDispatchPreflightSummary(
+            all_passed=False,
+            passed_check_names=(),
+            failed_check_names=("policy_enabled",),
+        )
         with (
             patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
             patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+            patch(
+                "agent.coo.dispatch_cli_validation_core.run_dispatch_policy_preflight",
+                return_value=failed_preflight,
+            ),
         ):
             result = validate_dispatch_pre_run(
                 **self.fixture.validation_kwargs(
                     self.seeded,
-                    merged_config=_DEFAULT_DISABLED_CONFIG,
+                    merged_config=_enabled_executor_config(self.fixture.pipeline_root),
                 )
             )
         self.assertFalse(result.preflight.all_passed)
         self.assertIn("policy_enabled", result.preflight.failed_check_names)
 
+    def test_missing_binding_state_fails_closed(self) -> None:
+        binding_path = self.fixture.hermes_home / "coo" / "dispatch-runner-binding.json"
+        if binding_path.exists():
+            binding_path.unlink()
+        with self.assertRaises(DispatchPreRunValidationFailure) as exc:
+            validate_dispatch_pre_run(**self.fixture.validation_kwargs(self.seeded))
+        self.assertEqual(exc.exception.step, STEP_RUNNER_BINDING_STATE)
+        self.assertIn("runner_binding_unbound", str(exc.exception.cause_exc))
+
+    def test_staged_binding_state_fails_closed(self) -> None:
+        self.fixture.write_binding_state("staged")
+        with self.assertRaises(DispatchPreRunValidationFailure) as exc:
+            validate_dispatch_pre_run(**self.fixture.validation_kwargs(self.seeded))
+        self.assertEqual(exc.exception.step, STEP_RUNNER_BINDING_STATE)
+        self.assertIn("runner_binding_staged", str(exc.exception.cause_exc))
+
+    def test_dispatch_enablement_disabled_fails_closed(self) -> None:
+        with self.assertRaises(DispatchPreRunValidationFailure) as exc:
+            validate_dispatch_pre_run(
+                **self.fixture.validation_kwargs(
+                    self.seeded,
+                    merged_config=_DEFAULT_DISABLED_CONFIG,
+                )
+            )
+        self.assertEqual(exc.exception.step, STEP_DISPATCH_ENABLEMENT)
+        self.assertIn("executor_disabled", str(exc.exception.cause_exc))
+
+    def test_corrupted_binding_state_fails_closed(self) -> None:
+        binding_path = self.fixture.hermes_home / "coo" / "dispatch-runner-binding.json"
+        binding_path.write_text("{bad-json", encoding="utf-8")
+        with self.assertRaises(DispatchPreRunValidationFailure) as exc:
+            validate_dispatch_pre_run(**self.fixture.validation_kwargs(self.seeded))
+        self.assertEqual(exc.exception.step, STEP_RUNNER_BINDING_STATE)
+        self.assertIn("runner_binding_state_invalid", str(exc.exception.cause_exc))
+
+    def test_gate_failure_blocks_runner_even_when_mock_injected(self) -> None:
+        runner_calls = {"count": 0}
+
+        def counting_runner(*args, **kwargs):
+            runner_calls["count"] += 1
+            return 0, "ok", ""
+
+        prepare = self.seeded["prepare"]
+        ticket = self.seeded["ticket"]
+        confirmation = self.seeded["confirmation"]
+        binding_path = self.fixture.hermes_home / "coo" / "dispatch-runner-binding.json"
+        if binding_path.exists():
+            binding_path.unlink()
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+            patch(
+                "agent.coo.dispatch_cli_run.build_pipeline_dispatch_executor",
+                side_effect=AssertionError("no factory"),
+            ),
+            patch(
+                "agent.coo.dispatch_cli_run.run_approved_dispatch",
+                side_effect=AssertionError("no runner"),
+            ),
+        ):
+            with self.assertRaises(ValueError) as exc:
+                execute_coo_dispatch_run(
+                    ticket_id=ticket.ticket_id,
+                    confirmation_id=confirmation.confirmation_id,
+                    unlock_token_id=prepare["unlock_token"]["token_id"],
+                    requester_id=ticket.requester_id,
+                    pipeline_root=str(self.fixture.pipeline_root),
+                    dry_run=True,
+                    bundle_dir=self.fixture.bundle_dir,
+                    confirmation_dir=self.fixture.confirmation_dir,
+                    merged_config=_enabled_executor_config(self.fixture.pipeline_root),
+                    subprocess_runner=counting_runner,
+                )
+        self.assertIn("runner_binding_unbound", str(exc.exception))
+        self.assertEqual(runner_calls["count"], 0)
 
 class TestDispatchCliPathsUseValidationCore(unittest.TestCase):
     def setUp(self) -> None:
         self.fixture = _ValidationCoreFixture()
         self.fixture.start()
         self.seeded = self.fixture.seed_bundle_and_confirmation()
+        self.fixture.write_binding_state("bound")
 
     def tearDown(self) -> None:
         self.fixture.stop()
@@ -386,7 +496,7 @@ class TestDispatchCliPathsUseValidationCore(unittest.TestCase):
                     merged_config=_DEFAULT_DISABLED_CONFIG,
                     subprocess_runner=counting_runner,
                 )
-        self.assertIn("disabled", str(exc.exception).lower())
+        self.assertIn("executor_disabled", str(exc.exception))
         self.assertEqual(runner_calls["count"], 0)
         bundle = read_bundle(ticket.ticket_id, bundle_dir=self.fixture.bundle_dir)
         self.assertEqual(bundle.consumed_at, "")
