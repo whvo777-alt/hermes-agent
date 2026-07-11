@@ -17,8 +17,16 @@ from agent.coo.dispatch_cli_enablement import (
     REASON_PRODUCTION_ROOT_IN_ALLOWLIST,
     REASON_READINESS_PREFLIGHT_UNAVAILABLE,
     REASON_RUNNER_ALREADY_BOUND,
+    REASON_RUNNER_BINDING_STAGED,
+    REASON_RUNNER_BINDING_STATE_INVALID,
     evaluate_dispatch_enablement,
     format_dispatch_enablement_summary,
+)
+from agent.coo.dispatch_runner_binding_state import (
+    RUNNER_BINDING_STATE_BOUND,
+    RUNNER_BINDING_STATE_STAGED,
+    CooDispatchRunnerBindingState,
+    DispatchRunnerBindingStateError,
 )
 from hermes_cli.coo_dispatch import build_coo_dispatch_parser, main
 
@@ -45,6 +53,7 @@ class TestDispatchEnablementGate(unittest.TestCase):
         self.assertIn(REASON_EXECUTOR_ALLOWLIST_EMPTY, summary.blocked_reasons)
         self.assertIn("enablement_ready: false", output)
         self.assertIn("runner_bound: false", output)
+        self.assertIn("runner_binding_state: unbound", output)
         self.assertIn(f"blocked_reasons: {REASON_EXECUTOR_DISABLED}", output)
         self.assertNotIn("/opt/data/multi-content-pipeline", output)
 
@@ -67,8 +76,10 @@ class TestDispatchEnablementGate(unittest.TestCase):
         output = format_dispatch_enablement_summary(summary)
         self.assertTrue(summary.enablement_ready)
         self.assertFalse(summary.runner_bound)
+        self.assertEqual(summary.runner_binding_state, "unbound")
         self.assertEqual(summary.blocked_reasons, ())
         self.assertIn("enablement_ready: true", output)
+        self.assertIn("runner_binding_state: unbound", output)
         self.assertNotIn("blocked_reasons:", output)
         self.assertNotIn(isolated_root, output)
 
@@ -137,11 +148,44 @@ class TestDispatchEnablementGate(unittest.TestCase):
                         }
                     }
                 },
-                runner_bound=True,
+                binding_state=CooDispatchRunnerBindingState(state=RUNNER_BINDING_STATE_BOUND),
             )
         self.assertFalse(summary.enablement_ready)
         self.assertTrue(summary.runner_bound)
+        self.assertEqual(summary.runner_binding_state, RUNNER_BINDING_STATE_BOUND)
         self.assertIn(REASON_RUNNER_ALREADY_BOUND, summary.blocked_reasons)
+
+    def test_runner_staged_blocks_enablement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            isolated_root = str(Path(tmp) / "fake-pipeline")
+            Path(isolated_root).mkdir()
+            summary = evaluate_dispatch_enablement(
+                {
+                    "coo": {
+                        "dispatch": {
+                            "executor": {
+                                "enabled": True,
+                                "allowed_pipeline_roots": [isolated_root],
+                            }
+                        }
+                    }
+                },
+                binding_state=CooDispatchRunnerBindingState(state=RUNNER_BINDING_STATE_STAGED),
+            )
+        self.assertFalse(summary.enablement_ready)
+        self.assertFalse(summary.runner_bound)
+        self.assertEqual(summary.runner_binding_state, RUNNER_BINDING_STATE_STAGED)
+        self.assertIn(REASON_RUNNER_BINDING_STAGED, summary.blocked_reasons)
+
+    def test_invalid_binding_state_blocks_enablement(self) -> None:
+        with patch(
+            "agent.coo.dispatch_cli_enablement.load_dispatch_runner_binding_state",
+            side_effect=DispatchRunnerBindingStateError("invalid"),
+        ):
+            summary = evaluate_dispatch_enablement(_DEFAULT_DISABLED_CONFIG)
+        self.assertFalse(summary.enablement_ready)
+        self.assertEqual(summary.runner_binding_state, "invalid")
+        self.assertIn(REASON_RUNNER_BINDING_STATE_INVALID, summary.blocked_reasons)
 
     def test_readiness_preflight_unavailable_blocks_enablement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -192,13 +236,17 @@ class TestDispatchEnablementGate(unittest.TestCase):
                 }
             }
             with patch("hermes_cli.config.load_config", return_value=enabled_config):
-                stdout = io.StringIO()
-                with (
-                    patch.object(sys, "stdout", stdout),
-                    patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
-                    patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+                with patch(
+                    "agent.coo.dispatch_cli_enablement.load_dispatch_runner_binding_state",
+                    return_value=CooDispatchRunnerBindingState(state="unbound"),
                 ):
-                    exit_code = main(["enablement", "check"])
+                    stdout = io.StringIO()
+                    with (
+                        patch.object(sys, "stdout", stdout),
+                        patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+                        patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+                    ):
+                        exit_code = main(["enablement", "check"])
         self.assertEqual(exit_code, 0)
         self.assertIn("enablement_ready: true", stdout.getvalue())
         self.assertNotIn(isolated_root, stdout.getvalue())

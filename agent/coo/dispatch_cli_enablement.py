@@ -8,10 +8,18 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 from agent.coo.dispatch_executor_config import load_dispatch_executor_policy
 from agent.coo.dispatch_pipeline_root_trust import assert_pipeline_root_allowed
+from agent.coo.dispatch_runner_binding_state import (
+    CooDispatchRunnerBindingState,
+    DispatchRunnerBindingStateError,
+    RUNNER_BINDING_STATE_BOUND,
+    RUNNER_BINDING_STATE_STAGED,
+    load_dispatch_runner_binding_state,
+    runner_binding_state_is_bound,
+)
 from agent.coo.production_executor_policy import ProductionExecutorPolicy
 
 REASON_EXECUTOR_CONFIG_INVALID = "executor_config_invalid"
@@ -19,7 +27,11 @@ REASON_EXECUTOR_DISABLED = "executor_disabled"
 REASON_EXECUTOR_ALLOWLIST_EMPTY = "executor_allowlist_empty"
 REASON_PRODUCTION_ROOT_IN_ALLOWLIST = "production_root_in_allowlist"
 REASON_RUNNER_ALREADY_BOUND = "runner_already_bound"
+REASON_RUNNER_BINDING_STAGED = "runner_binding_staged"
+REASON_RUNNER_BINDING_STATE_INVALID = "runner_binding_state_invalid"
 REASON_READINESS_PREFLIGHT_UNAVAILABLE = "readiness_preflight_unavailable"
+
+RUNNER_BINDING_STATE_INVALID = "invalid"
 
 
 @dataclass(frozen=True)
@@ -28,6 +40,7 @@ class CooDispatchEnablementSummary:
 
     enablement_ready: bool
     runner_bound: bool
+    runner_binding_state: str
     blocked_reasons: tuple[str, ...] = ()
 
 
@@ -59,11 +72,21 @@ def _production_root_in_allowlist(policy: ProductionExecutorPolicy) -> bool:
     return False
 
 
+def _resolve_runner_binding_state(
+    binding_state: CooDispatchRunnerBindingState | None,
+) -> tuple[CooDispatchRunnerBindingState | None, str | None]:
+    if binding_state is not None:
+        return binding_state, None
+    try:
+        return load_dispatch_runner_binding_state(), None
+    except DispatchRunnerBindingStateError:
+        return None, REASON_RUNNER_BINDING_STATE_INVALID
+
+
 def evaluate_dispatch_enablement(
     merged_config: Mapping[str, Any] | None = None,
     *,
-    runner_bound: bool | None = None,
-    runner_bound_probe: Callable[[], bool] | None = None,
+    binding_state: CooDispatchRunnerBindingState | None = None,
 ) -> CooDispatchEnablementSummary:
     """Assess enablement readiness without binding a runner or mutating config."""
     blocked: list[str] = []
@@ -82,13 +105,21 @@ def evaluate_dispatch_enablement(
         elif _production_root_in_allowlist(policy):
             blocked.append(REASON_PRODUCTION_ROOT_IN_ALLOWLIST)
 
-    if runner_bound is None:
-        resolved_runner_bound = bool(runner_bound_probe()) if runner_bound_probe else False
+    binding, binding_error = _resolve_runner_binding_state(binding_state)
+    if binding_error is not None:
+        blocked.append(binding_error)
+        rendered_binding_state = RUNNER_BINDING_STATE_INVALID
+        resolved_runner_bound = False
+    elif binding is not None:
+        rendered_binding_state = binding.state
+        resolved_runner_bound = runner_binding_state_is_bound(binding)
+        if binding.state == RUNNER_BINDING_STATE_BOUND:
+            blocked.append(REASON_RUNNER_ALREADY_BOUND)
+        elif binding.state == RUNNER_BINDING_STATE_STAGED:
+            blocked.append(REASON_RUNNER_BINDING_STAGED)
     else:
-        resolved_runner_bound = bool(runner_bound)
-
-    if resolved_runner_bound:
-        blocked.append(REASON_RUNNER_ALREADY_BOUND)
+        rendered_binding_state = RUNNER_BINDING_STATE_INVALID
+        resolved_runner_bound = False
 
     if not _readiness_preflight_system_available():
         blocked.append(REASON_READINESS_PREFLIGHT_UNAVAILABLE)
@@ -96,6 +127,7 @@ def evaluate_dispatch_enablement(
     return CooDispatchEnablementSummary(
         enablement_ready=not blocked,
         runner_bound=resolved_runner_bound,
+        runner_binding_state=rendered_binding_state,
         blocked_reasons=tuple(blocked),
     )
 
@@ -105,6 +137,7 @@ def format_dispatch_enablement_summary(summary: CooDispatchEnablementSummary) ->
     lines = [
         f"enablement_ready: {str(summary.enablement_ready).lower()}",
         f"runner_bound: {str(summary.runner_bound).lower()}",
+        f"runner_binding_state: {summary.runner_binding_state}",
     ]
     if summary.blocked_reasons:
         lines.append(f"blocked_reasons: {','.join(summary.blocked_reasons)}")
