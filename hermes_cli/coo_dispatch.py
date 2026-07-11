@@ -490,19 +490,42 @@ def run_coo_dispatch_from_args(
     args: argparse.Namespace,
     *,
     subprocess_runner=None,
+    injected_runner=None,
+    use_runner_provider: bool = False,
+    merged_config=None,
+    binding_state=None,
 ) -> int:
     """Execute dispatch run from parsed CLI args (runner injectable for tests)."""
     from agent.coo.dispatch_cli_run import execute_coo_dispatch_run
+    from agent.coo.dispatch_cli_runner_injection import (
+        resolve_dispatch_run_subprocess_runner,
+    )
+
+    dry_run = bool(args.dry_run)
+    resolved_config = merged_config
+    if use_runner_provider and resolved_config is None and not dry_run:
+        from hermes_cli.config import load_config
+
+        resolved_config = load_config()
 
     try:
+        resolved_runner = resolve_dispatch_run_subprocess_runner(
+            subprocess_runner=subprocess_runner,
+            injected_runner=injected_runner,
+            use_runner_provider=use_runner_provider,
+            dry_run=dry_run,
+            merged_config=resolved_config,
+            binding_state=binding_state,
+        )
         result = execute_coo_dispatch_run(
             ticket_id=args.ticket_id,
             confirmation_id=args.confirmation_id,
             unlock_token_id=args.unlock_token_id,
             requester_id=args.requester_id,
             pipeline_root=args.pipeline_root,
-            dry_run=bool(args.dry_run),
-            subprocess_runner=subprocess_runner,
+            dry_run=dry_run,
+            subprocess_runner=resolved_runner,
+            merged_config=resolved_config if use_runner_provider else merged_config,
         )
     except (ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
