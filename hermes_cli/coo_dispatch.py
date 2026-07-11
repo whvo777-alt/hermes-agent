@@ -266,6 +266,45 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     consume_recovery_parser.set_defaults(handler=_cmd_consume_recovery)
 
+    consume_repair_parser = consume_subparsers.add_parser(
+        "repair",
+        help="Read-only consume repair commands",
+    )
+    consume_repair_subparsers = consume_repair_parser.add_subparsers(
+        dest="coo_dispatch_consume_repair_command",
+        required=True,
+    )
+    consume_repair_dry_run_parser = consume_repair_subparsers.add_parser(
+        "dry-run",
+        help="Evaluate repair eligibility without mutating persisted state",
+    )
+    consume_repair_dry_run_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id (bundle file key)",
+    )
+    consume_repair_dry_run_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    consume_repair_dry_run_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Operator identity id for dry-run eligibility evaluation",
+    )
+    consume_repair_dry_run_parser.add_argument(
+        "--operator-name",
+        required=True,
+        help="Operator display name for dry-run eligibility evaluation",
+    )
+    consume_repair_dry_run_parser.add_argument(
+        "--reason",
+        required=True,
+        help="Human-readable reason for evaluating repair eligibility",
+    )
+    consume_repair_dry_run_parser.set_defaults(handler=_cmd_consume_repair_dry_run)
+
     enablement_parser = subparsers.add_parser(
         "enablement",
         help="Read-only production runner enablement checks",
@@ -537,6 +576,28 @@ def _cmd_consume_recovery(args: argparse.Namespace) -> int:
 
     print(format_dispatch_consume_recovery_assessment(assessment))
     return 0
+
+
+def _cmd_consume_repair_dry_run(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_consume_repair import (
+        format_dispatch_consume_repair_eligibility,
+        run_dispatch_consume_repair_dry_run,
+    )
+
+    try:
+        eligibility, exit_code = run_dispatch_consume_repair_dry_run(
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+            operator_id=args.operator_id,
+            operator_name=args.operator_name,
+            reason=args.reason,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_consume_repair_eligibility(eligibility))
+    return exit_code
 
 
 def _cmd_enablement_check(args: argparse.Namespace) -> int:

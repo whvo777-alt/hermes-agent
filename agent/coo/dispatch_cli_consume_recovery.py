@@ -62,6 +62,7 @@ class CooDispatchConsumeRecoveryAssessment:
     correlation_valid: bool
     retry_allowed: bool
     recovery_risk: bool
+    evidence_success: bool = False
 
 
 def _recovery_required_for_state(consume_state: str, status_recovery_required: bool) -> bool:
@@ -229,6 +230,7 @@ def assess_dispatch_consume_recovery(
         correlation_valid=correlation_valid,
         retry_allowed=retry_allowed,
         recovery_risk=recovery_risk_flag,
+        evidence_success=evidence_success,
     )
 
 
