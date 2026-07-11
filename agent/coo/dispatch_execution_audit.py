@@ -53,10 +53,12 @@ class DispatchExecutionAudit:
     command: str
     pre_execution_checklist: Dict[str, Any]
     snapshot: Dict[str, Any] = field(default_factory=dict)
+    execution_attempt_id: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "audit_id": self.audit_id,
+            "execution_attempt_id": self.execution_attempt_id,
             "dispatch_run_id": self.dispatch_run_id,
             "dispatch_generation": self.dispatch_generation,
             "requested_by": self.requested_by,
@@ -92,6 +94,7 @@ def build_dispatch_execution_audit(
     operator_id: str = "",
     operator_name: str = "",
     confirmation_id: str = "",
+    execution_attempt_id: str = "",
 ) -> DispatchExecutionAudit:
     """Build an audit record from dispatch context snapshots."""
     command = f"{entrypoint} (run_date={run_date})"
@@ -121,6 +124,7 @@ def build_dispatch_execution_audit(
         command=command,
         pre_execution_checklist=dict(pre_execution_checklist),
         snapshot=snapshot,
+        execution_attempt_id=execution_attempt_id,
     )
 
 
@@ -144,6 +148,7 @@ def audit_from_dict(payload: Dict[str, Any]) -> DispatchExecutionAudit:
         command=str(payload["command"]),
         pre_execution_checklist=dict(payload.get("pre_execution_checklist") or {}),
         snapshot=dict(payload.get("snapshot") or {}),
+        execution_attempt_id=str(payload.get("execution_attempt_id") or ""),
     )
 
 

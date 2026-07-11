@@ -157,6 +157,7 @@ def _evidence_paths(
 def _write_evidence_files(
     *,
     evidence_run_id: str,
+    execution_attempt_id: str,
     argv: list[str],
     cwd: str,
     timeout_seconds: int,
@@ -176,6 +177,7 @@ def _write_evidence_files(
     stdout_path.write_text(stdout_text, encoding="utf-8")
     stderr_path.write_text(stderr_text, encoding="utf-8")
     meta = {
+        "execution_attempt_id": execution_attempt_id,
         "argv": list(argv),
         "cwd": cwd,
         "timeout_seconds": timeout_seconds,
@@ -231,6 +233,7 @@ def build_pipeline_dispatch_executor(
     pipeline_root: str,
     entrypoint: str,
     evidence_run_id: str = "",
+    execution_attempt_id: str = "",
     subprocess_runner: SubprocessRunner | None = None,
     node_path: str | None = None,
     evidence_dir: Path | None = None,
@@ -247,7 +250,8 @@ def build_pipeline_dispatch_executor(
         raise ValueError("max_runtime_seconds must be positive")
 
     node_executable = _resolve_node_executable(node_path)
-    resolved_evidence_run_id = evidence_run_id.strip() or str(uuid.uuid4())
+    resolved_execution_attempt_id = execution_attempt_id.strip() or str(uuid.uuid4())
+    resolved_evidence_run_id = evidence_run_id.strip() or resolved_execution_attempt_id
     timeout_seconds = policy.max_runtime_seconds
     env = _minimal_env()
 
@@ -290,6 +294,7 @@ def build_pipeline_dispatch_executor(
         finished_at = _utc_now_iso()
         _write_evidence_files(
             evidence_run_id=resolved_evidence_run_id,
+            execution_attempt_id=resolved_execution_attempt_id,
             argv=argv,
             cwd=resolved_root,
             timeout_seconds=timeout_seconds,

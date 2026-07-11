@@ -196,6 +196,36 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     audit_find_parser.set_defaults(handler=_cmd_audit_find)
 
+    evidence_parser = subparsers.add_parser(
+        "evidence",
+        help="Read-only dispatch execution evidence commands",
+    )
+    evidence_subparsers = evidence_parser.add_subparsers(
+        dest="coo_dispatch_evidence_command",
+        required=True,
+    )
+    evidence_show_parser = evidence_subparsers.add_parser(
+        "show",
+        help="Show a safe summary for an execution attempt",
+    )
+    evidence_show_parser.add_argument(
+        "--execution-attempt-id",
+        required=True,
+        help="Execution attempt id (evidence file key)",
+    )
+    evidence_show_parser.set_defaults(handler=_cmd_evidence_show)
+
+    evidence_find_parser = evidence_subparsers.add_parser(
+        "find",
+        help="Find execution attempts for an execution ticket id",
+    )
+    evidence_find_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id to match against audit evidence",
+    )
+    evidence_find_parser.set_defaults(handler=_cmd_evidence_find)
+
     enablement_parser = subparsers.add_parser(
         "enablement",
         help="Read-only production runner enablement checks",
@@ -399,6 +429,38 @@ def _cmd_audit_find(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_evidence_show(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_evidence import (
+        format_dispatch_evidence_summary,
+        summarize_dispatch_evidence_attempt,
+    )
+
+    try:
+        summary = summarize_dispatch_evidence_attempt(args.execution_attempt_id)
+    except (ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_evidence_summary(summary))
+    return 0
+
+
+def _cmd_evidence_find(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_evidence import (
+        find_dispatch_evidence_attempts_for_ticket,
+        format_dispatch_evidence_find,
+    )
+
+    try:
+        entries = find_dispatch_evidence_attempts_for_ticket(args.ticket_id)
+    except (ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_evidence_find(args.ticket_id, entries))
+    return 0
+
+
 def _cmd_enablement_check(args: argparse.Namespace) -> int:
     from agent.coo.dispatch_cli_enablement import (
         evaluate_dispatch_enablement,
@@ -568,6 +630,8 @@ def run_coo_dispatch_from_args(
     print(f"ticket_id: {result.ticket_id}")
     print(f"confirmation_id: {result.confirmation_id}")
     print(f"dispatch_request_id: {result.dispatch_request_id}")
+    if result.execution_attempt_id:
+        print(f"execution_attempt_id: {result.execution_attempt_id}")
     print(f"status: {result.status}")
     print(f"consumed: {result.consumed}")
     if result.preflight is not None:

@@ -161,6 +161,7 @@ def run_approved_dispatch(
     confirmation: Optional[ProductionExecutorConfirmation] = None,
     confirmation_store: Optional[ProductionExecutorConfirmationStore] = None,
     audit_dir: Optional[Path] = None,
+    execution_attempt_id: str = "",
 ) -> DispatchExecutionRun:
     """Run token-gated dispatch for an approved unlock token."""
     tickets = ticket_store or get_default_ticket_store()
@@ -300,6 +301,7 @@ def run_approved_dispatch(
             operator_id=confirmation.operator_id if confirmation else "",
             operator_name=confirmation.operator_name if confirmation else "",
             confirmation_id=confirmation.confirmation_id if confirmation else "",
+            execution_attempt_id=execution_attempt_id,
         )
         write_dispatch_execution_audit(audit, audit_dir)
 

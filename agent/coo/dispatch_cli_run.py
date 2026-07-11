@@ -8,6 +8,7 @@ caller explicitly injects subprocess_runner (tests only).
 from __future__ import annotations
 
 import dataclasses
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
@@ -80,6 +81,7 @@ class CooDispatchRunResult:
     dispatch_request_id: str
     status: str
     consumed: bool
+    execution_attempt_id: str = ""
     dry_run_only: bool = False
     preflight: Optional["CooDispatchPreflightSummary"] = None
 
@@ -384,6 +386,8 @@ def execute_coo_dispatch_run(
             preflight=preflight,
         )
 
+    execution_attempt_id = str(uuid.uuid4())
+
     if not preflight.all_passed:
         try:
             _resolve_run_executor_policy(
@@ -413,6 +417,8 @@ def execute_coo_dispatch_run(
         policy,
         pipeline_root=trusted_pipeline_root,
         entrypoint=_ALLOWED_FACTORY_ENTRYPOINT,
+        evidence_run_id=execution_attempt_id,
+        execution_attempt_id=execution_attempt_id,
         subprocess_runner=injected_runner,
         node_path=node_path or "/usr/bin/node",
         evidence_dir=resolved_evidence_dir,
@@ -437,6 +443,7 @@ def execute_coo_dispatch_run(
         confirmation=confirmation,
         confirmation_store=confirmation_store,
         audit_dir=resolved_audit_dir,
+        execution_attempt_id=execution_attempt_id,
     )
 
     if run.status is not DispatchExecutionRunStatus.COMPLETED:
@@ -446,6 +453,7 @@ def execute_coo_dispatch_run(
             dispatch_request_id=dispatch_request.dispatch_request_id,
             status=run.status.value,
             consumed=False,
+            execution_attempt_id=execution_attempt_id,
         )
 
     _persist_dispatch_consumption(
@@ -461,4 +469,5 @@ def execute_coo_dispatch_run(
         dispatch_request_id=dispatch_request.dispatch_request_id,
         status=run.status.value,
         consumed=True,
+        execution_attempt_id=execution_attempt_id,
     )
