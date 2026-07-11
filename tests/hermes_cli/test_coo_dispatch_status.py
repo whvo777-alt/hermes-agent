@@ -435,7 +435,7 @@ class TestDispatchPersistenceStatus(unittest.TestCase):
                 confirmation_dir=self.confirmation_dir,
                 merged_config=enabled_config,
             )
-        self.assertIn("consumed", str(exc.exception).lower())
+        self.assertIn("partial", str(exc.exception).lower())
 
     def test_output_excludes_secrets_and_snapshot(self) -> None:
         ticket, token, _dispatch_request, confirmation = _seed_bundle_and_confirmation(

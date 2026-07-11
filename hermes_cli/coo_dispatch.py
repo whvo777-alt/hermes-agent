@@ -226,6 +226,30 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     evidence_find_parser.set_defaults(handler=_cmd_evidence_find)
 
+    consume_parser = subparsers.add_parser(
+        "consume",
+        help="Read-only dispatch consume transaction commands",
+    )
+    consume_subparsers = consume_parser.add_subparsers(
+        dest="coo_dispatch_consume_command",
+        required=True,
+    )
+    consume_status_parser = consume_subparsers.add_parser(
+        "status",
+        help="Show safe consume status for bundle + confirmation pair",
+    )
+    consume_status_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id (bundle file key)",
+    )
+    consume_status_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    consume_status_parser.set_defaults(handler=_cmd_consume_status)
+
     enablement_parser = subparsers.add_parser(
         "enablement",
         help="Read-only production runner enablement checks",
@@ -458,6 +482,25 @@ def _cmd_evidence_find(args: argparse.Namespace) -> int:
         return 1
 
     print(format_dispatch_evidence_find(args.ticket_id, entries))
+    return 0
+
+
+def _cmd_consume_status(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_consume_status import (
+        format_dispatch_consume_status_summary,
+        summarize_dispatch_consume_status,
+    )
+
+    try:
+        summary = summarize_dispatch_consume_status(
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_consume_status_summary(summary))
     return 0
 
 

@@ -13,10 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
 
-from agent.coo.dispatch_bundle_store import (
-    DispatchExecutionBundle,
-    mark_bundle_consumed,
-)
+from agent.coo.dispatch_bundle_store import DispatchExecutionBundle
 from agent.coo.execution_dispatch_runtime import (
     DispatchExecutionMode,
     DispatchExecutionRequest,
@@ -56,7 +53,6 @@ from agent.coo.execution_ticket import (
 from agent.coo.pipeline_adapter import PipelineAdapter, PipelineAdapterConfig
 from agent.coo.production_executor_confirmation import (
     ProductionExecutorConfirmationStore,
-    mark_confirmation_consumed_file,
 )
 from agent.coo.dispatch_cli_runner_injection import (
     SubprocessRunner,
@@ -272,21 +268,22 @@ def _persist_dispatch_consumption(
     *,
     ticket_id: str,
     confirmation_id: str,
+    execution_attempt_id: str,
     bundle_dir: Path | None,
     confirmation_dir: Path | None,
+    transaction_dir: Path | None = None,
 ) -> None:
-    """Mark confirmation and bundle consumed; fail-closed on partial persistence."""
-    mark_confirmation_consumed_file(
-        confirmation_id,
+    """Consume bundle + confirmation via transaction helper; fail-closed on partial."""
+    from agent.coo.dispatch_consume_transaction import execute_consume_transaction
+
+    execute_consume_transaction(
+        ticket_id=ticket_id,
+        confirmation_id=confirmation_id,
+        execution_attempt_id=execution_attempt_id,
+        bundle_dir=bundle_dir,
         confirmation_dir=confirmation_dir,
+        transaction_dir=transaction_dir,
     )
-    try:
-        mark_bundle_consumed(ticket_id, bundle_dir=bundle_dir)
-    except (ValueError, OSError, KeyError) as exc:
-        raise ValueError(
-            "Dispatch run completed but persisted bundle consume failed; "
-            "confirmation may already be consumed."
-        ) from exc
 
 
 def _resolve_run_executor_policy(
@@ -324,6 +321,7 @@ def execute_coo_dispatch_run(
     confirmation_dir: Path | None = None,
     audit_dir: Path | None = None,
     evidence_dir: Path | None = None,
+    consume_transaction_dir: Path | None = None,
     subprocess_runner: SubprocessRunner | None = None,
     merged_config: Mapping[str, Any] | None = None,
     node_path: str | None = None,
@@ -459,8 +457,10 @@ def execute_coo_dispatch_run(
     _persist_dispatch_consumption(
         ticket_id=ticket_id,
         confirmation_id=confirmation.confirmation_id,
+        execution_attempt_id=execution_attempt_id,
         bundle_dir=bundle_dir,
         confirmation_dir=confirmation_dir,
+        transaction_dir=consume_transaction_dir,
     )
 
     return CooDispatchRunResult(

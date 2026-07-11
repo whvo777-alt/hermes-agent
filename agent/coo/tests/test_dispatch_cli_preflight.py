@@ -191,11 +191,7 @@ class TestDispatchCliPreflight(unittest.TestCase):
                 side_effect=AssertionError("no runner"),
             ),
             patch(
-                "agent.coo.dispatch_cli_run.mark_bundle_consumed",
-                side_effect=AssertionError("no consume"),
-            ),
-            patch(
-                "agent.coo.dispatch_cli_run.mark_confirmation_consumed_file",
+                "agent.coo.dispatch_consume_transaction.execute_consume_transaction",
                 side_effect=AssertionError("no consume"),
             ),
         ):

@@ -107,6 +107,14 @@ class _CooDispatchRunFixture:
             "agent.coo.dispatch_runner_binding_state.get_hermes_home",
             return_value=self.hermes_home,
         )
+        self.transaction_home_patch = patch(
+            "agent.coo.dispatch_consume_transaction.get_hermes_home",
+            return_value=self.hermes_home,
+        )
+
+    @property
+    def transaction_dir(self) -> Path:
+        return self.hermes_home / "coo" / "consume-transactions"
 
     def write_binding_state(self, state: str) -> None:
         (self.hermes_home / "coo").mkdir(parents=True, exist_ok=True)
@@ -131,8 +139,10 @@ class _CooDispatchRunFixture:
         self.factory_home_patch.start()
         self.audit_home_patch.start()
         self.binding_home_patch.start()
+        self.transaction_home_patch.start()
 
     def stop(self) -> None:
+        self.transaction_home_patch.stop()
         self.binding_home_patch.stop()
         self.audit_home_patch.stop()
         self.factory_home_patch.stop()
@@ -192,6 +202,7 @@ class _CooDispatchRunTestBase(unittest.TestCase):
             pipeline_root=str(self.fixture.pipeline_root),
             bundle_dir=self.fixture.bundle_dir,
             confirmation_dir=self.fixture.confirmation_dir,
+            consume_transaction_dir=self.fixture.transaction_dir,
             merged_config=_enabled_executor_config(self.fixture.pipeline_root),
         )
         base.update(overrides)
@@ -417,7 +428,7 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
             patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
             patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
             patch(
-                "agent.coo.dispatch_cli_run.mark_bundle_consumed",
+                "agent.coo.dispatch_consume_transaction.mark_bundle_consumed",
                 side_effect=ValueError("bundle consume failed"),
             ),
         ):
@@ -432,7 +443,7 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
             confirmation_dir=self.fixture.confirmation_dir,
             reject_consumed=False,
         )
-        self.assertTrue(loaded_confirmation.consumed)
+        self.assertFalse(loaded_confirmation.consumed)
         bundle = read_bundle(
             ticket.ticket_id,
             bundle_dir=self.fixture.bundle_dir,
@@ -448,7 +459,54 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
                 execute_coo_dispatch_run(
                     **self._run_kwargs(subprocess_runner=counting_runner),
                 )
-        self.assertIn("consumed", str(replay_exc.exception).lower())
+        self.assertIn("prepared", str(replay_exc.exception).lower())
+        self.assertEqual(runner_calls["count"], 0)
+
+    def test_partial_confirmation_consume_failure_is_fail_closed(self) -> None:
+        ticket = self.seeded["ticket"]
+        confirmation = self.seeded["confirmation"]
+        runner_calls = {"count": 0}
+
+        def counting_runner(*args, **kwargs):
+            runner_calls["count"] += 1
+            return _mock_runner_success(*args, **kwargs)
+
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+            patch(
+                "agent.coo.dispatch_consume_transaction.mark_confirmation_consumed_file",
+                side_effect=ValueError("confirmation consume failed"),
+            ),
+        ):
+            with self.assertRaises(ValueError) as exc:
+                execute_coo_dispatch_run(
+                    **self._run_kwargs(subprocess_runner=counting_runner),
+                )
+        self.assertIn("confirmation consume failed", str(exc.exception))
+        self.assertEqual(runner_calls["count"], 1)
+        loaded_confirmation = read_confirmation(
+            confirmation.confirmation_id,
+            confirmation_dir=self.fixture.confirmation_dir,
+            reject_consumed=False,
+        )
+        self.assertFalse(loaded_confirmation.consumed)
+        bundle = read_bundle(
+            ticket.ticket_id,
+            bundle_dir=self.fixture.bundle_dir,
+            reject_consumed=False,
+        )
+        self.assertNotEqual(bundle.consumed_at, "")
+        runner_calls["count"] = 0
+        with (
+            patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")),
+            patch.object(subprocess, "Popen", side_effect=AssertionError("no subprocess")),
+        ):
+            with self.assertRaises(ValueError) as replay_exc:
+                execute_coo_dispatch_run(
+                    **self._run_kwargs(subprocess_runner=counting_runner),
+                )
+        self.assertIn("partial", str(replay_exc.exception).lower())
         self.assertEqual(runner_calls["count"], 0)
 
     def test_partial_bundle_consume_failure_cli_returns_error(self) -> None:
@@ -473,7 +531,7 @@ class TestCooDispatchRunHappyPath(_CooDispatchRunTestBase):
                 return_value=_enabled_executor_config(self.fixture.pipeline_root),
             ),
             patch(
-                "agent.coo.dispatch_cli_run.mark_bundle_consumed",
+                "agent.coo.dispatch_consume_transaction.mark_bundle_consumed",
                 side_effect=ValueError("bundle consume failed"),
             ),
         ):

@@ -17,6 +17,7 @@ from agent.coo.dispatch_cli_status import summarize_dispatch_persistence_status
 from agent.coo.dispatch_cli_validation_core import (
     STEP_BUNDLE_PERSISTENCE,
     STEP_CONFIRMATION_PERSISTENCE,
+    STEP_CONSUME_TRANSACTION,
     STEP_DISPATCH_ENABLEMENT,
     STEP_EXECUTOR_CONFIG,
     STEP_PIPELINE_ROOT_ATTESTATION,
@@ -215,7 +216,7 @@ class TestDispatchPreRunValidationCore(unittest.TestCase):
         mark_bundle_consumed(ticket.ticket_id, bundle_dir=self.fixture.bundle_dir)
         with self.assertRaises(DispatchPreRunValidationFailure) as exc:
             validate_dispatch_pre_run(**self.fixture.validation_kwargs(self.seeded))
-        self.assertEqual(exc.exception.step, STEP_BUNDLE_PERSISTENCE)
+        self.assertEqual(exc.exception.step, STEP_CONSUME_TRANSACTION)
         self.assertIsInstance(exc.exception.cause_exc, ValueError)
 
     def test_confirmation_failure(self) -> None:

@@ -21,6 +21,7 @@ from agent.coo.dispatch_bundle_store import (
 from agent.coo.dispatch_cli_readiness import (
     STEP_BUNDLE_PERSISTENCE,
     STEP_CONFIRMATION_PERSISTENCE,
+    STEP_CONSUME_TRANSACTION,
     STEP_DISPATCH_ENABLEMENT,
     STEP_EXECUTOR_CONFIG,
     STEP_PIPELINE_ROOT_TRUST,
@@ -339,7 +340,7 @@ class TestDispatchOperatorReadiness(unittest.TestCase):
         mark_bundle_consumed(ticket.ticket_id, bundle_dir=self.fixture.bundle_dir)
         summary = evaluate_dispatch_operator_readiness(**self._readiness_kwargs())
         self.assertFalse(summary.ready)
-        self.assertEqual(summary.failed_steps, (STEP_BUNDLE_PERSISTENCE,))
+        self.assertEqual(summary.failed_steps, (STEP_CONSUME_TRANSACTION,))
 
     def test_remint_pending_not_ready(self) -> None:
         ticket = self.seeded["ticket"]
@@ -386,7 +387,7 @@ class TestDispatchOperatorReadiness(unittest.TestCase):
         confirmation_path.write_text(json.dumps(payload), encoding="utf-8")
         summary = evaluate_dispatch_operator_readiness(**self._readiness_kwargs())
         self.assertFalse(summary.ready)
-        self.assertEqual(summary.failed_steps, (STEP_CONFIRMATION_PERSISTENCE,))
+        self.assertEqual(summary.failed_steps, (STEP_CONSUME_TRANSACTION,))
 
     def test_confirmation_bundle_mismatch_not_ready(self) -> None:
         ticket, confirmation = _seed_manual_bundle_and_confirmation(
@@ -648,7 +649,7 @@ class TestDispatchOperatorReadinessManualPersistence(unittest.TestCase):
             merged_config=_enabled_executor_config(self.pipeline_root),
         )
         self.assertFalse(summary.ready)
-        self.assertEqual(summary.failed_steps, (STEP_CONFIRMATION_PERSISTENCE,))
+        self.assertEqual(summary.failed_steps, (STEP_CONSUME_TRANSACTION,))
 
     def test_expired_confirmation_manual_seed_not_ready(self) -> None:
         ticket, confirmation = _seed_manual_bundle_and_confirmation(

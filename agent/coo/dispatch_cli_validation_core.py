@@ -42,6 +42,7 @@ STEP_DISPATCH_ENABLEMENT = "dispatch_enablement"
 STEP_BUNDLE_PERSISTENCE = "bundle_persistence"
 STEP_CONFIRMATION_PERSISTENCE = "confirmation_persistence"
 STEP_PIPELINE_ROOT_ATTESTATION = "pipeline_root_attestation"
+STEP_CONSUME_TRANSACTION = "consume_transaction"
 STEP_POLICY_PREFLIGHT = "policy_preflight"
 
 
@@ -101,6 +102,7 @@ def validate_dispatch_pre_run(
     pipeline_root: str,
     bundle_dir: Path | None = None,
     confirmation_dir: Path | None = None,
+    transaction_dir: Path | None = None,
     merged_config: Mapping[str, Any] | None = None,
 ) -> CooDispatchPreRunValidationResult:
     """Run ordered pre-run validation without mutating persisted dispatch state."""
@@ -140,11 +142,41 @@ def validate_dispatch_pre_run(
             config_valid=True,
         )
 
+    from agent.coo.dispatch_consume_transaction import assert_consume_replay_allowed
+
+    try:
+        assert_consume_replay_allowed(
+            ticket_id=normalized_ticket_id,
+            confirmation_id=normalized_confirmation_id,
+            bundle_dir=bundle_dir,
+            confirmation_dir=confirmation_dir,
+            transaction_dir=transaction_dir,
+        )
+    except KeyError:
+        pass
+    except ValueError as exc:
+        message = str(exc).lower()
+        if any(
+            marker in message
+            for marker in (
+                "already been consumed",
+                "partial state",
+                "prepared but not committed",
+                "manual recovery",
+                "blocks replay",
+            )
+        ):
+            raise_dispatch_pre_run_failure(
+                STEP_CONSUME_TRANSACTION,
+                exc,
+                config_valid=True,
+            )
+
     try:
         bundle = load_validated_dispatch_bundle_for_cli(
             ticket_id=normalized_ticket_id,
             bundle_dir=bundle_dir,
-            reject_consumed=True,
+            reject_consumed=False,
         )
         if bundle.ticket_id != normalized_ticket_id:
             raise ValueError("ticket_id mismatch")
@@ -161,7 +193,7 @@ def validate_dispatch_pre_run(
         confirmation = read_confirmation(
             normalized_confirmation_id,
             confirmation_dir=confirmation_dir,
-            reject_consumed=True,
+            reject_consumed=False,
         )
         validate_confirmation_for_cli_execution(
             confirmation,
