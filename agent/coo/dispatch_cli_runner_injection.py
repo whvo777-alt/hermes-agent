@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from agent.coo.bounded_subprocess_runner import create_bounded_subprocess_runner
 from agent.coo.dispatch_runner_provider import resolve_bounded_subprocess_runner
 from agent.coo.production_executor_factory import SubprocessRunner
 
@@ -20,6 +21,7 @@ __all__ = (
     "DISPATCH_RUNNER_NOT_CONFIGURED",
     "REASON_AMBIGUOUS_RUNNER_INJECTION",
     "SubprocessRunner",
+    "create_bounded_subprocess_runner",
     "require_dispatch_subprocess_runner",
     "resolve_bounded_subprocess_runner",
     "resolve_dispatch_run_subprocess_runner",
