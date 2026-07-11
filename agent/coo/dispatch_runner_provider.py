@@ -11,6 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from agent.coo.bounded_subprocess_runner import (
+    RUNNER_PROFILE_DISPATCH,
+    RUNNER_PROFILE_RESTRICTED,
+)
 from agent.coo.production_executor_factory import SubprocessRunner
 
 RUNNER_PROVIDER_MODE_SCAFFOLD = "scaffold"
@@ -232,6 +236,8 @@ def resolve_bounded_subprocess_runner(
     injected_runner: SubprocessRunner | None = None,
     binding_state: Any | None = None,
     use_real_bounded_runner: bool = False,
+    harness_profile: str = RUNNER_PROFILE_RESTRICTED,
+    node_executable: str | None = None,
     harness_max_output_bytes: int = DEFAULT_REAL_HARNESS_MAX_OUTPUT_BYTES,
     harness_max_timeout_seconds: int = DEFAULT_REAL_HARNESS_MAX_TIMEOUT_SECONDS,
 ) -> SubprocessRunner:
@@ -259,11 +265,22 @@ def resolve_bounded_subprocess_runner(
     if harness_max_output_bytes <= 0 or harness_max_timeout_seconds <= 0:
         _raise_resolution_failure(REASON_RUNNER_PROVIDER_INVALID)
 
+    if harness_profile not in (RUNNER_PROFILE_RESTRICTED, RUNNER_PROFILE_DISPATCH):
+        _raise_resolution_failure(REASON_RUNNER_PROVIDER_INVALID)
+
+    if harness_profile == RUNNER_PROFILE_DISPATCH:
+        if not node_executable:
+            _raise_resolution_failure(REASON_RUNNER_PROVIDER_INVALID)
+    elif node_executable is not None:
+        _raise_resolution_failure(REASON_RUNNER_PROVIDER_INVALID)
+
     from agent.coo.bounded_subprocess_runner import create_bounded_subprocess_runner
 
     allowlist = _load_validated_executor_allowlist(merged_config)
     return create_bounded_subprocess_runner(
         allowlist,
+        profile=harness_profile,
+        node_executable=node_executable,
         max_output_bytes=harness_max_output_bytes,
         max_timeout_seconds=harness_max_timeout_seconds,
     )

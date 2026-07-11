@@ -79,6 +79,9 @@ class TestProviderRealHarnessOptIn(unittest.TestCase):
                 use_real_bounded_runner=True,
             )
         create_mock.assert_called_once()
+        _, kwargs = create_mock.call_args
+        self.assertEqual(kwargs.get("profile"), "restricted")
+        self.assertIsNone(kwargs.get("node_executable"))
         self.assertTrue(callable(runner))
 
     def test_real_harness_python_fixture_success(self) -> None:
@@ -265,6 +268,9 @@ class TestProviderRealHarnessCliWiring(_CooDispatchRunTestBase):
                 ),
             )
         create_mock.assert_called_once()
+        _, kwargs = create_mock.call_args
+        self.assertEqual(kwargs.get("profile"), "restricted")
+        self.assertIsNone(kwargs.get("node_executable"))
         self.assertTrue(callable(runner))
 
 
