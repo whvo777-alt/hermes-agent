@@ -57,8 +57,11 @@ from agent.coo.production_executor_confirmation import (
     ProductionExecutorConfirmationStore,
     mark_confirmation_consumed_file,
 )
-from agent.coo.production_executor_factory import (
+from agent.coo.dispatch_cli_runner_injection import (
     SubprocessRunner,
+    require_dispatch_subprocess_runner,
+)
+from agent.coo.production_executor_factory import (
     _ALLOWED_FACTORY_ENTRYPOINT,
     build_pipeline_dispatch_executor,
 )
@@ -334,8 +337,10 @@ def execute_coo_dispatch_run(
     if not pipeline_root.strip():
         raise ValueError("pipeline_root is required")
 
-    if not dry_run and subprocess_runner is None:
-        raise ValueError("production runner is not configured")
+    injected_runner = require_dispatch_subprocess_runner(
+        subprocess_runner,
+        dry_run=dry_run,
+    )
 
     from agent.coo.dispatch_cli_validation_core import (
         DispatchPreRunValidationFailure,
@@ -407,7 +412,7 @@ def execute_coo_dispatch_run(
         policy,
         pipeline_root=trusted_pipeline_root,
         entrypoint=_ALLOWED_FACTORY_ENTRYPOINT,
-        subprocess_runner=subprocess_runner,
+        subprocess_runner=injected_runner,
         node_path="/usr/bin/node",
         evidence_dir=resolved_evidence_dir,
     )
