@@ -281,6 +281,28 @@ class TestDispatchEnablementGate(unittest.TestCase):
         self.assertIn("runner_provider_mode: scaffold", output)
         self.assertNotIn(isolated_root, output)
 
+    def test_bounded_provider_configured_but_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            isolated_root = str(Path(tmp) / "fake-pipeline")
+            Path(isolated_root).mkdir()
+            summary = evaluate_dispatch_enablement(
+                {
+                    "coo": {
+                        "dispatch": {
+                            "executor": {
+                                "enabled": True,
+                                "allowed_pipeline_roots": [isolated_root],
+                            },
+                            "runner_provider": {"mode": "bounded"},
+                        }
+                    }
+                }
+            )
+        self.assertTrue(summary.enablement_ready)
+        self.assertTrue(summary.runner_provider_configured)
+        self.assertFalse(summary.runner_provider_available)
+        self.assertEqual(summary.runner_provider_mode, "bounded")
+
     def test_unknown_provider_mode_blocks_enablement(self) -> None:
         summary = evaluate_dispatch_enablement(
             {"coo": {"dispatch": {"runner_provider": {"mode": "live"}}}}

@@ -1,24 +1,49 @@
-"""Bounded subprocess runner provider — Phase 12E-1 scaffold.
+"""Bounded subprocess runner provider — Phase 12E-1 / 12E-2.
 
-Defines a read-only provider boundary for future bounded subprocess runner
-injection. The scaffold never returns a runner callable and never invokes
-subprocess, auto-discovery, or environment-variable activation.
+Defines a read-only provider boundary and opt-in resolution for bounded subprocess
+runner injection. Never invokes subprocess, auto-discovery, or environment-variable
+activation. Callable return requires explicit ``injected_runner`` from the caller.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from agent.coo.production_executor_factory import SubprocessRunner
 
 RUNNER_PROVIDER_MODE_SCAFFOLD = "scaffold"
+RUNNER_PROVIDER_MODE_BOUNDED = "bounded"
 RUNNER_PROVIDER_MODE_UNCONFIGURED = ""
 
 REASON_RUNNER_PROVIDER_INVALID = "runner_provider_invalid"
+REASON_RUNNER_PROVIDER_MODE_NOT_BOUNDED = "runner_provider_mode_not_bounded"
+REASON_RUNNER_PROVIDER_INJECTED_RUNNER_REQUIRED = "runner_provider_injected_runner_required"
+REASON_RUNNER_PROVIDER_INJECTED_RUNNER_INVALID = "runner_provider_injected_runner_invalid"
+REASON_RUNNER_BINDING_UNBOUND = "runner_binding_unbound"
+REASON_RUNNER_BINDING_STAGED = "runner_binding_staged"
+REASON_RUNNER_BINDING_STATE_INVALID = "runner_binding_state_invalid"
 
 _KNOWN_RUNNER_PROVIDER_CONFIG_KEYS = frozenset({"mode"})
-_KNOWN_RUNNER_PROVIDER_MODES = frozenset({RUNNER_PROVIDER_MODE_SCAFFOLD})
+_KNOWN_RUNNER_PROVIDER_MODES = frozenset(
+    {RUNNER_PROVIDER_MODE_SCAFFOLD, RUNNER_PROVIDER_MODE_BOUNDED}
+)
+
+
+class DispatchRunnerProviderResolutionError(ValueError):
+    """Raised when bounded runner provider resolution is rejected."""
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        blocked_reasons: tuple[str, ...] = (),
+    ) -> None:
+        self.reason = reason
+        self.blocked_reasons = blocked_reasons or (reason,)
+        super().__init__(
+            format_dispatch_runner_provider_resolution_failure(self.blocked_reasons)
+        )
 
 
 @dataclass(frozen=True)
@@ -59,7 +84,7 @@ def _runner_provider_config_section(
 def assess_dispatch_runner_provider(
     merged_config: Mapping[str, Any] | None = None,
 ) -> CooDispatchRunnerProviderSummary:
-    """Assess runner provider scaffold state without returning a callable."""
+    """Assess runner provider state without returning a callable."""
     try:
         section = _runner_provider_config_section(merged_config)
     except ValueError:
@@ -112,11 +137,11 @@ def assess_dispatch_runner_provider(
             provider_valid=False,
         )
 
-    if mode == RUNNER_PROVIDER_MODE_SCAFFOLD:
+    if mode in (RUNNER_PROVIDER_MODE_SCAFFOLD, RUNNER_PROVIDER_MODE_BOUNDED):
         return CooDispatchRunnerProviderSummary(
             runner_provider_configured=True,
             runner_provider_available=False,
-            runner_provider_mode=RUNNER_PROVIDER_MODE_SCAFFOLD,
+            runner_provider_mode=mode,
             provider_valid=True,
         )
 
@@ -128,19 +153,97 @@ def assess_dispatch_runner_provider(
     )
 
 
+def _raise_resolution_failure(
+    reason: str,
+    *,
+    blocked_reasons: tuple[str, ...] = (),
+) -> None:
+    raise DispatchRunnerProviderResolutionError(
+        reason,
+        blocked_reasons=blocked_reasons or (reason,),
+    )
+
+
+def _resolve_binding_state(
+    binding_state: Any | None,
+) -> Any:
+    from agent.coo.dispatch_runner_binding_state import (
+        RUNNER_BINDING_STATE_BOUND,
+        RUNNER_BINDING_STATE_STAGED,
+        DispatchRunnerBindingStateError,
+        load_dispatch_runner_binding_state,
+    )
+
+    try:
+        binding = (
+            binding_state
+            if binding_state is not None
+            else load_dispatch_runner_binding_state()
+        )
+    except DispatchRunnerBindingStateError as exc:
+        raise DispatchRunnerProviderResolutionError(
+            REASON_RUNNER_BINDING_STATE_INVALID,
+        ) from exc
+
+    if binding.state == RUNNER_BINDING_STATE_BOUND:
+        return binding
+    if binding.state == RUNNER_BINDING_STATE_STAGED:
+        _raise_resolution_failure(REASON_RUNNER_BINDING_STAGED)
+    _raise_resolution_failure(REASON_RUNNER_BINDING_UNBOUND)
+    return binding
+
+
+def _assert_runtime_enablement_ready(
+    merged_config: Mapping[str, Any] | None,
+) -> None:
+    from agent.coo.dispatch_cli_enablement import evaluate_dispatch_runtime_enablement
+
+    runtime_enablement = evaluate_dispatch_runtime_enablement(merged_config)
+    if not runtime_enablement.enablement_ready:
+        _raise_resolution_failure(
+            runtime_enablement.blocked_reasons[0]
+            if runtime_enablement.blocked_reasons
+            else REASON_RUNNER_PROVIDER_INVALID,
+            blocked_reasons=runtime_enablement.blocked_reasons,
+        )
+
+
 def resolve_bounded_subprocess_runner(
     merged_config: Mapping[str, Any] | None = None,
-) -> SubprocessRunner | None:
-    """Resolve a bounded subprocess runner from provider config.
+    *,
+    injected_runner: SubprocessRunner | None = None,
+    binding_state: Any | None = None,
+) -> SubprocessRunner:
+    """Resolve a bounded subprocess runner via explicit opt-in injection.
 
-    Phase 12E-1 scaffold: always returns ``None`` even when provider config,
-    binding, and executor policy would otherwise be ready. Real subprocess
-    wiring is deferred to a later phase.
+    Returns the same ``injected_runner`` object when all gates pass. Never
+    constructs or executes a real subprocess runner.
     """
     assessment = assess_dispatch_runner_provider(merged_config)
     if not assessment.provider_valid:
-        return None
-    return None
+        _raise_resolution_failure(REASON_RUNNER_PROVIDER_INVALID)
+
+    if assessment.runner_provider_mode != RUNNER_PROVIDER_MODE_BOUNDED:
+        _raise_resolution_failure(REASON_RUNNER_PROVIDER_MODE_NOT_BOUNDED)
+
+    if injected_runner is None:
+        _raise_resolution_failure(REASON_RUNNER_PROVIDER_INJECTED_RUNNER_REQUIRED)
+
+    if not callable(injected_runner):
+        _raise_resolution_failure(REASON_RUNNER_PROVIDER_INJECTED_RUNNER_INVALID)
+
+    _resolve_binding_state(binding_state)
+    _assert_runtime_enablement_ready(merged_config)
+    return injected_runner
+
+
+def format_dispatch_runner_provider_resolution_failure(
+    blocked_reasons: tuple[str, ...],
+) -> str:
+    """Render a safe provider resolution failure without paths or secrets."""
+    if not blocked_reasons:
+        return "runner provider resolution failed"
+    return f"runner provider resolution failed: {','.join(blocked_reasons)}"
 
 
 def format_dispatch_runner_provider_summary(
