@@ -235,10 +235,11 @@ class TestBoundedRunnerNotAutoWired(unittest.TestCase):
                 side_effect=AssertionError("must not auto-create real runner"),
             ),
         ):
-            with self.assertRaises(Exception):
+            with self.assertRaises(DispatchRunnerProviderResolutionError):
                 resolve_dispatch_run_subprocess_runner(
                     injected_runner=None,
                     use_runner_provider=True,
+                    use_real_bounded_runner=False,
                     merged_config={
                         "coo": {
                             "dispatch": {

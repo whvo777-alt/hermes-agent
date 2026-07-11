@@ -492,12 +492,17 @@ def run_coo_dispatch_from_args(
     subprocess_runner=None,
     injected_runner=None,
     use_runner_provider: bool = False,
+    use_real_bounded_runner: bool = False,
     merged_config=None,
     binding_state=None,
+    harness_max_output_bytes=None,
+    harness_max_timeout_seconds=None,
 ) -> int:
     """Execute dispatch run from parsed CLI args (runner injectable for tests)."""
     from agent.coo.dispatch_cli_run import execute_coo_dispatch_run
     from agent.coo.dispatch_cli_runner_injection import (
+        DEFAULT_REAL_HARNESS_MAX_OUTPUT_BYTES,
+        DEFAULT_REAL_HARNESS_MAX_TIMEOUT_SECONDS,
         resolve_dispatch_run_subprocess_runner,
     )
 
@@ -508,14 +513,29 @@ def run_coo_dispatch_from_args(
 
         resolved_config = load_config()
 
+    harness_kwargs = {}
+    if harness_max_output_bytes is not None:
+        harness_kwargs["harness_max_output_bytes"] = harness_max_output_bytes
+    if harness_max_timeout_seconds is not None:
+        harness_kwargs["harness_max_timeout_seconds"] = harness_max_timeout_seconds
+
     try:
         resolved_runner = resolve_dispatch_run_subprocess_runner(
             subprocess_runner=subprocess_runner,
             injected_runner=injected_runner,
             use_runner_provider=use_runner_provider,
+            use_real_bounded_runner=use_real_bounded_runner,
             dry_run=dry_run,
             merged_config=resolved_config,
             binding_state=binding_state,
+            harness_max_output_bytes=harness_kwargs.get(
+                "harness_max_output_bytes",
+                DEFAULT_REAL_HARNESS_MAX_OUTPUT_BYTES,
+            ),
+            harness_max_timeout_seconds=harness_kwargs.get(
+                "harness_max_timeout_seconds",
+                DEFAULT_REAL_HARNESS_MAX_TIMEOUT_SECONDS,
+            ),
         )
         result = execute_coo_dispatch_run(
             ticket_id=args.ticket_id,

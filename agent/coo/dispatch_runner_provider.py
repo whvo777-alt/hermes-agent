@@ -1,14 +1,15 @@
-"""Bounded subprocess runner provider — Phase 12E-1 / 12E-2.
+"""Bounded subprocess runner provider — Phase 12E-1 / 12E-2 / 12E-5.
 
 Defines a read-only provider boundary and opt-in resolution for bounded subprocess
-runner injection. Never invokes subprocess, auto-discovery, or environment-variable
-activation. Callable return requires explicit ``injected_runner`` from the caller.
+runner injection. Callable return requires explicit ``injected_runner`` (mock path)
+or ``use_real_bounded_runner=True`` (real harness path). Never auto-wires into the
+default CLI run path.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 from agent.coo.production_executor_factory import SubprocessRunner
 
@@ -20,9 +21,13 @@ REASON_RUNNER_PROVIDER_INVALID = "runner_provider_invalid"
 REASON_RUNNER_PROVIDER_MODE_NOT_BOUNDED = "runner_provider_mode_not_bounded"
 REASON_RUNNER_PROVIDER_INJECTED_RUNNER_REQUIRED = "runner_provider_injected_runner_required"
 REASON_RUNNER_PROVIDER_INJECTED_RUNNER_INVALID = "runner_provider_injected_runner_invalid"
+REASON_RUNNER_PROVIDER_REAL_HARNESS_AMBIGUOUS = "runner_provider_real_harness_ambiguous"
 REASON_RUNNER_BINDING_UNBOUND = "runner_binding_unbound"
 REASON_RUNNER_BINDING_STAGED = "runner_binding_staged"
 REASON_RUNNER_BINDING_STATE_INVALID = "runner_binding_state_invalid"
+
+DEFAULT_REAL_HARNESS_MAX_OUTPUT_BYTES = 64_000
+DEFAULT_REAL_HARNESS_MAX_TIMEOUT_SECONDS = 300
 
 _KNOWN_RUNNER_PROVIDER_CONFIG_KEYS = frozenset({"mode"})
 _KNOWN_RUNNER_PROVIDER_MODES = frozenset(
@@ -208,17 +213,29 @@ def _assert_runtime_enablement_ready(
         )
 
 
+def _load_validated_executor_allowlist(
+    merged_config: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    from agent.coo.dispatch_executor_config import load_dispatch_executor_policy
+
+    policy = load_dispatch_executor_policy(merged_config)
+    if not policy.enabled:
+        _raise_resolution_failure("executor_disabled")
+    if not policy.allowed_pipeline_roots:
+        _raise_resolution_failure("executor_allowlist_empty")
+    return tuple(policy.allowed_pipeline_roots)
+
+
 def resolve_bounded_subprocess_runner(
     merged_config: Mapping[str, Any] | None = None,
     *,
     injected_runner: SubprocessRunner | None = None,
     binding_state: Any | None = None,
+    use_real_bounded_runner: bool = False,
+    harness_max_output_bytes: int = DEFAULT_REAL_HARNESS_MAX_OUTPUT_BYTES,
+    harness_max_timeout_seconds: int = DEFAULT_REAL_HARNESS_MAX_TIMEOUT_SECONDS,
 ) -> SubprocessRunner:
-    """Resolve a bounded subprocess runner via explicit opt-in injection.
-
-    Returns the same ``injected_runner`` object when all gates pass. Never
-    constructs or executes a real subprocess runner.
-    """
+    """Resolve a bounded subprocess runner via explicit mock or real-harness opt-in."""
     assessment = assess_dispatch_runner_provider(merged_config)
     if not assessment.provider_valid:
         _raise_resolution_failure(REASON_RUNNER_PROVIDER_INVALID)
@@ -226,15 +243,30 @@ def resolve_bounded_subprocess_runner(
     if assessment.runner_provider_mode != RUNNER_PROVIDER_MODE_BOUNDED:
         _raise_resolution_failure(REASON_RUNNER_PROVIDER_MODE_NOT_BOUNDED)
 
-    if injected_runner is None:
-        _raise_resolution_failure(REASON_RUNNER_PROVIDER_INJECTED_RUNNER_REQUIRED)
-
-    if not callable(injected_runner):
-        _raise_resolution_failure(REASON_RUNNER_PROVIDER_INJECTED_RUNNER_INVALID)
-
     _resolve_binding_state(binding_state)
     _assert_runtime_enablement_ready(merged_config)
-    return injected_runner
+
+    if injected_runner is not None:
+        if use_real_bounded_runner:
+            _raise_resolution_failure(REASON_RUNNER_PROVIDER_REAL_HARNESS_AMBIGUOUS)
+        if not callable(injected_runner):
+            _raise_resolution_failure(REASON_RUNNER_PROVIDER_INJECTED_RUNNER_INVALID)
+        return injected_runner
+
+    if not use_real_bounded_runner:
+        _raise_resolution_failure(REASON_RUNNER_PROVIDER_INJECTED_RUNNER_REQUIRED)
+
+    if harness_max_output_bytes <= 0 or harness_max_timeout_seconds <= 0:
+        _raise_resolution_failure(REASON_RUNNER_PROVIDER_INVALID)
+
+    from agent.coo.bounded_subprocess_runner import create_bounded_subprocess_runner
+
+    allowlist = _load_validated_executor_allowlist(merged_config)
+    return create_bounded_subprocess_runner(
+        allowlist,
+        max_output_bytes=harness_max_output_bytes,
+        max_timeout_seconds=harness_max_timeout_seconds,
+    )
 
 
 def format_dispatch_runner_provider_resolution_failure(
