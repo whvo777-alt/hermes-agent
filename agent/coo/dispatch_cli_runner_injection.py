@@ -1,15 +1,26 @@
-"""Dispatch CLI runner injection boundary — Phase 12D.
+"""Dispatch CLI runner injection boundary — Phase 12D / 12E-1.
 
 Production dispatch never invokes subprocess by default. Non-dry execution
 requires an explicitly injected ``subprocess_runner`` callable (tests only).
 The Hermes CLI default path does not inject a runner and remains fail-closed.
+
+Bounded provider resolution (``resolve_bounded_subprocess_runner``) is scaffold
+only in Phase 12E-1 and is not wired into the default CLI run path.
 """
 
 from __future__ import annotations
 
+from agent.coo.dispatch_runner_provider import resolve_bounded_subprocess_runner
 from agent.coo.production_executor_factory import SubprocessRunner
 
 DISPATCH_RUNNER_NOT_CONFIGURED = "production runner is not configured"
+
+__all__ = (
+    "DISPATCH_RUNNER_NOT_CONFIGURED",
+    "SubprocessRunner",
+    "require_dispatch_subprocess_runner",
+    "resolve_bounded_subprocess_runner",
+)
 
 
 def require_dispatch_subprocess_runner(

@@ -20,6 +20,10 @@ from agent.coo.dispatch_runner_binding_state import (
     load_dispatch_runner_binding_state,
     runner_binding_state_is_bound,
 )
+from agent.coo.dispatch_runner_provider import (
+    REASON_RUNNER_PROVIDER_INVALID,
+    assess_dispatch_runner_provider,
+)
 from agent.coo.production_executor_policy import ProductionExecutorPolicy
 
 REASON_EXECUTOR_CONFIG_INVALID = "executor_config_invalid"
@@ -42,6 +46,9 @@ class CooDispatchEnablementSummary:
     enablement_ready: bool
     runner_bound: bool
     runner_binding_state: str
+    runner_provider_configured: bool = False
+    runner_provider_available: bool = False
+    runner_provider_mode: str = ""
     blocked_reasons: tuple[str, ...] = ()
 
 
@@ -82,6 +89,16 @@ def _resolve_runner_binding_state(
         return load_dispatch_runner_binding_state(), None
     except DispatchRunnerBindingStateError:
         return None, REASON_RUNNER_BINDING_STATE_INVALID
+
+
+def _merge_provider_into_enablement(
+    blocked: list[str],
+    merged_config: Mapping[str, Any] | None,
+) -> CooDispatchRunnerProviderSummary:
+    provider = assess_dispatch_runner_provider(merged_config)
+    if not provider.provider_valid:
+        blocked.append(REASON_RUNNER_PROVIDER_INVALID)
+    return provider
 
 
 def evaluate_dispatch_enablement(
@@ -125,10 +142,15 @@ def evaluate_dispatch_enablement(
     if not _readiness_preflight_system_available():
         blocked.append(REASON_READINESS_PREFLIGHT_UNAVAILABLE)
 
+    provider = _merge_provider_into_enablement(blocked, merged_config)
+
     return CooDispatchEnablementSummary(
         enablement_ready=not blocked,
         runner_bound=resolved_runner_bound,
         runner_binding_state=rendered_binding_state,
+        runner_provider_configured=provider.runner_provider_configured,
+        runner_provider_available=provider.runner_provider_available,
+        runner_provider_mode=provider.runner_provider_mode,
         blocked_reasons=tuple(blocked),
     )
 
@@ -156,10 +178,15 @@ def evaluate_dispatch_runtime_enablement(
     if not _readiness_preflight_system_available():
         blocked.append(REASON_READINESS_PREFLIGHT_UNAVAILABLE)
 
+    provider = _merge_provider_into_enablement(blocked, merged_config)
+
     return CooDispatchEnablementSummary(
         enablement_ready=not blocked,
         runner_bound=False,
         runner_binding_state="",
+        runner_provider_configured=provider.runner_provider_configured,
+        runner_provider_available=provider.runner_provider_available,
+        runner_provider_mode=provider.runner_provider_mode,
         blocked_reasons=tuple(blocked),
     )
 
@@ -173,10 +200,14 @@ def format_dispatch_runtime_enablement_failure(blocked_reasons: tuple[str, ...])
 
 def format_dispatch_enablement_summary(summary: CooDispatchEnablementSummary) -> str:
     """Render a safe enablement summary without paths, secrets, or policy details."""
+    mode = summary.runner_provider_mode or ""
     lines = [
         f"enablement_ready: {str(summary.enablement_ready).lower()}",
         f"runner_bound: {str(summary.runner_bound).lower()}",
         f"runner_binding_state: {summary.runner_binding_state}",
+        f"runner_provider_configured: {str(summary.runner_provider_configured).lower()}",
+        f"runner_provider_available: {str(summary.runner_provider_available).lower()}",
+        f"runner_provider_mode: {mode}",
     ]
     if summary.blocked_reasons:
         lines.append(f"blocked_reasons: {','.join(summary.blocked_reasons)}")
