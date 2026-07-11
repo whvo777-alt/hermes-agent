@@ -495,10 +495,16 @@ def run_coo_dispatch_from_args(
     use_real_bounded_runner: bool = False,
     merged_config=None,
     binding_state=None,
+    harness_profile=None,
+    node_executable=None,
+    node_path=None,
     harness_max_output_bytes=None,
     harness_max_timeout_seconds=None,
 ) -> int:
     """Execute dispatch run from parsed CLI args (runner injectable for tests)."""
+    from agent.coo.bounded_subprocess_runner import (
+        RUNNER_PROFILE_RESTRICTED,
+    )
     from agent.coo.dispatch_cli_run import execute_coo_dispatch_run
     from agent.coo.dispatch_cli_runner_injection import (
         DEFAULT_REAL_HARNESS_MAX_OUTPUT_BYTES,
@@ -519,6 +525,11 @@ def run_coo_dispatch_from_args(
     if harness_max_timeout_seconds is not None:
         harness_kwargs["harness_max_timeout_seconds"] = harness_max_timeout_seconds
 
+    resolved_harness_profile = (
+        harness_profile if harness_profile is not None else RUNNER_PROFILE_RESTRICTED
+    )
+    resolved_node_path = node_path if node_path is not None else node_executable
+
     try:
         resolved_runner = resolve_dispatch_run_subprocess_runner(
             subprocess_runner=subprocess_runner,
@@ -528,6 +539,8 @@ def run_coo_dispatch_from_args(
             dry_run=dry_run,
             merged_config=resolved_config,
             binding_state=binding_state,
+            harness_profile=resolved_harness_profile,
+            node_executable=node_executable,
             harness_max_output_bytes=harness_kwargs.get(
                 "harness_max_output_bytes",
                 DEFAULT_REAL_HARNESS_MAX_OUTPUT_BYTES,
@@ -546,6 +559,7 @@ def run_coo_dispatch_from_args(
             dry_run=dry_run,
             subprocess_runner=resolved_runner,
             merged_config=resolved_config if use_runner_provider else merged_config,
+            node_path=resolved_node_path,
         )
     except (ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -324,6 +324,7 @@ def execute_coo_dispatch_run(
     evidence_dir: Path | None = None,
     subprocess_runner: SubprocessRunner | None = None,
     merged_config: Mapping[str, Any] | None = None,
+    node_path: str | None = None,
 ) -> CooDispatchRunResult:
     """Load persisted state, validate, and run dispatch (mock runner in tests only)."""
     if not ticket_id.strip():
@@ -413,7 +414,7 @@ def execute_coo_dispatch_run(
         pipeline_root=trusted_pipeline_root,
         entrypoint=_ALLOWED_FACTORY_ENTRYPOINT,
         subprocess_runner=injected_runner,
-        node_path="/usr/bin/node",
+        node_path=node_path or "/usr/bin/node",
         evidence_dir=resolved_evidence_dir,
     )
     adapter = PipelineAdapter(
