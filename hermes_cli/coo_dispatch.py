@@ -250,6 +250,22 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     consume_status_parser.set_defaults(handler=_cmd_consume_status)
 
+    consume_recovery_parser = consume_subparsers.add_parser(
+        "recovery",
+        help="Read-only recovery assessment for bundle + confirmation consume pair",
+    )
+    consume_recovery_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id (bundle file key)",
+    )
+    consume_recovery_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    consume_recovery_parser.set_defaults(handler=_cmd_consume_recovery)
+
     enablement_parser = subparsers.add_parser(
         "enablement",
         help="Read-only production runner enablement checks",
@@ -501,6 +517,25 @@ def _cmd_consume_status(args: argparse.Namespace) -> int:
         return 1
 
     print(format_dispatch_consume_status_summary(summary))
+    return 0
+
+
+def _cmd_consume_recovery(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_consume_recovery import (
+        assess_dispatch_consume_recovery,
+        format_dispatch_consume_recovery_assessment,
+    )
+
+    try:
+        assessment = assess_dispatch_consume_recovery(
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_consume_recovery_assessment(assessment))
     return 0
 
 
