@@ -210,6 +210,44 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     enablement_check_parser.set_defaults(handler=_cmd_enablement_check)
 
+    binding_parser = subparsers.add_parser(
+        "binding",
+        help="Read-only and operator-controlled runner binding state commands",
+    )
+    binding_subparsers = binding_parser.add_subparsers(
+        dest="coo_dispatch_binding_command",
+        required=True,
+    )
+    binding_status_parser = binding_subparsers.add_parser(
+        "status",
+        help="Show safe summary of persisted runner binding state",
+    )
+    binding_status_parser.set_defaults(handler=_cmd_binding_status)
+
+    binding_stage_parser = binding_subparsers.add_parser(
+        "stage",
+        help="Transition runner binding from unbound to staged",
+    )
+    binding_stage_parser.add_argument("--operator-id", required=True, help="Operator identity id")
+    binding_stage_parser.add_argument(
+        "--reason",
+        required=True,
+        help="Human-readable reason for staging runner binding",
+    )
+    binding_stage_parser.set_defaults(handler=_cmd_binding_stage)
+
+    binding_reset_parser = binding_subparsers.add_parser(
+        "reset",
+        help="Transition runner binding from staged to unbound",
+    )
+    binding_reset_parser.add_argument("--operator-id", required=True, help="Operator identity id")
+    binding_reset_parser.add_argument(
+        "--reason",
+        required=True,
+        help="Human-readable reason for resetting runner binding",
+    )
+    binding_reset_parser.set_defaults(handler=_cmd_binding_reset)
+
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hermes coo dispatch")
@@ -359,6 +397,60 @@ def _cmd_enablement_check(args: argparse.Namespace) -> int:
     summary = evaluate_dispatch_enablement(load_config())
     print(format_dispatch_enablement_summary(summary))
     return 0 if summary.enablement_ready else 1
+
+
+def _cmd_binding_status(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_binding import (
+        format_runner_binding_state_summary,
+        summarize_dispatch_runner_binding,
+    )
+
+    try:
+        binding = summarize_dispatch_runner_binding()
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_runner_binding_state_summary(binding))
+    return 0
+
+
+def _cmd_binding_stage(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_binding import (
+        execute_dispatch_binding_stage,
+        format_dispatch_binding_transition_summary,
+    )
+
+    try:
+        summary = execute_dispatch_binding_stage(
+            operator_id=args.operator_id,
+            reason=args.reason,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_binding_transition_summary(summary))
+    return 0
+
+
+def _cmd_binding_reset(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_binding import (
+        execute_dispatch_binding_reset,
+        format_dispatch_binding_transition_summary,
+    )
+
+    try:
+        summary = execute_dispatch_binding_reset(
+            operator_id=args.operator_id,
+            reason=args.reason,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_binding_transition_summary(summary))
+    return 0
 
 
 def run_coo_dispatch_from_args(

@@ -40,7 +40,7 @@ class TestDispatchRunnerBindingState(unittest.TestCase):
         self.assertFalse(runner_binding_state_is_bound(binding))
         self.assertEqual(
             format_runner_binding_state_summary(binding),
-            "runner_binding_state: unbound",
+            "runner_binding_state: unbound\nrunner_bound: false",
         )
 
     def test_valid_bound_state_loads(self) -> None:
