@@ -29,6 +29,7 @@ NODE_BEHAVIOR_FAILURE = "failure"
 NODE_BEHAVIOR_TIMEOUT = "timeout"
 NODE_BEHAVIOR_VERBOSE = "verbose"
 NODE_BEHAVIOR_ENV_PROBE = "env_probe"
+NODE_BEHAVIOR_PARTIAL = "partial"
 
 _DEFAULT_RUN_DATE = "2026-07-07"
 _DEFAULT_HARNESS_MAX_TIMEOUT_SECONDS = 3600
@@ -91,6 +92,27 @@ def write_fake_node_executable(workspace: Path, behavior: str = NODE_BEHAVIOR_SU
                 "SECRET_TOKEN" in os.environ,
                 "API_KEY" in os.environ,
             )
+            """
+        )
+    elif behavior == NODE_BEHAVIOR_PARTIAL:
+        body = textwrap.dedent(
+            """
+            import json
+            import os
+            import sys
+            from pathlib import Path
+
+            args = sys.argv
+            run_date = args[args.index("--run-date") + 1]
+            cwd = Path(os.getcwd())
+            outputs = cwd / "outputs"
+            outputs.mkdir(exist_ok=True)
+            (outputs / f"{run_date}.partial.json").write_text(
+                json.dumps({"partial": True, "run_date": run_date}),
+                encoding="utf-8",
+            )
+            sys.stderr.write("partial failure")
+            sys.exit(4)
             """
         )
     else:
@@ -176,11 +198,13 @@ def run_isolated_full_path_execute(
     harness_max_output_bytes: int = 64_000,
     harness_max_timeout_seconds: int = _DEFAULT_HARNESS_MAX_TIMEOUT_SECONDS,
     policy_max_runtime_seconds: int | None = None,
+    use_existing_pipeline_js: bool = False,
     **run_overrides,
 ):
     """Run execute_coo_dispatch_run through provider-resolved dispatch harness."""
     workspace = fixture.pipeline_root.parent
-    write_fake_pipeline_js(fixture.pipeline_root)
+    if not use_existing_pipeline_js:
+        write_fake_pipeline_js(fixture.pipeline_root)
     node = fake_node or write_fake_node_executable(workspace, node_behavior)
     runner = resolve_isolated_dispatch_runner(
         pipeline_root=fixture.pipeline_root,
@@ -293,6 +317,7 @@ def assert_subprocess_argv_contract(
 __all__ = (
     "NODE_BEHAVIOR_ENV_PROBE",
     "NODE_BEHAVIOR_FAILURE",
+    "NODE_BEHAVIOR_PARTIAL",
     "NODE_BEHAVIOR_SUCCESS",
     "NODE_BEHAVIOR_TIMEOUT",
     "NODE_BEHAVIOR_VERBOSE",
