@@ -5,13 +5,14 @@ payloads, and optional discord.py Embed/View objects for Discord handler wiring.
 
 Button callbacks update Approval Session state
 (approve/reject/refresh/prepare_plan/dry_run_preview/execution_review/
-prepare_dispatch/run_approved_plan/remint_dispatch_token).
+prepare_dispatch/run_approved_plan/remint_dispatch_token/gateway_pilot_*).
 Prepare Plan creates a dispatch plan only — no Repository2 execution.
 Dry Run Preview starts a synthetic dry-run only — no Repository2 execution.
 Execution Review creates ExecuteRequest + ExecuteGate only — no execution.
 Prepare Dispatch creates unlock token and dispatch request only — no execution.
-Run Approved Plan invokes the gateway dispatch runner — production defaults
-fail with executor not configured; no Repository2 execution.
+Gateway Pilot actions invoke the staged mock-only Gateway Pilot Service.
+Run Approved Plan remains the legacy gateway dispatch runner path and
+production defaults fail with executor not configured; no Repository2 execution.
 
 This module is for COO CEO approval sessions only.
 This module is unrelated to ``tools/approval.py`` ``resolve_gateway_approval()``.
@@ -34,6 +35,15 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from agent.coo.approval_report import CEOApprovalReport
+from agent.coo.dispatch_gateway_discord_bridge import (
+    ACTION_GATEWAY_PILOT_DRY_RUN,
+    ACTION_GATEWAY_PILOT_RUN,
+    ACTION_GATEWAY_PILOT_STATUS,
+    DISCORD_GATEWAY_PILOT_RESULT_KEY,
+    execute_discord_gateway_pilot_action,
+    format_discord_gateway_pilot_response,
+    result_to_session_payload_fragment,
+)
 from agent.coo.discord_approval_adapter import create_discord_approval_session
 from agent.coo.models import COOOrchestrationResult
 
@@ -81,6 +91,9 @@ _ALLOWED_COO_APPROVAL_ACTIONS = frozenset({
     "prepare_dispatch",
     "run_approved_plan",
     "remint_dispatch_token",
+    ACTION_GATEWAY_PILOT_DRY_RUN,
+    ACTION_GATEWAY_PILOT_RUN,
+    ACTION_GATEWAY_PILOT_STATUS,
 })
 _PREPARE_PLAN_EPHEMERAL = "Plan Ready — Not Executed"
 _DRY_RUN_PREVIEW_EPHEMERAL = "Dry Run Preview — Not Executed"
@@ -92,6 +105,7 @@ _REMINT_DISPATCH_TOKEN_EPHEMERAL = "Dispatch Token Refreshed — Prepare dispatc
 _RUN_COMPLETED_EPHEMERAL = "Run Completed"
 _RUN_FAILED_EPHEMERAL = "Run Attempted — Failed"
 _RUN_EXECUTOR_NOT_CONFIGURED_EPHEMERAL = "Run Attempted — Executor Not Configured"
+_GATEWAY_PILOT_EPHEMERAL = "Gateway Pilot"
 _COO_DISPATCH_RUN_EPHEMERAL_KEY = "_coo_dispatch_run_ephemeral"
 _ERR_SESSION_NOT_FOUND = "Approval session not found."
 _ERR_NOT_ALLOWED = "You are not allowed to approve this session."
@@ -929,6 +943,21 @@ def _should_disable_remint_dispatch_token_button(session_payload: Dict[str, Any]
     return False
 
 
+def _should_disable_gateway_pilot_button(session_payload: Dict[str, Any]) -> bool:
+    """Disable pilot buttons unless dispatch has been prepared for an approved session."""
+    if str(session_payload.get("status") or "").strip().lower() != "approved":
+        return True
+    if not _should_show_dispatch_buttons(session_payload):
+        return True
+    dispatch = _lookup_latest_dispatch_for_session(session_payload) or {}
+    token = dispatch.get("unlock_token")
+    return not isinstance(token, dict) or not bool(str(token.get("token_id") or "").strip())
+
+
+def _should_show_gateway_pilot_buttons(session_payload: Dict[str, Any]) -> bool:
+    return not _should_disable_gateway_pilot_button(session_payload)
+
+
 def _assert_session_owner(
     session_payload: Dict[str, Any],
     user_id: str,
@@ -960,6 +989,13 @@ def execute_coo_approval_button_action(
     session_id: str,
     discord_user_id: DiscordSnowflake,
     store: Optional["CEOApprovalSessionStore"] = None,
+    discord_interaction_id: str = "",
+    gateway_pilot_runner=None,
+    gateway_pilot_config: Optional[Dict[str, Any]] = None,
+    gateway_pilot_bundle_dir=None,
+    gateway_pilot_confirmation_dir=None,
+    gateway_pilot_request_dir=None,
+    gateway_pilot_history_dir=None,
 ) -> Dict[str, Any]:
     """Run approve/reject/refresh against the in-memory approval session store."""
     from agent.coo.discord_approval_adapter import (
@@ -979,6 +1015,44 @@ def execute_coo_approval_button_action(
         if session is None:
             raise KeyError(session_id)
         return session
+
+    if normalized_action in {
+        ACTION_GATEWAY_PILOT_DRY_RUN,
+        ACTION_GATEWAY_PILOT_RUN,
+        ACTION_GATEWAY_PILOT_STATUS,
+    }:
+        existing = get_discord_approval_session(session_id, store=store)
+        if existing is None:
+            raise KeyError(session_id)
+        _assert_session_owner(existing, user_id, session_id)
+        if _should_disable_gateway_pilot_button(existing):
+            raise ValueError(
+                f"Cannot run gateway pilot for session {session_id} "
+                f"in status {existing.get('status')}"
+            )
+        result = execute_discord_gateway_pilot_action(
+            action=normalized_action,
+            session_payload=existing,
+            requester_id=user_id,
+            interaction_id=discord_interaction_id,
+            merged_config=gateway_pilot_config,
+            injected_runner=gateway_pilot_runner,
+            session_store=store,
+            bundle_dir=gateway_pilot_bundle_dir,
+            confirmation_dir=gateway_pilot_confirmation_dir,
+            request_dir=gateway_pilot_request_dir,
+            history_dir=gateway_pilot_history_dir,
+        )
+        refreshed = get_discord_approval_session(session_id, store=store)
+        if refreshed is None:
+            raise KeyError(session_id)
+        return {
+            **refreshed,
+            DISCORD_GATEWAY_PILOT_RESULT_KEY: result_to_session_payload_fragment(result)[
+                DISCORD_GATEWAY_PILOT_RESULT_KEY
+            ],
+            "_coo_gateway_pilot_ephemeral": format_discord_gateway_pilot_response(result),
+        }
 
     if normalized_action == "prepare_plan":
         existing = get_discord_approval_session(session_id, store=store)
@@ -1372,6 +1446,35 @@ def build_coo_approval_components(session_payload: Dict[str, Any]) -> List[Dict[
                 ),
             ]
         )
+        if _should_show_gateway_pilot_buttons(session_payload):
+            components.extend(
+                [
+                    _coo_approval_button_component(
+                        label="Gateway Pilot Dry Run",
+                        style="secondary",
+                        custom_id=_build_coo_approval_custom_id(
+                            ACTION_GATEWAY_PILOT_DRY_RUN,
+                            session_id,
+                        ),
+                    ),
+                    _coo_approval_button_component(
+                        label="Gateway Pilot Run",
+                        style="secondary",
+                        custom_id=_build_coo_approval_custom_id(
+                            ACTION_GATEWAY_PILOT_RUN,
+                            session_id,
+                        ),
+                    ),
+                    _coo_approval_button_component(
+                        label="Gateway Pilot Status",
+                        style="secondary",
+                        custom_id=_build_coo_approval_custom_id(
+                            ACTION_GATEWAY_PILOT_STATUS,
+                            session_id,
+                        ),
+                    ),
+                ]
+            )
     return components
 
 
@@ -1417,6 +1520,7 @@ def _make_coo_approval_button_callback(
                 session_id=parsed["session_id"],
                 discord_user_id=user.id,
                 store=store,
+                discord_interaction_id=str(getattr(interaction, "id", "") or ""),
             )
             updated = await _try_update_interaction_message(
                 interaction,
@@ -1452,6 +1556,15 @@ def _make_coo_approval_button_callback(
                     or _RUN_FAILED_EPHEMERAL
                 )
                 await _respond_coo_approval_ephemeral(interaction, ephemeral)
+            elif parsed["action"] in {
+                ACTION_GATEWAY_PILOT_DRY_RUN,
+                ACTION_GATEWAY_PILOT_RUN,
+                ACTION_GATEWAY_PILOT_STATUS,
+            }:
+                await _respond_coo_approval_ephemeral(
+                    interaction,
+                    str(session_payload.get("_coo_gateway_pilot_ephemeral") or _GATEWAY_PILOT_EPHEMERAL),
+                )
             elif not updated:
                 status = session_payload.get("status", "unknown")
                 await _respond_coo_approval_ephemeral(
