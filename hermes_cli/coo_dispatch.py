@@ -419,6 +419,31 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     operator_runbook_parser.set_defaults(handler=_cmd_operator_runbook)
 
+    repository_parser = subparsers.add_parser(
+        "repository",
+        help="Read-only Repository2 attestation commands",
+    )
+    repository_subparsers = repository_parser.add_subparsers(
+        dest="coo_dispatch_repository_command",
+        required=True,
+    )
+    repository_attest_parser = repository_subparsers.add_parser(
+        "attest",
+        help=(
+            "Read-only attestation of Repository2 production root identity "
+            "and structure (stat/read/hash only)"
+        ),
+    )
+    repository_attest_parser.add_argument(
+        "--repository-root",
+        required=True,
+        help=(
+            "Absolute path to the official Repository2 production root "
+            "(read-only; production execution remains hard-denied)"
+        ),
+    )
+    repository_attest_parser.set_defaults(handler=_cmd_repository_attest)
+
     production_parser = subparsers.add_parser(
         "production",
         help="Read-only production readiness review commands",
@@ -826,6 +851,24 @@ def _cmd_operator_runbook(args: argparse.Namespace) -> int:
 
     print(format_dispatch_operator_runbook(summary))
     return 0
+
+
+def _cmd_repository_attest(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_repository_attestation import (
+        attest_repository2_production_root,
+        format_dispatch_repository_attestation,
+    )
+
+    try:
+        summary = attest_repository2_production_root(
+            repository_root=args.repository_root,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_repository_attestation(summary))
+    return 0 if summary.repository_attested else 1
 
 
 def _cmd_production_readiness(args: argparse.Namespace) -> int:

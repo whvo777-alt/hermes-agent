@@ -20,9 +20,9 @@ CHECK_NOT_APPLICABLE = "NOT_APPLICABLE"
 OVERALL_READY = "READY"
 OVERALL_NOT_READY = "NOT_READY"
 
-RECOMMENDED_NEXT_PHASE_READY = "Phase 12T Repository2 Read-Only Attestation"
+RECOMMENDED_NEXT_PHASE_READY = "Phase 12U Production Dispatch Sign-off"
 RECOMMENDED_NEXT_PHASE_NOT_READY = (
-    "Resolve failing production readiness checks before Phase 12T."
+    "Resolve failing production readiness checks before Phase 12U."
 )
 
 
