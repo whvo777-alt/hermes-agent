@@ -395,6 +395,30 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     consume_repair_lock_status_parser.set_defaults(handler=_cmd_consume_repair_lock_status)
 
+    operator_parser = subparsers.add_parser(
+        "operator",
+        help="Read-only operator guidance commands",
+    )
+    operator_subparsers = operator_parser.add_subparsers(
+        dest="coo_dispatch_operator_command",
+        required=True,
+    )
+    operator_runbook_parser = operator_subparsers.add_parser(
+        "runbook",
+        help="Show read-only operator runbook for a consume pair",
+    )
+    operator_runbook_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id (bundle file key)",
+    )
+    operator_runbook_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    operator_runbook_parser.set_defaults(handler=_cmd_operator_runbook)
+
     enablement_parser = subparsers.add_parser(
         "enablement",
         help="Read-only production runner enablement checks",
@@ -766,6 +790,27 @@ def _cmd_consume_repair_lock_status(args: argparse.Namespace) -> int:
         return 1
 
     print(format_dispatch_consume_repair_lock_status(status))
+    return 0
+
+
+def _cmd_operator_runbook(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_operator_runbook import (
+        format_dispatch_operator_runbook,
+        summarize_dispatch_operator_runbook,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        summary = summarize_dispatch_operator_runbook(
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+            merged_config=load_config(),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_operator_runbook(summary))
     return 0
 
 
