@@ -353,6 +353,8 @@ def execute_gateway_dispatch(
     injected_runner: Callable[..., Any] | None = None,
     dry_run: bool = False,
     allow_mock_gateway_dispatch: bool = False,
+    session_id: str = "",
+    pilot_attempt_id: str = "",
     request_dir=None,
     **kwargs: Any,
 ) -> CooDispatchGatewayDispatchResult:
@@ -542,6 +544,8 @@ def execute_gateway_dispatch(
         failure_reason_code=FAILURE_NONE,
         production_execution_allowed=False,
         gateway_state=GATEWAY_STATE_STAGED,
+        session_id=session_id,
+        pilot_attempt_id=pilot_attempt_id,
     )
     try:
         reserve_gateway_request(prepared_record, request_dir=request_dir)

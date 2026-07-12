@@ -45,6 +45,8 @@ _KNOWN_RECORD_KEYS = frozenset(
         "production_execution_allowed",
         "gateway_state",
         "updated_at",
+        "session_id",
+        "pilot_attempt_id",
     }
 )
 _FORBIDDEN_RECORD_KEYS = frozenset(
@@ -85,9 +87,11 @@ class CooDispatchGatewayRequestRecord:
     production_execution_allowed: bool
     gateway_state: str
     version: int = GATEWAY_REQUEST_STORE_VERSION
+    session_id: str = ""
+    pilot_attempt_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "version": self.version,
             "gateway_request_id": self.gateway_request_id,
             "ticket_id": self.ticket_id,
@@ -101,6 +105,11 @@ class CooDispatchGatewayRequestRecord:
             "gateway_state": self.gateway_state,
             "updated_at": _utc_now_iso(),
         }
+        if self.session_id:
+            payload["session_id"] = self.session_id
+        if self.pilot_attempt_id:
+            payload["pilot_attempt_id"] = self.pilot_attempt_id
+        return payload
 
 
 def _utc_now_iso() -> str:
@@ -182,6 +191,8 @@ def _record_from_payload(payload: Mapping[str, Any]) -> CooDispatchGatewayReques
         production_execution_allowed=False,
         gateway_state=str(payload.get("gateway_state", "")),
         version=int(payload.get("version", GATEWAY_REQUEST_STORE_VERSION)),
+        session_id=str(payload.get("session_id", "")),
+        pilot_attempt_id=str(payload.get("pilot_attempt_id", "")),
     )
 
 
@@ -276,6 +287,8 @@ def transition_gateway_request(
         failure_reason_code=failure_reason_code,
         production_execution_allowed=False,
         gateway_state=existing.gateway_state,
+        session_id=existing.session_id,
+        pilot_attempt_id=existing.pilot_attempt_id,
     )
     path = _request_path(normalized_id, request_dir=request_dir)
     payload = updated.to_dict()

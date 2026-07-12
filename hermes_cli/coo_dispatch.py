@@ -695,6 +695,86 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     gateway_facade_parser.set_defaults(handler=_cmd_gateway_facade)
 
+    gateway_pilot_parser = gateway_subparsers.add_parser(
+        "pilot",
+        help="Gateway pilot mock dispatch (staged only; production root hard-denied)",
+    )
+    gateway_pilot_subparsers = gateway_pilot_parser.add_subparsers(
+        dest="coo_dispatch_gateway_pilot_command",
+        required=True,
+    )
+    gateway_pilot_readiness_parser = gateway_pilot_subparsers.add_parser(
+        "readiness",
+        help="Evaluate gateway pilot readiness without dispatch",
+    )
+    gateway_pilot_readiness_parser.add_argument(
+        "--session-id",
+        required=True,
+        help="Gateway approval session id",
+    )
+    gateway_pilot_readiness_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id",
+    )
+    gateway_pilot_readiness_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    gateway_pilot_readiness_parser.add_argument(
+        "--pipeline-root",
+        required=True,
+        help="Isolated pipeline root (production root hard-denied)",
+    )
+    gateway_pilot_readiness_parser.set_defaults(handler=_cmd_gateway_pilot_readiness)
+
+    gateway_pilot_run_parser = gateway_pilot_subparsers.add_parser(
+        "run",
+        help="Run gateway pilot mock dispatch after readiness gates",
+    )
+    gateway_pilot_run_parser.add_argument(
+        "--session-id",
+        required=True,
+        help="Gateway approval session id",
+    )
+    gateway_pilot_run_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id",
+    )
+    gateway_pilot_run_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    gateway_pilot_run_parser.add_argument(
+        "--unlock-token-id",
+        required=True,
+        help="Dispatch unlock token id (must match bundle)",
+    )
+    gateway_pilot_run_parser.add_argument(
+        "--requester-id",
+        required=True,
+        help="Authorized requester id",
+    )
+    gateway_pilot_run_parser.add_argument(
+        "--pipeline-root",
+        required=True,
+        help="Isolated pipeline root (production root hard-denied)",
+    )
+    gateway_pilot_run_parser.add_argument(
+        "--gateway-request-id",
+        required=True,
+        help="Opaque gateway request id for idempotency",
+    )
+    gateway_pilot_run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preflight only; runner not invoked, nothing consumed",
+    )
+    gateway_pilot_run_parser.set_defaults(handler=_cmd_gateway_pilot_run)
+
     binding_parser = subparsers.add_parser(
         "binding",
         help="Read-only and operator-controlled runner binding state commands",
@@ -1363,6 +1443,87 @@ def _cmd_gateway_status(args: argparse.Namespace) -> int:
     summary = summarize_dispatch_gateway_status(merged_config=load_config())
     print(format_dispatch_gateway_status_summary(summary))
     return 0
+
+
+def _cmd_gateway_pilot_readiness(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_gateway_pilot import (
+        evaluate_gateway_pilot_readiness,
+        format_gateway_pilot_readiness,
+    )
+    from hermes_cli.config import load_config
+
+    summary = evaluate_gateway_pilot_readiness(
+        session_id=args.session_id,
+        ticket_id=args.ticket_id,
+        confirmation_id=args.confirmation_id,
+        pipeline_root=args.pipeline_root,
+        merged_config=load_config(),
+    )
+    print(format_gateway_pilot_readiness(summary))
+    return 0 if summary.pilot_ready else 1
+
+
+def _cmd_gateway_pilot_run(args: argparse.Namespace) -> int:
+    return run_gateway_pilot_dispatch_from_args(args)
+
+
+def run_gateway_pilot_dispatch_from_args(
+    args: argparse.Namespace,
+    *,
+    injected_runner=None,
+    merged_config=None,
+    session_store=None,
+    ticket_store=None,
+    bundle_dir=None,
+    confirmation_dir=None,
+    request_dir=None,
+    history_dir=None,
+) -> int:
+    """Execute gateway pilot dispatch from parsed CLI args (runner injectable for tests)."""
+    from agent.coo.dispatch_gateway_pilot_service import (
+        FAILURE_MOCK_RUNNER_NOT_CONFIGURED,
+        execute_gateway_pilot_dispatch,
+        format_gateway_pilot_result,
+    )
+
+    if merged_config is None:
+        from hermes_cli.config import load_config
+
+        merged_config = load_config()
+
+    dry_run = bool(getattr(args, "dry_run", False))
+    result = execute_gateway_pilot_dispatch(
+        session_id=args.session_id,
+        ticket_id=args.ticket_id,
+        confirmation_id=args.confirmation_id,
+        unlock_token_id=args.unlock_token_id,
+        requester_id=args.requester_id,
+        pipeline_root=args.pipeline_root,
+        gateway_request_id=args.gateway_request_id,
+        dry_run=dry_run,
+        merged_config=merged_config,
+        injected_runner=injected_runner,
+        allow_mock_gateway_dispatch=dry_run or injected_runner is not None,
+        session_store=session_store,
+        ticket_store=ticket_store,
+        bundle_dir=bundle_dir,
+        confirmation_dir=confirmation_dir,
+        request_dir=request_dir,
+        history_dir=history_dir,
+    )
+    print(format_gateway_pilot_result(result))
+    if result.accepted:
+        return 0
+    if (
+        not dry_run
+        and injected_runner is None
+        and result.failure_reason_code == FAILURE_MOCK_RUNNER_NOT_CONFIGURED
+    ):
+        print(
+            "error: gateway mock runner is not configured",
+            file=sys.stderr,
+        )
+    return 1
 
 
 def _cmd_enablement_check(args: argparse.Namespace) -> int:

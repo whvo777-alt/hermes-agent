@@ -31,6 +31,7 @@ FAILURE_REASON_POLICY_BLOCKED = "policy_blocked"
 FAILURE_REASON_UNKNOWN_FAILURE = "unknown_failure"
 
 EXECUTION_SCOPE_ISOLATED_CLONE = "isolated_clone"
+EXECUTION_SCOPE_ISOLATED_GATEWAY_MOCK = "isolated_gateway_mock"
 
 _FORBIDDEN_RECORD_KEYS = frozenset(
     {
@@ -143,9 +144,11 @@ class CooDispatchPilotHistoryRecord:
     production_execution_allowed: bool
     production_root_hard_deny: bool
     gateway_enabled: bool
+    gateway_request_id: str = ""
+    session_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "version": self.version,
             "pilot_attempt_id": self.pilot_attempt_id,
             "execution_attempt_id": self.execution_attempt_id,
@@ -166,6 +169,11 @@ class CooDispatchPilotHistoryRecord:
             "production_root_hard_deny": self.production_root_hard_deny,
             "gateway_enabled": self.gateway_enabled,
         }
+        if self.gateway_request_id:
+            payload["gateway_request_id"] = self.gateway_request_id
+        if self.session_id:
+            payload["session_id"] = self.session_id
+        return payload
 
 
 def parse_pilot_history_record(payload: Mapping[str, Any]) -> CooDispatchPilotHistoryRecord:
@@ -216,6 +224,8 @@ def parse_pilot_history_record(payload: Mapping[str, Any]) -> CooDispatchPilotHi
         production_execution_allowed=bool(payload["production_execution_allowed"]),
         production_root_hard_deny=bool(payload["production_root_hard_deny"]),
         gateway_enabled=bool(payload["gateway_enabled"]),
+        gateway_request_id=str(payload.get("gateway_request_id", "")),
+        session_id=str(payload.get("session_id", "")),
     )
 
 

@@ -12,6 +12,7 @@ from agent.coo.dispatch_cli_run import CooDispatchRunResult
 from agent.coo.dispatch_execution_audit import default_audit_dir
 from agent.coo.dispatch_pilot_history import (
     EXECUTION_SCOPE_ISOLATED_CLONE,
+    EXECUTION_SCOPE_ISOLATED_GATEWAY_MOCK,
     FAILURE_REASON_CONSUME_FAILED,
     FAILURE_REASON_NONE,
     FAILURE_REASON_POLICY_BLOCKED,
@@ -294,6 +295,70 @@ def build_pilot_history_record_from_policy_block(
         production_execution_allowed=False,
         production_root_hard_deny=pilot_summary.production_root_hard_deny,
         gateway_enabled=pilot_summary.gateway_enabled,
+    )
+
+
+def build_gateway_pilot_history_record_from_facade(
+    *,
+    pilot_attempt_id: str,
+    session_id: str,
+    gateway_request_id: str,
+    started_at: str,
+    completed_at: str,
+    ticket_id: str,
+    confirmation_id: str,
+    dry_run: bool,
+    facade_result: "CooDispatchGatewayDispatchResult",
+    production_root_hard_deny: bool,
+) -> CooDispatchPilotHistoryRecord:
+    """Build a safe gateway pilot history record from facade dispatch outcome."""
+    execution_attempt_id = facade_result.execution_attempt_id
+    dispatch_run_id = facade_result.dispatch_run_id
+    consumed = facade_result.consumed
+    exit_code = _load_evidence_exit_code(execution_attempt_id)
+    if exit_code is None:
+        if dry_run:
+            exit_code = 0 if facade_result.accepted else 1
+        elif facade_result.accepted and consumed:
+            exit_code = 0
+        else:
+            exit_code = 1
+    run_status = "completed" if facade_result.accepted else "failed"
+    if dry_run:
+        run_status = "preflight_passed" if facade_result.accepted else "preflight_failed"
+    status = _pilot_status_from_run(
+        dry_run=dry_run,
+        run_status=run_status,
+        exit_code=exit_code,
+    )
+    failure_reason_code = facade_result.failure_reason_code
+    if status == PILOT_STATUS_SUCCESS or (
+        status == PILOT_STATUS_DRY_RUN and facade_result.accepted
+    ):
+        failure_reason_code = FAILURE_REASON_NONE
+
+    return CooDispatchPilotHistoryRecord(
+        version=PILOT_HISTORY_VERSION,
+        pilot_attempt_id=pilot_attempt_id,
+        execution_attempt_id=execution_attempt_id,
+        ticket_id=ticket_id,
+        confirmation_id=confirmation_id,
+        dispatch_run_id=dispatch_run_id,
+        execution_scope=EXECUTION_SCOPE_ISOLATED_GATEWAY_MOCK,
+        status=status,
+        exit_code=exit_code,
+        dry_run=dry_run,
+        started_at=started_at,
+        completed_at=completed_at,
+        evidence_present=_evidence_present(execution_attempt_id),
+        audit_present=_audit_present(execution_attempt_id),
+        consumed=consumed,
+        failure_reason_code=failure_reason_code,
+        production_execution_allowed=False,
+        production_root_hard_deny=production_root_hard_deny,
+        gateway_enabled=False,
+        gateway_request_id=gateway_request_id,
+        session_id=session_id,
     )
 
 
