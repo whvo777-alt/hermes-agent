@@ -6,7 +6,6 @@ subprocess, Gateway/Discord calls, or automatic state transitions.
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -24,7 +23,7 @@ _VALID_GATEWAY_STATES = frozenset(
 _KNOWN_GATEWAY_CONFIG_KEYS = frozenset({"enablement"})
 
 RECOMMENDED_NEXT_PHASE_DISABLED = "Phase 13G Gateway Read-Only Status"
-RECOMMENDED_NEXT_PHASE_STAGED = "Phase 13G Gateway Readiness Review"
+RECOMMENDED_NEXT_PHASE_STAGED = "Phase 13I Mock Gateway Dispatch"
 RECOMMENDED_NEXT_PHASE_ENABLED_NO_FACADE = (
     "Phase 13H Connect Gateway Execution Facade"
 )
@@ -106,11 +105,12 @@ def _parse_gateway_enablement_state(raw_gateway: Mapping[str, Any] | None) -> st
 def _gateway_execution_facade_connected() -> bool:
     """Read-only probe for gateway execution facade wiring (Phase 13H+)."""
     try:
-        module = importlib.import_module("agent.coo.dispatch_gateway_execution_facade")
+        from agent.coo.dispatch_gateway_execution_facade import (
+            GATEWAY_EXECUTION_FACADE_CONNECTED,
+        )
     except ImportError:
         return False
-    marker = getattr(module, "GATEWAY_EXECUTION_FACADE_CONNECTED", False)
-    return marker is True
+    return GATEWAY_EXECUTION_FACADE_CONNECTED is True
 
 
 def _build_enablement_from_state(state: str) -> CooDispatchGatewayEnablement:
@@ -196,11 +196,21 @@ def evaluate_gateway_production_check(
         CHECK_BLOCKED,
         CHECK_FAIL,
     )
+    from agent.coo.dispatch_gateway_execution_facade import (
+        evaluate_gateway_execution_facade,
+    )
 
     if not enablement.valid:
         return CHECK_FAIL
     if enablement.gateway_state == GATEWAY_STATE_ENABLED:
         if not enablement.gateway_execution_configured:
             return CHECK_FAIL
+        facade = evaluate_gateway_execution_facade()
+        if not facade.valid or not facade.facade_connected:
+            return CHECK_FAIL
+        if facade.execution_enabled and facade.production_execution_allowed:
+            return CHECK_FAIL
+        if not facade.execution_enabled:
+            return CHECK_BLOCKED
         return CHECK_FAIL
     return CHECK_BLOCKED

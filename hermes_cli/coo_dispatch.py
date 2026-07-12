@@ -689,6 +689,12 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     gateway_readiness_parser.set_defaults(handler=_cmd_gateway_readiness)
 
+    gateway_facade_parser = gateway_subparsers.add_parser(
+        "facade",
+        help="Show safe summary of gateway execution facade scaffold",
+    )
+    gateway_facade_parser.set_defaults(handler=_cmd_gateway_facade)
+
     binding_parser = subparsers.add_parser(
         "binding",
         help="Read-only and operator-controlled runner binding state commands",
@@ -1316,6 +1322,18 @@ def _cmd_production_readiness(args: argparse.Namespace) -> int:
     summary = evaluate_dispatch_production_readiness(merged_config=load_config())
     print(format_dispatch_production_readiness(summary))
     return 0 if summary.overall != OVERALL_NOT_READY else 1
+
+
+def _cmd_gateway_facade(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_gateway_execution_facade import (
+        evaluate_gateway_execution_facade,
+        format_gateway_execution_facade,
+    )
+    from hermes_cli.config import load_config
+
+    facade = evaluate_gateway_execution_facade(merged_config=load_config())
+    print(format_gateway_execution_facade(facade))
+    return 0 if facade.valid and facade.facade_connected else 1
 
 
 def _cmd_gateway_readiness(args: argparse.Namespace) -> int:

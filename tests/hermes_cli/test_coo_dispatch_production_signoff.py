@@ -189,7 +189,7 @@ class TestProductionSignoffFailClosed(unittest.TestCase):
             )
         self.assertFalse(summary.signoff_ready)
         self.assertTrue(summary.gateway_enabled)
-        self.assertIn("gateway_disabled", summary.failed_checks)
+        self.assertIn("gateway_disabled", summary.blocked_checks)
 
     def test_execution_allowed_true_forces_not_ready(self) -> None:
         summary = evaluate_dispatch_production_signoff()

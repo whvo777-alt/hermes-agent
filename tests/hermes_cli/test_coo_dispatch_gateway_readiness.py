@@ -30,7 +30,14 @@ from agent.coo.dispatch_consume_transaction import (
     CONSUME_STATE_PARTIAL,
     CONSUME_STATE_RECOVERY_REQUIRED,
 )
-from agent.coo.dispatch_gateway_enablement import GATEWAY_STATE_DISABLED
+from agent.coo.dispatch_gateway_enablement import (
+    GATEWAY_STATE_DISABLED,
+    GATEWAY_STATE_ENABLED,
+)
+from agent.coo.dispatch_gateway_execution_facade import (
+    GATEWAY_EXECUTION_FACADE_VERSION,
+    CooDispatchGatewayExecutionFacade,
+)
 from hermes_cli.coo_dispatch import build_coo_dispatch_parser
 from tests.hermes_cli.coo_dispatch_isolated_clone_fixture import (
     CooDispatchIsolatedCloneFixture,
@@ -145,10 +152,23 @@ class TestGatewayReadinessStates(unittest.TestCase):
         self.assertEqual(summary.recommended_action, RECOMMENDED_ACTION_IMPLEMENT_FACADE)
         self.assertIn("gateway_execution_facade_connected", summary.blocked_checks)
 
-    def test_enabled_facade_false_fails(self) -> None:
-        summary = evaluate_dispatch_gateway_readiness(
-            merged_config=_gateway_config("enabled"),
+    def test_enabled_facade_disconnected_fails(self) -> None:
+        disconnected = CooDispatchGatewayExecutionFacade(
+            facade_connected=False,
+            execution_enabled=False,
+            production_execution_allowed=False,
+            isolated_execution_supported=False,
+            gateway_state=GATEWAY_STATE_ENABLED,
+            version=GATEWAY_EXECUTION_FACADE_VERSION,
+            valid=False,
         )
+        with patch(
+            "agent.coo.dispatch_gateway_execution_facade.evaluate_gateway_execution_facade",
+            return_value=disconnected,
+        ):
+            summary = evaluate_dispatch_gateway_readiness(
+                merged_config=_gateway_config("enabled"),
+            )
         self.assertEqual(summary.readiness_level, READINESS_LEVEL_NOT_READY)
         self.assertFalse(summary.gateway_readiness_ready)
         self.assertIn("gateway_execution_facade_connected", summary.failed_checks)
@@ -474,7 +494,7 @@ class TestGatewayReadinessRegression(unittest.TestCase):
         gateway = next(check for check in summary.checks if check.name == "gateway")
         self.assertEqual(gateway.status, CHECK_BLOCKED)
 
-    def test_enabled_gateway_check_still_fail(self) -> None:
+    def test_enabled_gateway_check_still_blocked(self) -> None:
         from agent.coo.dispatch_cli_production_readiness import (
             evaluate_dispatch_production_readiness,
         )
@@ -483,7 +503,7 @@ class TestGatewayReadinessRegression(unittest.TestCase):
             merged_config=_gateway_config("enabled"),
         )
         gateway = next(check for check in summary.checks if check.name == "gateway")
-        self.assertEqual(gateway.status, CHECK_FAIL)
+        self.assertEqual(gateway.status, CHECK_BLOCKED)
 
 
 if __name__ == "__main__":

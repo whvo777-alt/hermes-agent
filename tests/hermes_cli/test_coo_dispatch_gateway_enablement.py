@@ -33,6 +33,7 @@ from agent.coo.dispatch_gateway_enablement import (
     GATEWAY_STATE_STAGED,
     RECOMMENDED_NEXT_PHASE_DISABLED,
     RECOMMENDED_NEXT_PHASE_ENABLED_NO_FACADE,
+    RECOMMENDED_NEXT_PHASE_ENABLED_READY,
     RECOMMENDED_NEXT_PHASE_STAGED,
     CooDispatchGatewayEnablement,
     DispatchGatewayEnablementError,
@@ -90,7 +91,7 @@ class TestGatewayEnablementLoader(unittest.TestCase):
         self.assertEqual(enablement.gateway_state, GATEWAY_STATE_DISABLED)
         self.assertFalse(enablement.gateway_enabled)
         self.assertFalse(enablement.gateway_staged)
-        self.assertFalse(enablement.gateway_execution_configured)
+        self.assertTrue(enablement.gateway_execution_configured)
         self.assertFalse(enablement.production_execution_allowed)
         self.assertTrue(enablement.production_root_hard_deny)
         self.assertTrue(enablement.valid)
@@ -120,7 +121,7 @@ class TestGatewayEnablementLoader(unittest.TestCase):
         self.assertEqual(enablement.gateway_state, GATEWAY_STATE_ENABLED)
         self.assertTrue(enablement.gateway_enabled)
         self.assertFalse(enablement.gateway_staged)
-        self.assertFalse(enablement.gateway_execution_configured)
+        self.assertTrue(enablement.gateway_execution_configured)
         self.assertFalse(enablement.production_execution_allowed)
         self.assertTrue(enablement.production_root_hard_deny)
         self.assertTrue(enablement.valid)
@@ -206,13 +207,13 @@ class TestGatewayProductionIntegration(unittest.TestCase):
         gateway = next(check for check in summary.checks if check.name == "gateway")
         self.assertEqual(gateway.status, CHECK_BLOCKED)
 
-    def test_enabled_readiness_gateway_fail(self) -> None:
+    def test_enabled_readiness_gateway_blocked(self) -> None:
         summary = evaluate_dispatch_production_readiness(
             merged_config=_gateway_config("enabled"),
         )
         gateway = next(check for check in summary.checks if check.name == "gateway")
-        self.assertEqual(gateway.status, CHECK_FAIL)
-        self.assertEqual(summary.overall, OVERALL_NOT_READY)
+        self.assertEqual(gateway.status, CHECK_BLOCKED)
+        self.assertEqual(summary.overall, OVERALL_READY)
 
     def test_invalid_config_readiness_gateway_fail(self) -> None:
         config = _gateway_config("enabled")
@@ -254,7 +255,7 @@ class TestGatewayProductionIntegration(unittest.TestCase):
             )
         self.assertFalse(summary.signoff_ready)
         self.assertTrue(summary.gateway_enabled)
-        self.assertIn("gateway_disabled", summary.failed_checks)
+        self.assertIn("gateway_disabled", summary.blocked_checks)
 
     def test_enabled_cutover_gateway_fail(self) -> None:
         from tests.hermes_cli.test_coo_dispatch_production_signoff import (
@@ -265,7 +266,7 @@ class TestGatewayProductionIntegration(unittest.TestCase):
             summary = evaluate_production_cutover_checklist(
                 merged_config=_gateway_config("enabled"),
             )
-        self.assertIn("gateway_disabled", summary.failed_checks)
+        self.assertIn("gateway_disabled", summary.blocked_checks)
         self.assertTrue(summary.gateway_enabled)
 
 
@@ -281,7 +282,9 @@ class TestGatewayStatusCli(unittest.TestCase):
         self.assertIn("gateway_state: disabled", output)
         self.assertIn("gateway_enabled: false", output)
         self.assertIn("gateway_staged: false", output)
-        self.assertIn("gateway_execution_configured: false", output)
+        self.assertIn("gateway_execution_configured: true", output)
+        self.assertIn("facade_connected: true", output)
+        self.assertIn("execution_enabled: false", output)
         self.assertIn("production_execution_allowed: false", output)
         self.assertIn("production_root_hard_deny: true", output)
         self.assertIn("recommended_next_phase:", output)
@@ -314,7 +317,7 @@ class TestGatewayStatusCli(unittest.TestCase):
         )
         self.assertEqual(
             resolve_gateway_recommended_next_phase(enabled),
-            RECOMMENDED_NEXT_PHASE_ENABLED_NO_FACADE,
+            RECOMMENDED_NEXT_PHASE_ENABLED_READY,
         )
 
 

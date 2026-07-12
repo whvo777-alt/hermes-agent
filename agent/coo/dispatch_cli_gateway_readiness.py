@@ -49,13 +49,13 @@ RECOMMENDED_ACTION_IMPLEMENT_FACADE = "implement_gateway_execution_facade"
 RECOMMENDED_ACTION_RESOLVE_FACADE_GAP = "resolve_gateway_facade_gap"
 RECOMMENDED_ACTION_RESOLVE_FAILED_CHECKS = "resolve_failed_gateway_readiness_checks"
 
-RECOMMENDED_NEXT_PHASE_DISABLED = "Phase 13H Connect Gateway Execution Facade"
-RECOMMENDED_NEXT_PHASE_STAGED_READY = "Phase 13H Connect Gateway Execution Facade"
+RECOMMENDED_NEXT_PHASE_DISABLED = "Phase 13I Mock Gateway Dispatch"
+RECOMMENDED_NEXT_PHASE_STAGED_READY = "Phase 13I Mock Gateway Dispatch"
 RECOMMENDED_NEXT_PHASE_ENABLED_NO_FACADE = (
     "Phase 13H Connect Gateway Execution Facade"
 )
 RECOMMENDED_NEXT_PHASE_NOT_READY = (
-    "Resolve failing gateway readiness checks before Phase 13H."
+    "Resolve failing gateway readiness checks before Phase 13I."
 )
 
 EVIDENCE_CONTEXT_NONE = "none"
@@ -161,13 +161,18 @@ def _probe_gateway_prepare_surface_available() -> bool:
 
 
 def _probe_unexpected_mutating_facade_marker() -> bool:
-    try:
-        module = importlib.import_module("agent.coo.dispatch_gateway_execution_facade")
-    except ImportError:
+    from agent.coo.dispatch_gateway_execution_facade import (
+        evaluate_gateway_execution_facade,
+    )
+
+    facade = evaluate_gateway_execution_facade()
+    if not facade.valid:
         return False
-    if getattr(module, "GATEWAY_EXECUTION_FACADE_CONNECTED", False) is True:
+    if facade.facade_connected and not facade.execution_enabled:
         return False
-    return callable(getattr(module, "execute_gateway_dispatch_run", None))
+    if facade.execution_enabled and facade.production_execution_allowed:
+        return True
+    return False
 
 
 def _resolve_evidence_context(
@@ -197,13 +202,22 @@ def _evaluate_enablement_state_check(enablement) -> str:
 
 
 def _evaluate_facade_check(enablement) -> str:
+    from agent.coo.dispatch_gateway_execution_facade import (
+        evaluate_gateway_execution_facade,
+    )
+
     if not enablement.valid:
         return CHECK_FAIL
-    if enablement.gateway_execution_configured:
-        return CHECK_PASS
-    if enablement.gateway_state == GATEWAY_STATE_ENABLED:
+    facade = evaluate_gateway_execution_facade()
+    if not facade.valid or not facade.facade_connected:
+        if enablement.gateway_state == GATEWAY_STATE_ENABLED:
+            return CHECK_FAIL
+        return CHECK_BLOCKED
+    if facade.execution_enabled and facade.production_execution_allowed:
         return CHECK_FAIL
-    return CHECK_BLOCKED
+    if not facade.execution_enabled:
+        return CHECK_BLOCKED
+    return CHECK_PASS
 
 
 def _evaluate_bundle_available(
