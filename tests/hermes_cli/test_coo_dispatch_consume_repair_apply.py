@@ -87,15 +87,9 @@ class _RepairApplyFixture(_CooDispatchRunFixture):
             return_value=self.hermes_home,
         )
         self.repair_audit_home_patch.start()
-        self.repair_lock_home_patch = patch(
-            "agent.coo.dispatch_consume_repair_lock.get_hermes_home",
-            return_value=self.hermes_home,
-        )
-        self.repair_lock_home_patch.start()
         self.repair_audit_dir = self.hermes_home / "coo" / "consume-repair-audit"
 
     def stop(self) -> None:
-        self.repair_lock_home_patch.stop()
         self.repair_audit_home_patch.stop()
         super().stop()
 
@@ -289,10 +283,6 @@ class TestPreparedCleanupApplySuccess(_RepairApplyBase):
             patch.dict("os.environ", {"HERMES_HOME": str(self.fixture.hermes_home)}),
             patch(
                 "agent.coo.dispatch_consume_transaction.get_hermes_home",
-                return_value=self.fixture.hermes_home,
-            ),
-            patch(
-                "agent.coo.dispatch_consume_repair_lock.get_hermes_home",
                 return_value=self.fixture.hermes_home,
             ),
             patch(

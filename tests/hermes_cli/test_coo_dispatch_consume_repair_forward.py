@@ -272,10 +272,6 @@ class TestPartialForwardCompleteSuccess(_ForwardCompleteBase):
                 return_value=self.fixture.hermes_home,
             ),
             patch(
-                "agent.coo.dispatch_consume_repair_lock.get_hermes_home",
-                return_value=self.fixture.hermes_home,
-            ),
-            patch(
                 "agent.coo.dispatch_consume_repair_audit.get_hermes_home",
                 return_value=self.fixture.hermes_home,
             ),
@@ -515,15 +511,18 @@ class TestPartialForwardCompleteFailureHandling(_ForwardCompleteBase):
         self.assertEqual(audit_payload["outcome"], "failed")
         self.assertEqual(audit_payload["consume_state_after"], "recovery_required")
 
-        # The inconsistency is not hidden: consume status fails closed.
-        with self.assertRaises(ValueError):
-            assess_consume_status(
-                ticket_id=ticket_id,
-                confirmation_id=confirmation_id,
-                bundle_dir=self.fixture.bundle_dir,
-                confirmation_dir=self.fixture.confirmation_dir,
-                transaction_dir=self.fixture.transaction_dir,
-            )
+        # Known recovery-required inconsistency is surfaced explicitly.
+        status = assess_consume_status(
+            ticket_id=ticket_id,
+            confirmation_id=confirmation_id,
+            bundle_dir=self.fixture.bundle_dir,
+            confirmation_dir=self.fixture.confirmation_dir,
+            transaction_dir=self.fixture.transaction_dir,
+            repair_audit_dir=self.fixture.repair_audit_dir,
+        )
+        self.assertEqual(status.consume_state, "recovery_required")
+        self.assertTrue(status.recovery_required)
+        self.assertTrue(status.repair_attempt_id)
 
 
 class TestPartialForwardCompleteSafety(_ForwardCompleteBase):

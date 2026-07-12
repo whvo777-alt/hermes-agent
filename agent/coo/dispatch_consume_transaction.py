@@ -37,6 +37,7 @@ CONSUME_STATE_COMMITTED = "committed"
 CONSUME_STATE_PARTIAL = "partial"
 CONSUME_STATE_LEGACY_COMMITTED = "legacy_committed"
 CONSUME_STATE_LEGACY_PARTIAL = "legacy_partial"
+CONSUME_STATE_RECOVERY_REQUIRED = "recovery_required"
 
 _KNOWN_TRANSACTION_STATES = frozenset(
     {
@@ -108,6 +109,7 @@ class CooDispatchConsumeStatus:
     bundle_consumed: bool
     confirmation_consumed: bool
     recovery_required: bool
+    repair_attempt_id: str = ""
 
 
 def _utc_now_iso() -> str:
@@ -455,6 +457,7 @@ def assess_consume_status(
     bundle_dir: Path | None = None,
     confirmation_dir: Path | None = None,
     transaction_dir: Path | None = None,
+    repair_audit_dir: Path | None = None,
 ) -> CooDispatchConsumeStatus:
     """Derive read-only consume status for bundle + confirmation pair."""
     normalized_ticket_id = _normalize_pair_id(ticket_id, field_name="ticket_id")
@@ -474,6 +477,29 @@ def assess_consume_status(
         transaction_dir=transaction_dir,
     )
     active_transaction = active_consume_transaction(transaction)
+    if active_transaction is not None:
+        from agent.coo.dispatch_consume_recovery_required import (
+            try_resolve_known_recovery_required,
+        )
+
+        recovery_context = try_resolve_known_recovery_required(
+            ticket_id=normalized_ticket_id,
+            confirmation_id=normalized_confirmation_id,
+            bundle_consumed=bundle_consumed,
+            confirmation_consumed=confirmation_consumed,
+            transaction=active_transaction,
+            repair_audit_dir=repair_audit_dir,
+        )
+        if recovery_context is not None:
+            return CooDispatchConsumeStatus(
+                consume_state=CONSUME_STATE_RECOVERY_REQUIRED,
+                transaction_id=active_transaction.transaction_id,
+                execution_attempt_id=active_transaction.execution_attempt_id,
+                bundle_consumed=bundle_consumed,
+                confirmation_consumed=confirmation_consumed,
+                recovery_required=True,
+                repair_attempt_id=recovery_context.repair_attempt_id,
+            )
     consume_state = _derive_consume_state(
         bundle_consumed=bundle_consumed,
         confirmation_consumed=confirmation_consumed,
@@ -482,6 +508,7 @@ def assess_consume_status(
     recovery_required = consume_state in {
         CONSUME_STATE_PARTIAL,
         CONSUME_STATE_LEGACY_PARTIAL,
+        CONSUME_STATE_RECOVERY_REQUIRED,
     }
     return CooDispatchConsumeStatus(
         consume_state=consume_state,
@@ -502,6 +529,7 @@ def assert_consume_replay_allowed(
     bundle_dir: Path | None = None,
     confirmation_dir: Path | None = None,
     transaction_dir: Path | None = None,
+    repair_audit_dir: Path | None = None,
 ) -> CooDispatchConsumeStatus:
     """Fail-closed when replay must not proceed for consume state."""
     status = assess_consume_status(
@@ -510,6 +538,7 @@ def assert_consume_replay_allowed(
         bundle_dir=bundle_dir,
         confirmation_dir=confirmation_dir,
         transaction_dir=transaction_dir,
+        repair_audit_dir=repair_audit_dir,
     )
     if status.consume_state == CONSUME_STATE_UNCONSUMED:
         return status
@@ -526,6 +555,10 @@ def assert_consume_replay_allowed(
     }:
         raise ValueError(
             "Dispatch consume is in a partial state; manual recovery is required before replay."
+        )
+    if status.consume_state == CONSUME_STATE_RECOVERY_REQUIRED:
+        raise ValueError(
+            "Dispatch consume requires manual recovery; replay is not permitted."
         )
     if status.consume_state == CONSUME_STATE_PREPARED:
         raise ValueError(

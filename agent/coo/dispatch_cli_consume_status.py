@@ -26,6 +26,7 @@ class CooDispatchConsumeStatusSummary:
     bundle_consumed: bool
     confirmation_consumed: bool
     recovery_required: bool
+    repair_attempt_id: str = ""
 
 
 def summarize_dispatch_consume_status(
@@ -58,6 +59,7 @@ def _to_summary(status: CooDispatchConsumeStatus) -> CooDispatchConsumeStatusSum
         bundle_consumed=status.bundle_consumed,
         confirmation_consumed=status.confirmation_consumed,
         recovery_required=status.recovery_required,
+        repair_attempt_id=status.repair_attempt_id,
     )
 
 
@@ -72,5 +74,6 @@ def format_dispatch_consume_status_summary(
         f"bundle_consumed: {str(summary.bundle_consumed).lower()}",
         f"confirmation_consumed: {str(summary.confirmation_consumed).lower()}",
         f"recovery_required: {str(summary.recovery_required).lower()}",
+        f"repair_attempt_id: {summary.repair_attempt_id or '(none)'}",
     )
     return "\n".join(lines)

@@ -341,6 +341,60 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     consume_repair_apply_parser.set_defaults(handler=_cmd_consume_repair_apply)
 
+    consume_repair_audit_parser = consume_repair_subparsers.add_parser(
+        "audit",
+        help="Read-only consume repair audit inspection",
+    )
+    consume_repair_audit_subparsers = consume_repair_audit_parser.add_subparsers(
+        dest="coo_dispatch_consume_repair_audit_command",
+        required=True,
+    )
+    consume_repair_audit_show_parser = consume_repair_audit_subparsers.add_parser(
+        "show",
+        help="Show one consume repair audit record",
+    )
+    consume_repair_audit_show_parser.add_argument(
+        "--repair-attempt-id",
+        required=True,
+        help="Consume repair attempt id",
+    )
+    consume_repair_audit_show_parser.set_defaults(handler=_cmd_consume_repair_audit_show)
+
+    consume_repair_audit_list_parser = consume_repair_audit_subparsers.add_parser(
+        "list",
+        help="List consume repair audit records newest-first",
+    )
+    consume_repair_audit_list_parser.add_argument(
+        "--ticket-id",
+        default="",
+        help="Optional ticket id filter",
+    )
+    consume_repair_audit_list_parser.set_defaults(handler=_cmd_consume_repair_audit_list)
+
+    consume_repair_lock_parser = consume_repair_subparsers.add_parser(
+        "lock",
+        help="Read-only consume repair lock diagnosis",
+    )
+    consume_repair_lock_subparsers = consume_repair_lock_parser.add_subparsers(
+        dest="coo_dispatch_consume_repair_lock_command",
+        required=True,
+    )
+    consume_repair_lock_status_parser = consume_repair_lock_subparsers.add_parser(
+        "status",
+        help="Probe consume repair lock state for a consume pair",
+    )
+    consume_repair_lock_status_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id (bundle file key)",
+    )
+    consume_repair_lock_status_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    consume_repair_lock_status_parser.set_defaults(handler=_cmd_consume_repair_lock_status)
+
     enablement_parser = subparsers.add_parser(
         "enablement",
         help="Read-only production runner enablement checks",
@@ -657,6 +711,62 @@ def _cmd_consume_repair_apply(args: argparse.Namespace) -> int:
 
     print(format_dispatch_consume_repair_apply_result(result))
     return exit_code
+
+
+def _cmd_consume_repair_audit_show(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_consume_repair_audit import (
+        format_dispatch_consume_repair_audit_summary,
+        summarize_consume_repair_audit,
+    )
+
+    try:
+        summary = summarize_consume_repair_audit(
+            repair_attempt_id=args.repair_attempt_id,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_consume_repair_audit_summary(summary))
+    return 0
+
+
+def _cmd_consume_repair_audit_list(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_consume_repair_audit import (
+        format_dispatch_consume_repair_audit_summary,
+        list_consume_repair_audit_summaries,
+    )
+
+    ticket_id = args.ticket_id or None
+    summaries = list_consume_repair_audit_summaries(ticket_id=ticket_id)
+    if not summaries:
+        print("(none)")
+        return 0
+    rendered = [
+        format_dispatch_consume_repair_audit_summary(summary)
+        for summary in summaries
+    ]
+    print("\n---\n".join(rendered))
+    return 0
+
+
+def _cmd_consume_repair_lock_status(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_consume_repair_lock import (
+        format_dispatch_consume_repair_lock_status,
+        summarize_consume_repair_lock_status,
+    )
+
+    try:
+        status = summarize_consume_repair_lock_status(
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_consume_repair_lock_status(status))
+    return 0
 
 
 def _cmd_enablement_check(args: argparse.Namespace) -> int:

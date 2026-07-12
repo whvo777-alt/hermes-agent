@@ -22,6 +22,7 @@ from agent.coo.dispatch_consume_transaction import (
     CONSUME_STATE_LEGACY_PARTIAL,
     CONSUME_STATE_PARTIAL,
     CONSUME_STATE_PREPARED,
+    CONSUME_STATE_RECOVERY_REQUIRED,
     CONSUME_STATE_UNCONSUMED,
     DispatchConsumeTransactionError,
     assess_consume_status,
@@ -42,6 +43,7 @@ _KNOWN_CONSUME_STATES = frozenset(
         CONSUME_STATE_PARTIAL,
         CONSUME_STATE_LEGACY_COMMITTED,
         CONSUME_STATE_LEGACY_PARTIAL,
+        CONSUME_STATE_RECOVERY_REQUIRED,
     }
 )
 
@@ -63,6 +65,8 @@ class CooDispatchConsumeRecoveryAssessment:
     retry_allowed: bool
     recovery_risk: bool
     evidence_success: bool = False
+    repair_audit_present: bool = False
+    repair_attempt_id: str = ""
 
 
 def _recovery_required_for_state(consume_state: str, status_recovery_required: bool) -> bool:
@@ -78,7 +82,11 @@ def _recommended_action_for_state(consume_state: str) -> str:
         return RECOMMENDED_ACTION_NONE
     if consume_state == CONSUME_STATE_PREPARED:
         return RECOMMENDED_ACTION_INSPECT_STALE_TRANSACTION
-    if consume_state in {CONSUME_STATE_PARTIAL, CONSUME_STATE_LEGACY_PARTIAL}:
+    if consume_state in {
+        CONSUME_STATE_PARTIAL,
+        CONSUME_STATE_LEGACY_PARTIAL,
+        CONSUME_STATE_RECOVERY_REQUIRED,
+    }:
         return RECOMMENDED_ACTION_MANUAL_RECOVERY_REQUIRED
     raise ValueError(f"Dispatch consume state {consume_state!r} is unknown.")
 
@@ -164,6 +172,7 @@ def assess_dispatch_consume_recovery(
     transaction_dir: Path | None = None,
     audit_dir: Path | None = None,
     evidence_dir: Path | None = None,
+    repair_audit_dir: Path | None = None,
 ) -> CooDispatchConsumeRecoveryAssessment:
     """Build read-only recovery assessment for bundle + confirmation pair."""
     normalized_ticket_id = _normalize_ticket_id(ticket_id)
@@ -175,6 +184,7 @@ def assess_dispatch_consume_recovery(
             bundle_dir=bundle_dir,
             confirmation_dir=confirmation_dir,
             transaction_dir=transaction_dir,
+            repair_audit_dir=repair_audit_dir,
         )
     except (DispatchConsumeTransactionError, KeyError, ValueError) as exc:
         raise ValueError(str(exc)) from exc
@@ -193,6 +203,11 @@ def assess_dispatch_consume_recovery(
     evidence_present = False
     correlation_valid = True
     evidence_success = False
+    repair_audit_present = False
+    repair_attempt_id = status.repair_attempt_id
+
+    if status.consume_state == CONSUME_STATE_RECOVERY_REQUIRED:
+        repair_audit_present = bool(repair_attempt_id)
 
     if status.execution_attempt_id:
         resolved_audit_dir = audit_dir or default_audit_dir()
@@ -231,6 +246,8 @@ def assess_dispatch_consume_recovery(
         retry_allowed=retry_allowed,
         recovery_risk=recovery_risk_flag,
         evidence_success=evidence_success,
+        repair_audit_present=repair_audit_present,
+        repair_attempt_id=repair_attempt_id,
     )
 
 
@@ -251,5 +268,7 @@ def format_dispatch_consume_recovery_assessment(
         f"correlation_valid: {str(assessment.correlation_valid).lower()}",
         f"retry_allowed: {str(assessment.retry_allowed).lower()}",
         f"recovery_risk: {str(assessment.recovery_risk).lower()}",
+        f"repair_audit_present: {str(assessment.repair_audit_present).lower()}",
+        f"repair_attempt_id: {assessment.repair_attempt_id or '(none)'}",
     )
     return "\n".join(lines)

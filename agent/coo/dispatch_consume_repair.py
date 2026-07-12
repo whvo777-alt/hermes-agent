@@ -30,6 +30,7 @@ from agent.coo.dispatch_consume_transaction import (
     CONSUME_STATE_LEGACY_PARTIAL,
     CONSUME_STATE_PARTIAL,
     CONSUME_STATE_PREPARED,
+    CONSUME_STATE_RECOVERY_REQUIRED,
     CONSUME_STATE_UNCONSUMED,
     DispatchConsumeTransactionError,
     abort_prepared_consume_transaction,
@@ -56,6 +57,7 @@ BLOCKED_MISSING_AUDIT_FOR_PARTIAL = "missing_audit_for_partial"
 BLOCKED_MISSING_EVIDENCE_FOR_PARTIAL = "missing_evidence_for_partial"
 BLOCKED_CORRELATION_INVALID = "correlation_invalid"
 BLOCKED_EVIDENCE_NOT_SUCCESSFUL = "evidence_not_successful"
+BLOCKED_RECOVERY_REQUIRED_MANUAL_ONLY = "recovery_required_manual_only"
 
 REQUIRED_CONSUME_REPAIR_PHRASE = "CONFIRM-CONSUME-REPAIR"
 
@@ -150,6 +152,9 @@ def _eligibility_from_recovery(
     elif state == CONSUME_STATE_LEGACY_PARTIAL:
         repair_action = REPAIR_ACTION_BLOCKED
         blocked_reason = BLOCKED_LEGACY_PARTIAL_MANUAL_ONLY
+    elif state == CONSUME_STATE_RECOVERY_REQUIRED:
+        repair_action = REPAIR_ACTION_BLOCKED
+        blocked_reason = BLOCKED_RECOVERY_REQUIRED_MANUAL_ONLY
     elif state == CONSUME_STATE_PREPARED:
         if assessment.bundle_consumed or assessment.confirmation_consumed:
             repair_action = REPAIR_ACTION_BLOCKED
@@ -207,6 +212,7 @@ def evaluate_consume_repair_eligibility(
     transaction_dir: Path | None = None,
     audit_dir: Path | None = None,
     evidence_dir: Path | None = None,
+    repair_audit_dir: Path | None = None,
 ) -> CooDispatchConsumeRepairEligibility:
     """Evaluate read-only repair dry-run eligibility for a consume pair."""
     operator_valid = validate_repair_operator_fields(
@@ -225,6 +231,7 @@ def evaluate_consume_repair_eligibility(
         transaction_dir=transaction_dir,
         audit_dir=audit_dir,
         evidence_dir=evidence_dir,
+        repair_audit_dir=repair_audit_dir,
     )
     return _eligibility_from_recovery(assessment, operator_valid=operator_valid)
 

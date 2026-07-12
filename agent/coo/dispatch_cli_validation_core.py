@@ -43,6 +43,7 @@ STEP_BUNDLE_PERSISTENCE = "bundle_persistence"
 STEP_CONFIRMATION_PERSISTENCE = "confirmation_persistence"
 STEP_PIPELINE_ROOT_ATTESTATION = "pipeline_root_attestation"
 STEP_CONSUME_TRANSACTION = "consume_transaction"
+STEP_REPAIR_LOCK = "repair_lock"
 STEP_POLICY_PREFLIGHT = "policy_preflight"
 
 
@@ -164,6 +165,7 @@ def validate_dispatch_pre_run(
                 "prepared but not committed",
                 "manual recovery",
                 "blocks replay",
+                "requires manual recovery",
             )
         ):
             raise_dispatch_pre_run_failure(
@@ -171,6 +173,25 @@ def validate_dispatch_pre_run(
                 exc,
                 config_valid=True,
             )
+
+    from agent.coo.dispatch_consume_repair_lock import probe_consume_repair_pair_lock
+
+    resolved_transaction_dir = transaction_dir
+    if resolved_transaction_dir is None:
+        from agent.coo.dispatch_consume_transaction import default_consume_transaction_dir
+
+        resolved_transaction_dir = default_consume_transaction_dir()
+    lock_status = probe_consume_repair_pair_lock(
+        normalized_ticket_id,
+        normalized_confirmation_id,
+        transaction_dir=resolved_transaction_dir,
+    )
+    if lock_status.repair_in_progress:
+        raise_dispatch_pre_run_failure(
+            STEP_REPAIR_LOCK,
+            ValueError("Consume repair lock is already held."),
+            config_valid=True,
+        )
 
     try:
         bundle = load_validated_dispatch_bundle_for_cli(
