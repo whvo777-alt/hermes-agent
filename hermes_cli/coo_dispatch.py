@@ -549,6 +549,23 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     pilot_regression_parser.set_defaults(handler=_cmd_pilot_regression)
 
+    pilot_runbook_parser = pilot_subparsers.add_parser(
+        "runbook",
+        help="Show read-only isolated operational pilot drill runbook",
+    )
+    pilot_runbook_parser.add_argument(
+        "--ticket-id",
+        default=None,
+        help="Optional ticket id to scope history and regression",
+    )
+    pilot_runbook_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional limit for recent pilot history records",
+    )
+    pilot_runbook_parser.set_defaults(handler=_cmd_pilot_runbook)
+
     pilot_history_parser = pilot_subparsers.add_parser(
         "history",
         help="Read-only isolated operational pilot history commands",
@@ -1089,6 +1106,27 @@ def _cmd_pilot_regression(args: argparse.Namespace) -> int:
 
     print(format_pilot_regression_summary(summary))
     return 1 if summary.regression_status == REGRESSION_STATUS_FAIL else 0
+
+
+def _cmd_pilot_runbook(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_pilot_runbook import (
+        format_pilot_drill_runbook,
+        summarize_pilot_drill_runbook,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        summary = summarize_pilot_drill_runbook(
+            ticket_id=args.ticket_id,
+            limit=args.limit,
+            merged_config=load_config(),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_pilot_drill_runbook(summary))
+    return 0 if summary.pilot_runbook_ready else 1
 
 
 def _cmd_pilot_history_show(args: argparse.Namespace) -> int:

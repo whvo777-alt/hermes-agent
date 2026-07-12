@@ -50,6 +50,8 @@ class CooDispatchPilotRunOutcome:
     exit_code: int
     history_persisted: bool
     history_persistence_failed: bool
+    regression_gate: str = "clear"
+    regression_gate_blocked: bool = False
     run_result: "CooDispatchRunResult | None" = None
     run_error: str = ""
 
@@ -294,6 +296,11 @@ def execute_pilot_dispatch_run(
     """Run isolated pilot dispatch and persist append-only pilot history."""
     from agent.coo.dispatch_cli_pilot_history import (
         build_pilot_history_record_from_dispatch,
+        build_pilot_history_record_from_policy_block,
+    )
+    from agent.coo.dispatch_cli_pilot_regression_gate import (
+        REGRESSION_GATE_BLOCKED_FOR_LIVE,
+        evaluate_pilot_regression_gate,
     )
     from agent.coo.dispatch_cli_run import CooDispatchRunResult, execute_coo_dispatch_run
     from agent.coo.dispatch_cli_runner_injection import resolve_dispatch_run_subprocess_runner
@@ -302,6 +309,38 @@ def execute_pilot_dispatch_run(
 
     pilot_attempt_id = str(uuid.uuid4())
     started_at = _utc_now_iso()
+    gate = evaluate_pilot_regression_gate(
+        ticket_id=ticket_id,
+        dry_run=dry_run,
+    )
+
+    if not dry_run and not gate.live_pilot_allowed:
+        completed_at = _utc_now_iso()
+        record = build_pilot_history_record_from_policy_block(
+            pilot_attempt_id=pilot_attempt_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            ticket_id=ticket_id,
+            confirmation_id=confirmation_id,
+            pilot_summary=pilot_summary,
+        )
+        history_persisted = False
+        try:
+            write_pilot_history_record(record)
+            history_persisted = True
+        except ValueError:
+            history_persisted = False
+        return CooDispatchPilotRunOutcome(
+            pilot_attempt_id=pilot_attempt_id,
+            exit_code=1,
+            history_persisted=history_persisted,
+            history_persistence_failed=not history_persisted,
+            regression_gate=REGRESSION_GATE_BLOCKED_FOR_LIVE,
+            regression_gate_blocked=True,
+            run_result=None,
+            run_error="regression gate blocked live pilot run",
+        )
+
     run_result: CooDispatchRunResult | None = None
     run_error = ""
     dispatch_request_id = ""
@@ -364,6 +403,8 @@ def execute_pilot_dispatch_run(
         exit_code=exit_code,
         history_persisted=history_persisted,
         history_persistence_failed=not history_persisted,
+        regression_gate=gate.regression_gate,
+        regression_gate_blocked=False,
         run_result=run_result,
         run_error=run_error,
     )
@@ -395,8 +436,11 @@ def format_dispatch_pilot_run_outcome(outcome: CooDispatchPilotRunOutcome) -> st
         "Pilot Run",
         "---------",
         f"pilot_attempt_id: {outcome.pilot_attempt_id}",
+        f"regression_gate: {outcome.regression_gate}",
         f"history_persisted: {str(outcome.history_persisted).lower()}",
     ]
+    if outcome.regression_gate_blocked:
+        lines.append("regression_gate_blocked: true")
     if outcome.history_persistence_failed:
         lines.append("history_persistence_failed: true")
     return "\n".join(lines)

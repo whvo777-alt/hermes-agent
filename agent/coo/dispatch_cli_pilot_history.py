@@ -264,6 +264,39 @@ def build_pilot_history_record_from_dispatch(
     )
 
 
+def build_pilot_history_record_from_policy_block(
+    *,
+    pilot_attempt_id: str,
+    started_at: str,
+    completed_at: str,
+    ticket_id: str,
+    confirmation_id: str,
+    pilot_summary: CooDispatchPilotReadinessSummary,
+) -> CooDispatchPilotHistoryRecord:
+    """Build a policy-blocked pilot history record without dispatch execution."""
+    return CooDispatchPilotHistoryRecord(
+        version=PILOT_HISTORY_VERSION,
+        pilot_attempt_id=pilot_attempt_id,
+        execution_attempt_id="",
+        ticket_id=ticket_id,
+        confirmation_id=confirmation_id,
+        dispatch_run_id="",
+        execution_scope=EXECUTION_SCOPE_ISOLATED_CLONE,
+        status=PILOT_STATUS_FAILURE,
+        exit_code=1,
+        dry_run=False,
+        started_at=started_at,
+        completed_at=completed_at,
+        evidence_present=False,
+        audit_present=False,
+        consumed=False,
+        failure_reason_code=FAILURE_REASON_POLICY_BLOCKED,
+        production_execution_allowed=False,
+        production_root_hard_deny=pilot_summary.production_root_hard_deny,
+        gateway_enabled=pilot_summary.gateway_enabled,
+    )
+
+
 def summarize_pilot_history_record(
     pilot_attempt_id: str,
     *,
