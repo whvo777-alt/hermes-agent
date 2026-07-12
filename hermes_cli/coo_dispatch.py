@@ -419,6 +419,20 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     operator_runbook_parser.set_defaults(handler=_cmd_operator_runbook)
 
+    production_parser = subparsers.add_parser(
+        "production",
+        help="Read-only production readiness review commands",
+    )
+    production_subparsers = production_parser.add_subparsers(
+        dest="coo_dispatch_production_command",
+        required=True,
+    )
+    production_readiness_parser = production_subparsers.add_parser(
+        "readiness",
+        help="Evaluate dispatch production readiness without mutating state",
+    )
+    production_readiness_parser.set_defaults(handler=_cmd_production_readiness)
+
     enablement_parser = subparsers.add_parser(
         "enablement",
         help="Read-only production runner enablement checks",
@@ -812,6 +826,19 @@ def _cmd_operator_runbook(args: argparse.Namespace) -> int:
 
     print(format_dispatch_operator_runbook(summary))
     return 0
+
+
+def _cmd_production_readiness(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_production_readiness import (
+        OVERALL_NOT_READY,
+        format_dispatch_production_readiness,
+        evaluate_dispatch_production_readiness,
+    )
+    from hermes_cli.config import load_config
+
+    summary = evaluate_dispatch_production_readiness(merged_config=load_config())
+    print(format_dispatch_production_readiness(summary))
+    return 0 if summary.overall != OVERALL_NOT_READY else 1
 
 
 def _cmd_enablement_check(args: argparse.Namespace) -> int:
