@@ -10,6 +10,10 @@ import importlib
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from agent.coo.dispatch_gateway_enablement import (
+    gateway_execution_intentionally_blocked,
+    load_dispatch_gateway_enablement,
+)
 from agent.coo.dispatch_pipeline_root_trust import PRODUCTION_ROOT_HARD_DENY
 
 CHECK_PASS = "PASS"
@@ -90,15 +94,6 @@ def _production_root_hard_deny_active() -> bool:
             continue
         return False
     return True
-
-
-def _gateway_production_execution_disabled() -> bool:
-    try:
-        dispatcher = importlib.import_module("agent.coo.gateway_execution_dispatcher")
-    except ImportError:
-        return False
-    forbidden = ("execute", "run", "dispatch_now")
-    return not any(hasattr(dispatcher, name) for name in forbidden)
 
 
 def _evaluate_binding_check() -> str:
@@ -226,13 +221,20 @@ def _evaluate_repository2_policy_check() -> str:
     return CHECK_FAIL
 
 
-def _evaluate_gateway_check() -> str:
-    if _gateway_production_execution_disabled():
-        return CHECK_BLOCKED
-    return CHECK_FAIL
+def _evaluate_gateway_check(
+    *,
+    merged_config: Mapping[str, Any] | None = None,
+) -> str:
+    from agent.coo.dispatch_gateway_enablement import evaluate_gateway_production_check
+
+    enablement = load_dispatch_gateway_enablement(merged_config=merged_config)
+    return evaluate_gateway_production_check(enablement)
 
 
-def _build_checks() -> tuple[CooDispatchProductionReadinessCheck, ...]:
+def _build_checks(
+    *,
+    merged_config: Mapping[str, Any] | None = None,
+) -> tuple[CooDispatchProductionReadinessCheck, ...]:
     return (
         CooDispatchProductionReadinessCheck("binding", _evaluate_binding_check()),
         CooDispatchProductionReadinessCheck("provider", _evaluate_provider_check()),
@@ -259,13 +261,20 @@ def _build_checks() -> tuple[CooDispatchProductionReadinessCheck, ...]:
             "repository2_policy",
             _evaluate_repository2_policy_check(),
         ),
-        CooDispatchProductionReadinessCheck("gateway", _evaluate_gateway_check()),
+        CooDispatchProductionReadinessCheck(
+            "gateway",
+            _evaluate_gateway_check(merged_config=merged_config),
+        ),
     )
 
 
-def _repository2_policy_summary() -> CooDispatchRepository2PolicySummary:
+def _repository2_policy_summary(
+    *,
+    merged_config: Mapping[str, Any] | None = None,
+) -> CooDispatchRepository2PolicySummary:
     hard_deny = _production_root_hard_deny_active()
-    gateway_disabled = _gateway_production_execution_disabled()
+    enablement = load_dispatch_gateway_enablement(merged_config=merged_config)
+    gateway_disabled = gateway_execution_intentionally_blocked(enablement)
     return CooDispatchRepository2PolicySummary(
         production_root_hard_deny=_policy_enabled(hard_deny),
         read_only_only=_policy_enabled(True),
@@ -279,8 +288,7 @@ def evaluate_dispatch_production_readiness(
     merged_config: Mapping[str, Any] | None = None,
 ) -> CooDispatchProductionReadinessSummary:
     """Evaluate read-only dispatch production readiness."""
-    _ = merged_config  # reserved for future config-aware checks; no writes
-    checks = _build_checks()
+    checks = _build_checks(merged_config=merged_config)
     blocking = tuple(
         check.name for check in checks if check.status == CHECK_FAIL
     )
@@ -293,7 +301,7 @@ def evaluate_dispatch_production_readiness(
     return CooDispatchProductionReadinessSummary(
         overall=overall,
         checks=checks,
-        repository2_policy=_repository2_policy_summary(),
+        repository2_policy=_repository2_policy_summary(merged_config=merged_config),
         blocking_items=blocking,
         recommended_next_phase=recommended,
     )

@@ -3131,6 +3131,9 @@ DEFAULT_CONFIG = {
                 "enabled": False,
                 "allowed_pipeline_roots": [],
             },
+            "gateway": {
+                "enablement": "disabled",
+            },
         },
     },
 

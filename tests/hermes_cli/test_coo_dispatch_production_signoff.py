@@ -177,14 +177,16 @@ class TestProductionSignoffFailClosed(unittest.TestCase):
         self.assertIn("execution_disabled", summary.failed_checks)
 
     def test_gateway_enabled_makes_signoff_not_ready(self) -> None:
-        with (
-            _successful_attestation(),
-            patch(
-                "agent.coo.dispatch_cli_production_signoff._gateway_production_execution_disabled",
-                return_value=False,
-            ),
-        ):
-            summary = evaluate_dispatch_production_signoff()
+        with _successful_attestation():
+            summary = evaluate_dispatch_production_signoff(
+                merged_config={
+                    "coo": {
+                        "dispatch": {
+                            "gateway": {"enablement": "enabled"},
+                        },
+                    },
+                },
+            )
         self.assertFalse(summary.signoff_ready)
         self.assertTrue(summary.gateway_enabled)
         self.assertIn("gateway_disabled", summary.failed_checks)

@@ -23,13 +23,16 @@ from agent.coo.dispatch_cli_production_readiness import (
     _evaluate_recovery_check,
     _evaluate_repair_check,
     _evaluate_runtime_gates_check,
-    _gateway_production_execution_disabled,
     _production_root_hard_deny_active,
     evaluate_dispatch_production_readiness,
 )
 from agent.coo.dispatch_cli_repository_attestation import (
     EXPECTED_REPOSITORY2_PRODUCTION_ROOT,
     attest_repository2_production_root,
+)
+from agent.coo.dispatch_gateway_enablement import (
+    evaluate_gateway_production_check,
+    load_dispatch_gateway_enablement,
 )
 
 OVERALL_SIGNOFF_READY = "SIGNOFF_READY"
@@ -111,10 +114,12 @@ def _evaluate_execution_disabled() -> str:
     return CHECK_FAIL
 
 
-def _evaluate_gateway_disabled() -> str:
-    if _gateway_production_execution_disabled():
-        return CHECK_BLOCKED
-    return CHECK_FAIL
+def _evaluate_gateway_disabled(
+    *,
+    merged_config: Mapping[str, Any] | None = None,
+) -> str:
+    enablement = load_dispatch_gateway_enablement(merged_config=merged_config)
+    return evaluate_gateway_production_check(enablement)
 
 
 def _build_signoff_checks(
@@ -141,7 +146,7 @@ def _build_signoff_checks(
         ),
         CooDispatchProductionSignoffCheck(
             "gateway_disabled",
-            _evaluate_gateway_disabled(),
+            _evaluate_gateway_disabled(merged_config=merged_config),
         ),
         CooDispatchProductionSignoffCheck(
             "binding_model_available",
@@ -220,8 +225,8 @@ def evaluate_dispatch_production_signoff(
     failed_count = len(failed)
 
     hard_deny_active = _production_root_hard_deny_active()
-    gateway_disabled = _gateway_production_execution_disabled()
-    gateway_enabled = not gateway_disabled
+    enablement = load_dispatch_gateway_enablement(merged_config=merged_config)
+    gateway_enabled = enablement.gateway_enabled
     execution_allowed = False
 
     policy_fail = (

@@ -654,6 +654,20 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     enablement_check_parser.set_defaults(handler=_cmd_enablement_check)
 
+    gateway_parser = subparsers.add_parser(
+        "gateway",
+        help="Read-only gateway enablement status commands",
+    )
+    gateway_subparsers = gateway_parser.add_subparsers(
+        dest="coo_dispatch_gateway_command",
+        required=True,
+    )
+    gateway_status_parser = gateway_subparsers.add_parser(
+        "status",
+        help="Show safe summary of gateway enablement state",
+    )
+    gateway_status_parser.set_defaults(handler=_cmd_gateway_status)
+
     binding_parser = subparsers.add_parser(
         "binding",
         help="Read-only and operator-controlled runner binding state commands",
@@ -1281,6 +1295,18 @@ def _cmd_production_readiness(args: argparse.Namespace) -> int:
     summary = evaluate_dispatch_production_readiness(merged_config=load_config())
     print(format_dispatch_production_readiness(summary))
     return 0 if summary.overall != OVERALL_NOT_READY else 1
+
+
+def _cmd_gateway_status(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_gateway_status import (
+        format_dispatch_gateway_status_summary,
+        summarize_dispatch_gateway_status,
+    )
+    from hermes_cli.config import load_config
+
+    summary = summarize_dispatch_gateway_status(merged_config=load_config())
+    print(format_dispatch_gateway_status_summary(summary))
+    return 0
 
 
 def _cmd_enablement_check(args: argparse.Namespace) -> int:

@@ -28,6 +28,10 @@ from agent.coo.dispatch_cli_production_readiness import (
 from agent.coo.dispatch_cli_production_signoff import (
     evaluate_dispatch_production_signoff,
 )
+from agent.coo.dispatch_gateway_enablement import (
+    evaluate_gateway_production_check,
+    load_dispatch_gateway_enablement,
+)
 from agent.coo.dispatch_consume_transaction import (
     CONSUME_STATE_COMMITTED,
     CONSUME_STATE_LEGACY_COMMITTED,
@@ -296,6 +300,7 @@ def evaluate_production_cutover_checklist(
 ) -> CooDispatchProductionCutoverSummary:
     """Evaluate read-only production cutover checklist."""
     signoff = evaluate_dispatch_production_signoff(merged_config=merged_config)
+    enablement = load_dispatch_gateway_enablement(merged_config=merged_config)
     fleet = summarize_pilot_fleet(
         ticket_ids=ticket_ids,
         limit=limit,
@@ -323,7 +328,7 @@ def evaluate_production_cutover_checklist(
         ),
         CooDispatchProductionCutoverCheck(
             "gateway_disabled",
-            CHECK_BLOCKED if not signoff.gateway_enabled else CHECK_FAIL,
+            evaluate_gateway_production_check(enablement),
         ),
         CooDispatchProductionCutoverCheck(
             "pilot_fleet_ready",
@@ -396,7 +401,7 @@ def evaluate_production_cutover_checklist(
         ready_ticket_count=fleet.ready_ticket_count,
         failed_ticket_count=fleet.failed_ticket_count,
         production_execution_allowed=False,
-        gateway_enabled=False,
+        gateway_enabled=enablement.gateway_enabled,
         production_root_hard_deny=signoff.production_root_hard_deny,
         recommended_action=recommended_action,
         recommended_next_phase=recommended_next_phase,
