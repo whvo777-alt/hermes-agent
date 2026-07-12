@@ -458,6 +458,80 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     production_readiness_parser.set_defaults(handler=_cmd_production_readiness)
 
+    production_signoff_parser = production_subparsers.add_parser(
+        "sign-off",
+        help="Evaluate read-only production dispatch sign-off readiness",
+    )
+    production_signoff_parser.set_defaults(handler=_cmd_production_signoff)
+
+    pilot_parser = subparsers.add_parser(
+        "pilot",
+        help="Isolated operational dispatch pilot (production root hard-denied)",
+    )
+    pilot_subparsers = pilot_parser.add_subparsers(
+        dest="coo_dispatch_pilot_command",
+        required=True,
+    )
+    pilot_readiness_parser = pilot_subparsers.add_parser(
+        "readiness",
+        help="Evaluate isolated operational pilot readiness without dispatch",
+    )
+    pilot_readiness_parser.add_argument(
+        "--pipeline-root",
+        default=None,
+        help="Isolated pipeline root to trust-check (production root hard-denied)",
+    )
+    pilot_readiness_parser.add_argument(
+        "--ticket-id",
+        default=None,
+        help="Execution ticket id for operator readiness cross-check",
+    )
+    pilot_readiness_parser.add_argument(
+        "--confirmation-id",
+        default=None,
+        help="Production executor confirmation id for operator readiness cross-check",
+    )
+    pilot_readiness_parser.set_defaults(handler=_cmd_pilot_readiness)
+
+    pilot_run_parser = pilot_subparsers.add_parser(
+        "run",
+        help=(
+            "Run isolated operational pilot dispatch after sign-off and "
+            "readiness gates (production root hard-denied)"
+        ),
+    )
+    pilot_run_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id (bundle file key)",
+    )
+    pilot_run_parser.add_argument(
+        "--unlock-token-id",
+        required=True,
+        help="Dispatch unlock token id (must match bundle)",
+    )
+    pilot_run_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    pilot_run_parser.add_argument(
+        "--requester-id",
+        required=True,
+        help="Ticket requester id authorized for dispatch",
+    )
+    pilot_run_parser.add_argument(
+        "--pipeline-root",
+        required=True,
+        help="Isolated pipeline root for pilot dispatch (production root hard-denied)",
+    )
+    pilot_run_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate pilot gates and preflight only; do not invoke runner",
+    )
+    pilot_run_parser.set_defaults(handler=_cmd_pilot_run)
+
     enablement_parser = subparsers.add_parser(
         "enablement",
         help="Read-only production runner enablement checks",
@@ -869,6 +943,63 @@ def _cmd_repository_attest(args: argparse.Namespace) -> int:
 
     print(format_dispatch_repository_attestation(summary))
     return 0 if summary.repository_attested else 1
+
+
+def _cmd_pilot_readiness(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_pilot import (
+        format_dispatch_pilot_readiness,
+        evaluate_pilot_readiness,
+    )
+    from hermes_cli.config import load_config
+
+    summary = evaluate_pilot_readiness(
+        ticket_id=args.ticket_id,
+        confirmation_id=args.confirmation_id,
+        pipeline_root=args.pipeline_root,
+        merged_config=load_config(),
+    )
+    print(format_dispatch_pilot_readiness(summary))
+    return 0 if summary.pilot_ready else 1
+
+
+def _cmd_pilot_run(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_pilot import (
+        assert_pilot_dispatch_allowed,
+        format_dispatch_pilot_run_footer,
+    )
+    from hermes_cli.config import load_config
+
+    merged_config = load_config()
+    try:
+        pilot_summary = assert_pilot_dispatch_allowed(
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+            pipeline_root=args.pipeline_root,
+            merged_config=merged_config,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    exit_code = run_coo_dispatch_from_args(
+        args,
+        use_runner_provider=not args.dry_run,
+        merged_config=merged_config,
+    )
+    print(format_dispatch_pilot_run_footer(pilot_ready_summary=pilot_summary))
+    return exit_code
+
+
+def _cmd_production_signoff(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_production_signoff import (
+        format_dispatch_production_signoff,
+        evaluate_dispatch_production_signoff,
+    )
+    from hermes_cli.config import load_config
+
+    summary = evaluate_dispatch_production_signoff(merged_config=load_config())
+    print(format_dispatch_production_signoff(summary))
+    return 0 if summary.signoff_ready else 1
 
 
 def _cmd_production_readiness(args: argparse.Namespace) -> int:

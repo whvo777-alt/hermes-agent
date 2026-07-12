@@ -17,7 +17,7 @@ from agent.coo.dispatch_pipeline_root_trust import (
     assert_pipeline_root_allowed,
 )
 
-RECOMMENDED_NEXT_PHASE = "Phase 12U Production Dispatch Sign-off"
+RECOMMENDED_NEXT_PHASE = "Phase 13A Isolated Operational Dispatch Pilot"
 
 EXPECTED_REPOSITORY2_PRODUCTION_ROOT = PRODUCTION_ROOT_HARD_DENY[0]
 
