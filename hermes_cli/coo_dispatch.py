@@ -668,6 +668,27 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     gateway_status_parser.set_defaults(handler=_cmd_gateway_status)
 
+    gateway_readiness_parser = gateway_subparsers.add_parser(
+        "readiness",
+        help="Evaluate read-only gateway readiness without mutating state",
+    )
+    gateway_readiness_parser.add_argument(
+        "--ticket-id",
+        default=None,
+        help="Optional execution ticket id for evidence cross-reference",
+    )
+    gateway_readiness_parser.add_argument(
+        "--confirmation-id",
+        default=None,
+        help="Optional confirmation id for evidence cross-reference",
+    )
+    gateway_readiness_parser.add_argument(
+        "--pipeline-root",
+        default=None,
+        help="Optional isolated pipeline root for evidence cross-reference",
+    )
+    gateway_readiness_parser.set_defaults(handler=_cmd_gateway_readiness)
+
     binding_parser = subparsers.add_parser(
         "binding",
         help="Read-only and operator-controlled runner binding state commands",
@@ -1295,6 +1316,23 @@ def _cmd_production_readiness(args: argparse.Namespace) -> int:
     summary = evaluate_dispatch_production_readiness(merged_config=load_config())
     print(format_dispatch_production_readiness(summary))
     return 0 if summary.overall != OVERALL_NOT_READY else 1
+
+
+def _cmd_gateway_readiness(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_gateway_readiness import (
+        evaluate_dispatch_gateway_readiness,
+        format_dispatch_gateway_readiness_summary,
+    )
+    from hermes_cli.config import load_config
+
+    summary = evaluate_dispatch_gateway_readiness(
+        ticket_id=args.ticket_id,
+        confirmation_id=args.confirmation_id,
+        pipeline_root=args.pipeline_root,
+        merged_config=load_config(),
+    )
+    print(format_dispatch_gateway_readiness_summary(summary))
+    return 0 if summary.gateway_readiness_ready else 1
 
 
 def _cmd_gateway_status(args: argparse.Namespace) -> int:
