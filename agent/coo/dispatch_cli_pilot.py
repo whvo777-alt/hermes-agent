@@ -1,4 +1,4 @@
-"""CLI dispatch isolated operational pilot — Phase 13A.
+"""CLI dispatch isolated operational pilot — Phase 13A / 13B.
 
 Read-only pilot readiness and gated isolated-clone dispatch rehearsal.
 Production Repository2 root execution remains hard-denied.
@@ -7,7 +7,9 @@ Gateway/Discord production dispatch paths remain disconnected.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from agent.coo.dispatch_cli_enablement import evaluate_dispatch_runtime_enablement
@@ -34,6 +36,22 @@ OPERATOR_ACTION_RESOLVE_FAILED = "resolve_failed_checks"
 OPERATOR_ACTION_MAINTAIN_EXECUTION_BLOCK = "maintain_execution_block"
 
 _NONE_LABEL = "(none)"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class CooDispatchPilotRunOutcome:
+    """Outcome of an isolated operational pilot dispatch run."""
+
+    pilot_attempt_id: str
+    exit_code: int
+    history_persisted: bool
+    history_persistence_failed: bool
+    run_result: "CooDispatchRunResult | None" = None
+    run_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -257,3 +275,128 @@ def format_dispatch_pilot_run_footer(
             f"gateway_enabled: {str(pilot_ready_summary.gateway_enabled).lower()}",
         )
     )
+
+
+def execute_pilot_dispatch_run(
+    *,
+    ticket_id: str,
+    confirmation_id: str,
+    unlock_token_id: str,
+    requester_id: str,
+    pipeline_root: str,
+    dry_run: bool,
+    pilot_summary: CooDispatchPilotReadinessSummary,
+    merged_config: Mapping[str, Any] | None = None,
+    subprocess_runner=None,
+    node_path: str | None = None,
+    use_runner_provider: bool = True,
+) -> CooDispatchPilotRunOutcome:
+    """Run isolated pilot dispatch and persist append-only pilot history."""
+    from agent.coo.dispatch_cli_pilot_history import (
+        build_pilot_history_record_from_dispatch,
+    )
+    from agent.coo.dispatch_cli_run import CooDispatchRunResult, execute_coo_dispatch_run
+    from agent.coo.dispatch_cli_runner_injection import resolve_dispatch_run_subprocess_runner
+    from agent.coo.dispatch_pilot_history import write_pilot_history_record
+    from agent.coo.bounded_subprocess_runner import RUNNER_PROFILE_RESTRICTED
+
+    pilot_attempt_id = str(uuid.uuid4())
+    started_at = _utc_now_iso()
+    run_result: CooDispatchRunResult | None = None
+    run_error = ""
+    dispatch_request_id = ""
+
+    resolved_runner = None
+    if use_runner_provider and not dry_run:
+        resolved_runner = resolve_dispatch_run_subprocess_runner(
+            merged_config,
+            use_runner_provider=True,
+            use_real_bounded_runner=False,
+            dry_run=False,
+            harness_profile=RUNNER_PROFILE_RESTRICTED,
+        )
+    elif subprocess_runner is not None:
+        resolved_runner = subprocess_runner
+
+    try:
+        run_result = execute_coo_dispatch_run(
+            ticket_id=ticket_id,
+            confirmation_id=confirmation_id,
+            unlock_token_id=unlock_token_id,
+            requester_id=requester_id,
+            pipeline_root=pipeline_root,
+            dry_run=dry_run,
+            subprocess_runner=resolved_runner,
+            merged_config=merged_config,
+            node_path=node_path,
+        )
+        dispatch_request_id = run_result.dispatch_request_id
+    except ValueError as exc:
+        run_error = str(exc)
+
+    completed_at = _utc_now_iso()
+    record = build_pilot_history_record_from_dispatch(
+        pilot_attempt_id=pilot_attempt_id,
+        started_at=started_at,
+        completed_at=completed_at,
+        ticket_id=ticket_id,
+        confirmation_id=confirmation_id,
+        dispatch_request_id=dispatch_request_id,
+        dry_run=dry_run,
+        run_result=run_result,
+        run_error=run_error,
+        pilot_summary=pilot_summary,
+    )
+    history_persisted = False
+    try:
+        write_pilot_history_record(record)
+        history_persisted = True
+    except ValueError:
+        history_persisted = False
+
+    exit_code = _pilot_run_exit_code(
+        run_result=run_result,
+        run_error=run_error,
+        history_persisted=history_persisted,
+    )
+    return CooDispatchPilotRunOutcome(
+        pilot_attempt_id=pilot_attempt_id,
+        exit_code=exit_code,
+        history_persisted=history_persisted,
+        history_persistence_failed=not history_persisted,
+        run_result=run_result,
+        run_error=run_error,
+    )
+
+
+def _pilot_run_exit_code(
+    *,
+    run_result: "CooDispatchRunResult | None",
+    run_error: str,
+    history_persisted: bool,
+) -> int:
+    if not history_persisted:
+        return 1
+    if run_error:
+        return 1
+    if run_result is None:
+        return 1
+    if run_result.dry_run_only:
+        return 0 if run_result.status == "preflight_passed" else 1
+    if run_result.status == "completed" and run_result.consumed:
+        return 0
+    return 1
+
+
+def format_dispatch_pilot_run_outcome(outcome: CooDispatchPilotRunOutcome) -> str:
+    """Format safe pilot run outcome markers."""
+    lines = [
+        "",
+        "Pilot Run",
+        "---------",
+        f"pilot_attempt_id: {outcome.pilot_attempt_id}",
+        f"history_persisted: {str(outcome.history_persisted).lower()}",
+    ]
+    if outcome.history_persistence_failed:
+        lines.append("history_persistence_failed: true")
+    return "\n".join(lines)

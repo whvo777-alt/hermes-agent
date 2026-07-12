@@ -532,6 +532,59 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     pilot_run_parser.set_defaults(handler=_cmd_pilot_run)
 
+    pilot_regression_parser = pilot_subparsers.add_parser(
+        "regression",
+        help="Evaluate read-only pilot operations regression from persisted history",
+    )
+    pilot_regression_parser.add_argument(
+        "--ticket-id",
+        default=None,
+        help="Optional ticket id filter for regression evaluation",
+    )
+    pilot_regression_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional maximum number of newest history records to evaluate",
+    )
+    pilot_regression_parser.set_defaults(handler=_cmd_pilot_regression)
+
+    pilot_history_parser = pilot_subparsers.add_parser(
+        "history",
+        help="Read-only isolated operational pilot history commands",
+    )
+    pilot_history_subparsers = pilot_history_parser.add_subparsers(
+        dest="coo_dispatch_pilot_history_command",
+        required=True,
+    )
+    pilot_history_show_parser = pilot_history_subparsers.add_parser(
+        "show",
+        help="Show one pilot history record by pilot_attempt_id",
+    )
+    pilot_history_show_parser.add_argument(
+        "--pilot-attempt-id",
+        required=True,
+        help="Pilot attempt id",
+    )
+    pilot_history_show_parser.set_defaults(handler=_cmd_pilot_history_show)
+
+    pilot_history_list_parser = pilot_history_subparsers.add_parser(
+        "list",
+        help="List pilot history records newest-first",
+    )
+    pilot_history_list_parser.set_defaults(handler=_cmd_pilot_history_list)
+
+    pilot_history_find_parser = pilot_history_subparsers.add_parser(
+        "find",
+        help="Find pilot history records for one ticket id",
+    )
+    pilot_history_find_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id",
+    )
+    pilot_history_find_parser.set_defaults(handler=_cmd_pilot_history_find)
+
     enablement_parser = subparsers.add_parser(
         "enablement",
         help="Read-only production runner enablement checks",
@@ -965,8 +1018,11 @@ def _cmd_pilot_readiness(args: argparse.Namespace) -> int:
 def _cmd_pilot_run(args: argparse.Namespace) -> int:
     from agent.coo.dispatch_cli_pilot import (
         assert_pilot_dispatch_allowed,
+        execute_pilot_dispatch_run,
         format_dispatch_pilot_run_footer,
+        format_dispatch_pilot_run_outcome,
     )
+    from agent.coo.dispatch_cli_preflight import format_dispatch_preflight_summary
     from hermes_cli.config import load_config
 
     merged_config = load_config()
@@ -981,13 +1037,106 @@ def _cmd_pilot_run(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    exit_code = run_coo_dispatch_from_args(
-        args,
-        use_runner_provider=not args.dry_run,
+    outcome = execute_pilot_dispatch_run(
+        ticket_id=args.ticket_id,
+        confirmation_id=args.confirmation_id,
+        unlock_token_id=args.unlock_token_id,
+        requester_id=args.requester_id,
+        pipeline_root=args.pipeline_root,
+        dry_run=bool(args.dry_run),
+        pilot_summary=pilot_summary,
         merged_config=merged_config,
+        use_runner_provider=not args.dry_run,
     )
+    result = outcome.run_result
+    if result is not None:
+        print(f"ticket_id: {result.ticket_id}")
+        print(f"confirmation_id: {result.confirmation_id}")
+        print(f"dispatch_request_id: {result.dispatch_request_id}")
+        if result.execution_attempt_id:
+            print(f"execution_attempt_id: {result.execution_attempt_id}")
+        print(f"status: {result.status}")
+        print(f"consumed: {result.consumed}")
+        if result.preflight is not None:
+            print(format_dispatch_preflight_summary(result.preflight))
+        if result.dry_run_only:
+            print(
+                "status: preflight-only (--dry-run; runner not invoked, nothing consumed)"
+            )
+    elif outcome.run_error:
+        print(f"error: {outcome.run_error}", file=sys.stderr)
+
+    print(format_dispatch_pilot_run_outcome(outcome))
     print(format_dispatch_pilot_run_footer(pilot_ready_summary=pilot_summary))
-    return exit_code
+    return int(outcome.exit_code)
+
+
+def _cmd_pilot_regression(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_pilot_regression import (
+        REGRESSION_STATUS_FAIL,
+        format_pilot_regression_summary,
+        evaluate_pilot_regression,
+    )
+
+    try:
+        summary = evaluate_pilot_regression(
+            ticket_id=args.ticket_id,
+            limit=args.limit,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_pilot_regression_summary(summary))
+    return 1 if summary.regression_status == REGRESSION_STATUS_FAIL else 0
+
+
+def _cmd_pilot_history_show(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_pilot_history import (
+        format_pilot_history_summary,
+        summarize_pilot_history_record,
+    )
+
+    try:
+        summary = summarize_pilot_history_record(args.pilot_attempt_id)
+    except (ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_pilot_history_summary(summary))
+    return 0
+
+
+def _cmd_pilot_history_list(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_pilot_history import (
+        format_pilot_history_list,
+        list_pilot_history_summaries,
+    )
+
+    try:
+        entries = list_pilot_history_summaries()
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_pilot_history_list(entries))
+    return 0
+
+
+def _cmd_pilot_history_find(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_pilot_history import (
+        format_pilot_history_find,
+        find_pilot_history_summaries_for_ticket,
+    )
+
+    try:
+        entries = find_pilot_history_summaries_for_ticket(args.ticket_id)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_pilot_history_find(entries))
+    return 0
 
 
 def _cmd_production_signoff(args: argparse.Namespace) -> int:
