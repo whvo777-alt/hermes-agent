@@ -13,6 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from agent.coo.dispatch_gateway_discord_status import (
+    ACTION_GATEWAY_HEALTH,
+    ACTION_GATEWAY_PILOT_STATUS,
+    ACTION_PILOT_HISTORY_SUMMARY,
+    ACTION_REGRESSION_SUMMARY,
+    execute_discord_gateway_status_action,
+    is_gateway_status_action,
+)
 from agent.coo.dispatch_gateway_pilot_service import (
     CooDispatchGatewayPilotResult,
     execute_gateway_pilot_dispatch,
@@ -20,7 +28,6 @@ from agent.coo.dispatch_gateway_pilot_service import (
 
 ACTION_GATEWAY_PILOT_DRY_RUN = "gateway_pilot_dry_run"
 ACTION_GATEWAY_PILOT_RUN = "gateway_pilot_run"
-ACTION_GATEWAY_PILOT_STATUS = "gateway_pilot_status"
 
 DISCORD_GATEWAY_PILOT_RESULT_KEY = "_coo_gateway_pilot_result"
 
@@ -198,6 +205,67 @@ def execute_discord_gateway_pilot_action(
             failure_reason_code=FAILURE_UNAUTHORIZED_REQUESTER,
         )
 
+    gateway_request_id = build_discord_gateway_request_id(
+        session_id=session_id,
+        action=normalized_action,
+        interaction_id=interaction_id,
+    )
+
+    if is_gateway_status_action(normalized_action):
+        snapshot = _latest_dispatch_snapshot(ticket_id, requester_id=requester_id)
+        unlock_token_id = _resolve_unlock_token_id(snapshot)
+        status_result = execute_discord_gateway_status_action(
+            action=normalized_action,
+            session_payload=session_payload,
+            requester_id=requester_id,
+            merged_config=merged_config,
+            session_store=session_store,
+            ticket_store=ticket_store,
+            bundle_dir=bundle_dir,
+            confirmation_dir=confirmation_dir,
+            request_dir=request_dir,
+            history_dir=history_dir,
+            unlock_token_id=unlock_token_id,
+            gateway_request_id=gateway_request_id,
+        )
+        return DiscordGatewayPilotBridgeResult(
+            session_id=session_id,
+            ticket_id=ticket_id,
+            gateway_request_id=gateway_request_id,
+            pilot_attempt_id=(
+                status_result.summary.latest_pilot_attempt_id
+                if status_result.summary is not None
+                and status_result.summary.latest_pilot_attempt_id != _NONE_LABEL
+                else ""
+            ),
+            accepted=status_result.accepted,
+            status=status_result.health_status.lower(),
+            dry_run=True,
+            regression_gate=(
+                status_result.summary.regression_status.lower()
+                if status_result.summary is not None
+                else "not_evaluated"
+            ),
+            failure_reason_code=status_result.failure_reason_code,
+            recommended_action=status_result.recommended_action,
+            gateway_state=status_result.gateway_state,
+            execution_attempt_id=(
+                status_result.summary.execution_attempt_id
+                if status_result.summary is not None
+                else ""
+            ),
+            dispatch_run_id=(
+                status_result.summary.dispatch_run_id
+                if status_result.summary is not None
+                else ""
+            ),
+            consumed=(
+                status_result.summary.consumed
+                if status_result.summary is not None
+                else False
+            ),
+        )
+
     snapshot = _latest_dispatch_snapshot(ticket_id, requester_id=requester_id)
     unlock_token_id = _resolve_unlock_token_id(snapshot)
     if not unlock_token_id:
@@ -217,42 +285,6 @@ def execute_discord_gateway_pilot_action(
             ticket_id=ticket_id,
             dry_run=dry_run,
             failure_reason_code=FAILURE_CONFIRMATION_MISSING,
-        )
-
-    gateway_request_id = build_discord_gateway_request_id(
-        session_id=session_id,
-        action=normalized_action,
-        interaction_id=interaction_id,
-    )
-    if normalized_action == ACTION_GATEWAY_PILOT_STATUS:
-        from agent.coo.dispatch_cli_gateway_pilot import evaluate_gateway_pilot_readiness
-
-        summary = evaluate_gateway_pilot_readiness(
-            session_id=session_id,
-            ticket_id=ticket_id,
-            confirmation_id=confirmation.confirmation_id,
-            unlock_token_id=unlock_token_id,
-            requester_id=requester_id,
-            pipeline_root=confirmation.attested_pipeline_root,
-            merged_config=merged_config,
-            session_store=session_store,
-            ticket_store=ticket_store,
-            bundle_dir=bundle_dir,
-            confirmation_dir=confirmation_dir,
-            dry_run=True,
-        )
-        return DiscordGatewayPilotBridgeResult(
-            session_id=session_id,
-            ticket_id=ticket_id,
-            gateway_request_id=gateway_request_id,
-            pilot_attempt_id="",
-            accepted=summary.pilot_ready,
-            status="ready" if summary.pilot_ready else "blocked",
-            dry_run=True,
-            regression_gate="allowed" if summary.regression_allowed else "blocked",
-            failure_reason_code="none" if summary.pilot_ready else summary.failed_checks,
-            recommended_action=summary.recommended_action,
-            gateway_state=summary.gateway_state,
         )
 
     result = execute_gateway_pilot_dispatch(

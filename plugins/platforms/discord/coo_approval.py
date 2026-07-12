@@ -36,13 +36,21 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from agent.coo.approval_report import CEOApprovalReport
 from agent.coo.dispatch_gateway_discord_bridge import (
+    ACTION_GATEWAY_HEALTH,
     ACTION_GATEWAY_PILOT_DRY_RUN,
     ACTION_GATEWAY_PILOT_RUN,
     ACTION_GATEWAY_PILOT_STATUS,
+    ACTION_PILOT_HISTORY_SUMMARY,
+    ACTION_REGRESSION_SUMMARY,
     DISCORD_GATEWAY_PILOT_RESULT_KEY,
     execute_discord_gateway_pilot_action,
     format_discord_gateway_pilot_response,
     result_to_session_payload_fragment,
+)
+from agent.coo.dispatch_gateway_discord_status import (
+    DISCORD_GATEWAY_STATUS_RESULT_KEY,
+    format_discord_gateway_status_response,
+    is_gateway_status_action,
 )
 from agent.coo.discord_approval_adapter import create_discord_approval_session
 from agent.coo.models import COOOrchestrationResult
@@ -94,6 +102,9 @@ _ALLOWED_COO_APPROVAL_ACTIONS = frozenset({
     ACTION_GATEWAY_PILOT_DRY_RUN,
     ACTION_GATEWAY_PILOT_RUN,
     ACTION_GATEWAY_PILOT_STATUS,
+    ACTION_GATEWAY_HEALTH,
+    ACTION_PILOT_HISTORY_SUMMARY,
+    ACTION_REGRESSION_SUMMARY,
 })
 _PREPARE_PLAN_EPHEMERAL = "Plan Ready — Not Executed"
 _DRY_RUN_PREVIEW_EPHEMERAL = "Dry Run Preview — Not Executed"
@@ -106,6 +117,7 @@ _RUN_COMPLETED_EPHEMERAL = "Run Completed"
 _RUN_FAILED_EPHEMERAL = "Run Attempted — Failed"
 _RUN_EXECUTOR_NOT_CONFIGURED_EPHEMERAL = "Run Attempted — Executor Not Configured"
 _GATEWAY_PILOT_EPHEMERAL = "Gateway Pilot"
+_GATEWAY_STATUS_EPHEMERAL = "Gateway Operational Status"
 _COO_DISPATCH_RUN_EPHEMERAL_KEY = "_coo_dispatch_run_ephemeral"
 _ERR_SESSION_NOT_FOUND = "Approval session not found."
 _ERR_NOT_ALLOWED = "You are not allowed to approve this session."
@@ -944,7 +956,7 @@ def _should_disable_remint_dispatch_token_button(session_payload: Dict[str, Any]
 
 
 def _should_disable_gateway_pilot_button(session_payload: Dict[str, Any]) -> bool:
-    """Disable pilot buttons unless dispatch has been prepared for an approved session."""
+    """Disable pilot run buttons unless dispatch has been prepared for an approved session."""
     if str(session_payload.get("status") or "").strip().lower() != "approved":
         return True
     if not _should_show_dispatch_buttons(session_payload):
@@ -952,6 +964,17 @@ def _should_disable_gateway_pilot_button(session_payload: Dict[str, Any]) -> boo
     dispatch = _lookup_latest_dispatch_for_session(session_payload) or {}
     token = dispatch.get("unlock_token")
     return not isinstance(token, dict) or not bool(str(token.get("token_id") or "").strip())
+
+
+def _should_show_gateway_status_buttons(session_payload: Dict[str, Any]) -> bool:
+    """Show read-only status buttons for approved sessions with execution review."""
+    if str(session_payload.get("status") or "").strip().lower() != "approved":
+        return False
+    ticket_id = str(session_payload.get("execution_ticket_id") or "").strip()
+    if not ticket_id:
+        return False
+    review = _lookup_latest_execution_review_for_session(session_payload)
+    return _is_execution_review_gate_approved(review)
 
 
 def _should_show_gateway_pilot_buttons(session_payload: Dict[str, Any]) -> bool:
@@ -1020,11 +1043,51 @@ def execute_coo_approval_button_action(
         ACTION_GATEWAY_PILOT_DRY_RUN,
         ACTION_GATEWAY_PILOT_RUN,
         ACTION_GATEWAY_PILOT_STATUS,
+        ACTION_GATEWAY_HEALTH,
+        ACTION_PILOT_HISTORY_SUMMARY,
+        ACTION_REGRESSION_SUMMARY,
     }:
         existing = get_discord_approval_session(session_id, store=store)
         if existing is None:
             raise KeyError(session_id)
         _assert_session_owner(existing, user_id, session_id)
+        if is_gateway_status_action(normalized_action):
+            if not _should_show_gateway_status_buttons(existing):
+                raise ValueError(
+                    f"Cannot view gateway status for session {session_id} "
+                    f"in status {existing.get('status')}"
+                )
+            from agent.coo.dispatch_gateway_discord_status import (
+                execute_discord_gateway_status_action,
+            )
+
+            status_result = execute_discord_gateway_status_action(
+                action=normalized_action,
+                session_payload=existing,
+                requester_id=user_id,
+                merged_config=gateway_pilot_config,
+                session_store=store,
+                bundle_dir=gateway_pilot_bundle_dir,
+                confirmation_dir=gateway_pilot_confirmation_dir,
+                request_dir=gateway_pilot_request_dir,
+                history_dir=gateway_pilot_history_dir,
+            )
+            refreshed = get_discord_approval_session(session_id, store=store)
+            if refreshed is None:
+                raise KeyError(session_id)
+            from agent.coo.dispatch_gateway_discord_status import (
+                result_to_session_payload_fragment as status_payload_fragment,
+            )
+
+            return {
+                **refreshed,
+                DISCORD_GATEWAY_STATUS_RESULT_KEY: status_payload_fragment(
+                    status_result
+                )[DISCORD_GATEWAY_STATUS_RESULT_KEY],
+                "_coo_gateway_pilot_ephemeral": format_discord_gateway_status_response(
+                    status_result
+                ),
+            }
         if _should_disable_gateway_pilot_button(existing):
             raise ValueError(
                 f"Cannot run gateway pilot for session {session_id} "
@@ -1465,11 +1528,40 @@ def build_coo_approval_components(session_payload: Dict[str, Any]) -> List[Dict[
                             session_id,
                         ),
                     ),
+                ]
+            )
+        if _should_show_gateway_status_buttons(session_payload):
+            components.extend(
+                [
                     _coo_approval_button_component(
                         label="Gateway Pilot Status",
                         style="secondary",
                         custom_id=_build_coo_approval_custom_id(
                             ACTION_GATEWAY_PILOT_STATUS,
+                            session_id,
+                        ),
+                    ),
+                    _coo_approval_button_component(
+                        label="Gateway Health",
+                        style="secondary",
+                        custom_id=_build_coo_approval_custom_id(
+                            ACTION_GATEWAY_HEALTH,
+                            session_id,
+                        ),
+                    ),
+                    _coo_approval_button_component(
+                        label="Pilot History Summary",
+                        style="secondary",
+                        custom_id=_build_coo_approval_custom_id(
+                            ACTION_PILOT_HISTORY_SUMMARY,
+                            session_id,
+                        ),
+                    ),
+                    _coo_approval_button_component(
+                        label="Regression Summary",
+                        style="secondary",
+                        custom_id=_build_coo_approval_custom_id(
+                            ACTION_REGRESSION_SUMMARY,
                             session_id,
                         ),
                     ),
@@ -1559,11 +1651,18 @@ def _make_coo_approval_button_callback(
             elif parsed["action"] in {
                 ACTION_GATEWAY_PILOT_DRY_RUN,
                 ACTION_GATEWAY_PILOT_RUN,
-                ACTION_GATEWAY_PILOT_STATUS,
             }:
                 await _respond_coo_approval_ephemeral(
                     interaction,
                     str(session_payload.get("_coo_gateway_pilot_ephemeral") or _GATEWAY_PILOT_EPHEMERAL),
+                )
+            elif is_gateway_status_action(parsed["action"]):
+                await _respond_coo_approval_ephemeral(
+                    interaction,
+                    str(
+                        session_payload.get("_coo_gateway_pilot_ephemeral")
+                        or _GATEWAY_STATUS_EPHEMERAL
+                    ),
                 )
             elif not updated:
                 status = session_payload.get("status", "unknown")

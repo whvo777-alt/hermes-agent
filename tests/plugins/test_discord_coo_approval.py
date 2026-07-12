@@ -1815,13 +1815,17 @@ class TestDiscordCooApprovalExecutionReview(unittest.TestCase):
             components = build_coo_approval_components(session)
 
         labels = [button["label"] for button in components]
-        self.assertEqual(len(components), 9)
+        self.assertEqual(len(components), 13)
         self.assertIn("Execution Review", labels)
         self.assertNotIn("Approve Execution Review", labels)
         self.assertNotIn("Reject Execution Review", labels)
         self.assertIn("Prepare Dispatch", labels)
         self.assertIn("Run Approved Plan", labels)
         self.assertIn("Remint Token", labels)
+        self.assertIn("Gateway Pilot Status", labels)
+        self.assertIn("Gateway Health", labels)
+        self.assertNotIn("Gateway Pilot Dry Run", labels)
+        self.assertNotIn("Gateway Pilot Run", labels)
 
     def test_embed_shows_execution_review_fields(self) -> None:
         review = {
