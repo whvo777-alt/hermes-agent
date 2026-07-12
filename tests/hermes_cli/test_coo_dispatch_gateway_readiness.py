@@ -15,9 +15,10 @@ from agent.coo.dispatch_cli_gateway_readiness import (
     EVIDENCE_CONTEXT_NONE,
     READINESS_LEVEL_NOT_READY,
     READINESS_LEVEL_NOT_READY_FOR_EXECUTION,
-    READINESS_LEVEL_READY_FOR_MOCK_WIRING,
+    READINESS_LEVEL_READY_FOR_MOCK_DISPATCH,
     RECOMMENDED_ACTION_IMPLEMENT_FACADE,
     RECOMMENDED_ACTION_RESOLVE_FAILED_CHECKS,
+    RECOMMENDED_ACTION_RUN_MOCK_DISPATCH,
     RECOMMENDED_ACTION_STAGE_GATEWAY,
     evaluate_dispatch_gateway_readiness,
     format_dispatch_gateway_readiness_summary,
@@ -136,7 +137,7 @@ class TestGatewayReadinessStates(unittest.TestCase):
         self.assertIn("gateway_enablement_state", summary.blocked_checks)
         self.assertIn("gateway_execution_facade_connected", summary.blocked_checks)
 
-    def test_staged_ready_for_mock_wiring(self) -> None:
+    def test_staged_ready_for_mock_dispatch(self) -> None:
         with (
             _successful_attestation(),
             patch(
@@ -147,10 +148,11 @@ class TestGatewayReadinessStates(unittest.TestCase):
             summary = evaluate_dispatch_gateway_readiness(
                 merged_config=_gateway_config("staged"),
             )
-        self.assertEqual(summary.readiness_level, READINESS_LEVEL_READY_FOR_MOCK_WIRING)
+        self.assertEqual(summary.readiness_level, READINESS_LEVEL_READY_FOR_MOCK_DISPATCH)
         self.assertTrue(summary.gateway_readiness_ready)
-        self.assertEqual(summary.recommended_action, RECOMMENDED_ACTION_IMPLEMENT_FACADE)
-        self.assertIn("gateway_execution_facade_connected", summary.blocked_checks)
+        self.assertEqual(summary.recommended_action, RECOMMENDED_ACTION_RUN_MOCK_DISPATCH)
+        statuses = {check.name: check.status for check in summary.checks}
+        self.assertEqual(statuses["gateway_execution_facade_connected"], "PASS")
 
     def test_enabled_facade_disconnected_fails(self) -> None:
         disconnected = CooDispatchGatewayExecutionFacade(

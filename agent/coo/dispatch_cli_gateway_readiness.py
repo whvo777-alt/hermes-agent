@@ -39,13 +39,18 @@ from agent.coo.dispatch_gateway_enablement import (
     GATEWAY_STATE_STAGED,
     load_dispatch_gateway_enablement,
 )
+from agent.coo.dispatch_gateway_execution_facade import (
+    evaluate_gateway_execution_facade,
+)
 
 READINESS_LEVEL_NOT_READY_FOR_EXECUTION = "NOT_READY_FOR_EXECUTION"
 READINESS_LEVEL_READY_FOR_MOCK_WIRING = "READY_FOR_MOCK_WIRING"
+READINESS_LEVEL_READY_FOR_MOCK_DISPATCH = "READY_FOR_MOCK_DISPATCH"
 READINESS_LEVEL_NOT_READY = "NOT_READY"
 
 RECOMMENDED_ACTION_STAGE_GATEWAY = "stage_gateway_for_mock_wiring"
 RECOMMENDED_ACTION_IMPLEMENT_FACADE = "implement_gateway_execution_facade"
+RECOMMENDED_ACTION_RUN_MOCK_DISPATCH = "run_mock_gateway_dispatch"
 RECOMMENDED_ACTION_RESOLVE_FACADE_GAP = "resolve_gateway_facade_gap"
 RECOMMENDED_ACTION_RESOLVE_FAILED_CHECKS = "resolve_failed_gateway_readiness_checks"
 
@@ -201,20 +206,25 @@ def _evaluate_enablement_state_check(enablement) -> str:
     return CHECK_PASS
 
 
-def _evaluate_facade_check(enablement) -> str:
+def _evaluate_facade_check(
+    enablement,
+    merged_config: Mapping[str, Any] | None = None,
+) -> str:
     from agent.coo.dispatch_gateway_execution_facade import (
         evaluate_gateway_execution_facade,
     )
 
     if not enablement.valid:
         return CHECK_FAIL
-    facade = evaluate_gateway_execution_facade()
+    facade = evaluate_gateway_execution_facade(merged_config=merged_config)
     if not facade.valid or not facade.facade_connected:
         if enablement.gateway_state == GATEWAY_STATE_ENABLED:
             return CHECK_FAIL
         return CHECK_BLOCKED
     if facade.execution_enabled and facade.production_execution_allowed:
         return CHECK_FAIL
+    if enablement.gateway_state == GATEWAY_STATE_STAGED and facade.execution_enabled:
+        return CHECK_PASS
     if not facade.execution_enabled:
         return CHECK_BLOCKED
     return CHECK_PASS
@@ -337,7 +347,7 @@ def _build_checks(
             ),
             CooDispatchGatewayReadinessCheck(
                 "gateway_execution_facade_connected",
-                _evaluate_facade_check(enablement),
+                _evaluate_facade_check(enablement, merged_config),
             ),
         )
     )
@@ -469,9 +479,9 @@ def _resolve_readiness_level(
         statuses = {check.name: check.status for check in checks}
         if any(statuses.get(name) != CHECK_PASS for name in _STAGED_REQUIRED_CAPABILITY_CHECKS):
             return False, READINESS_LEVEL_NOT_READY
-        if statuses.get("gateway_execution_facade_connected") != CHECK_BLOCKED:
+        if statuses.get("gateway_execution_facade_connected") != CHECK_PASS:
             return False, READINESS_LEVEL_NOT_READY
-        return True, READINESS_LEVEL_READY_FOR_MOCK_WIRING
+        return True, READINESS_LEVEL_READY_FOR_MOCK_DISPATCH
 
     return False, READINESS_LEVEL_NOT_READY
 
@@ -489,8 +499,8 @@ def _resolve_recommended_action(
     if enablement.gateway_state == GATEWAY_STATE_DISABLED:
         return RECOMMENDED_ACTION_STAGE_GATEWAY
     if enablement.gateway_state == GATEWAY_STATE_STAGED:
-        if readiness_level == READINESS_LEVEL_READY_FOR_MOCK_WIRING:
-            return RECOMMENDED_ACTION_IMPLEMENT_FACADE
+        if readiness_level == READINESS_LEVEL_READY_FOR_MOCK_DISPATCH:
+            return RECOMMENDED_ACTION_RUN_MOCK_DISPATCH
         return RECOMMENDED_ACTION_RESOLVE_FAILED_CHECKS
     if enablement.gateway_state == GATEWAY_STATE_ENABLED:
         return RECOMMENDED_ACTION_RESOLVE_FACADE_GAP
@@ -507,7 +517,7 @@ def _resolve_recommended_next_phase(
         return RECOMMENDED_NEXT_PHASE_NOT_READY
     if enablement.gateway_state == GATEWAY_STATE_DISABLED:
         return RECOMMENDED_NEXT_PHASE_DISABLED
-    if readiness_level == READINESS_LEVEL_READY_FOR_MOCK_WIRING:
+    if readiness_level == READINESS_LEVEL_READY_FOR_MOCK_DISPATCH:
         return RECOMMENDED_NEXT_PHASE_STAGED_READY
     if enablement.gateway_state == GATEWAY_STATE_ENABLED:
         return RECOMMENDED_NEXT_PHASE_ENABLED_NO_FACADE
@@ -609,7 +619,9 @@ def evaluate_dispatch_gateway_readiness(
         gateway_ui_surface_available=_probe_gateway_ui_surface_available(),
         gateway_session_model_available=_probe_gateway_session_model_available(),
         gateway_prepare_surface_available=_probe_gateway_prepare_surface_available(),
-        gateway_execution_facade_connected=enablement.gateway_execution_configured,
+        gateway_execution_facade_connected=evaluate_gateway_execution_facade(
+            merged_config=merged_config,
+        ).execution_enabled,
         evidence_context_requested=evidence_context,
         operator_readiness_status=operator_status,
         consume_state=consume_state,
