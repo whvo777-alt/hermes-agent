@@ -268,7 +268,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     consume_repair_parser = consume_subparsers.add_parser(
         "repair",
-        help="Read-only consume repair commands",
+        help="Consume repair dry-run and apply commands",
     )
     consume_repair_subparsers = consume_repair_parser.add_subparsers(
         dest="coo_dispatch_consume_repair_command",
@@ -304,6 +304,42 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         help="Human-readable reason for evaluating repair eligibility",
     )
     consume_repair_dry_run_parser.set_defaults(handler=_cmd_consume_repair_dry_run)
+
+    consume_repair_apply_parser = consume_repair_subparsers.add_parser(
+        "apply",
+        help="Apply prepared consume transaction cleanup",
+    )
+    consume_repair_apply_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Execution ticket id (bundle file key)",
+    )
+    consume_repair_apply_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Production executor confirmation id",
+    )
+    consume_repair_apply_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Operator identity id for repair apply",
+    )
+    consume_repair_apply_parser.add_argument(
+        "--operator-name",
+        required=True,
+        help="Operator display name for repair apply",
+    )
+    consume_repair_apply_parser.add_argument(
+        "--reason",
+        required=True,
+        help="Human-readable reason for repair apply",
+    )
+    consume_repair_apply_parser.add_argument(
+        "--phrase",
+        required=True,
+        help='Operator repair phrase (must be exactly "CONFIRM-CONSUME-REPAIR")',
+    )
+    consume_repair_apply_parser.set_defaults(handler=_cmd_consume_repair_apply)
 
     enablement_parser = subparsers.add_parser(
         "enablement",
@@ -597,6 +633,29 @@ def _cmd_consume_repair_dry_run(args: argparse.Namespace) -> int:
         return 1
 
     print(format_dispatch_consume_repair_eligibility(eligibility))
+    return exit_code
+
+
+def _cmd_consume_repair_apply(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_consume_repair import (
+        format_dispatch_consume_repair_apply_result,
+        run_dispatch_consume_repair_apply,
+    )
+
+    try:
+        result, exit_code = run_dispatch_consume_repair_apply(
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+            operator_id=args.operator_id,
+            operator_name=args.operator_name,
+            reason=args.reason,
+            phrase=args.phrase,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_dispatch_consume_repair_apply_result(result))
     return exit_code
 
 

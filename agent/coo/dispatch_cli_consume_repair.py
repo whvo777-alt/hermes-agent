@@ -1,14 +1,13 @@
-"""CLI dispatch consume repair dry-run — Phase 12N.
-
-Read-only repair eligibility output. No writes, apply path, or secrets.
-"""
+"""CLI dispatch consume repair dry-run and apply — Phase 12N / 12O."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from agent.coo.dispatch_consume_repair import (
+    CooDispatchConsumeRepairApplyResult,
     CooDispatchConsumeRepairEligibility,
+    apply_prepared_transaction_cleanup,
     evaluate_consume_repair_eligibility,
     validate_repair_operator_fields,
 )
@@ -74,3 +73,57 @@ def run_dispatch_consume_repair_dry_run(
     )
     exit_code = 0 if eligibility.repair_eligible else 1
     return eligibility, exit_code
+
+
+def format_dispatch_consume_repair_apply_result(
+    result: CooDispatchConsumeRepairApplyResult,
+) -> str:
+    """Format safe prepared cleanup apply fields for CLI stdout."""
+    return "\n".join(
+        (
+            f"repair_attempt_id: {result.repair_attempt_id}",
+            f"repair_action: {result.repair_action}",
+            f"consume_state_before: {result.consume_state_before}",
+            f"consume_state_after: {result.consume_state_after}",
+            f"applied: {str(result.applied).lower()}",
+            f"bundle_consumed: {str(result.bundle_consumed).lower()}",
+            f"confirmation_consumed: {str(result.confirmation_consumed).lower()}",
+            f"recovery_required: {str(result.recovery_required).lower()}",
+            f"phrase_verified: {str(result.phrase_verified).lower()}",
+            f"operator_id: {result.operator_id}",
+        )
+    )
+
+
+def run_dispatch_consume_repair_apply(
+    *,
+    ticket_id: str,
+    confirmation_id: str,
+    operator_id: str,
+    operator_name: str,
+    reason: str,
+    phrase: str,
+    bundle_dir: Path | None = None,
+    confirmation_dir: Path | None = None,
+    transaction_dir: Path | None = None,
+    audit_dir: Path | None = None,
+    evidence_dir: Path | None = None,
+    repair_audit_dir: Path | None = None,
+) -> tuple[CooDispatchConsumeRepairApplyResult, int]:
+    """Apply prepared transaction cleanup and return safe summary + exit code."""
+    result = apply_prepared_transaction_cleanup(
+        ticket_id=ticket_id,
+        confirmation_id=confirmation_id,
+        operator_id=operator_id,
+        operator_name=operator_name,
+        reason=reason,
+        phrase=phrase,
+        bundle_dir=bundle_dir,
+        confirmation_dir=confirmation_dir,
+        transaction_dir=transaction_dir,
+        audit_dir=audit_dir,
+        evidence_dir=evidence_dir,
+        repair_audit_dir=repair_audit_dir,
+    )
+    exit_code = 0 if result.applied else 1
+    return result, exit_code

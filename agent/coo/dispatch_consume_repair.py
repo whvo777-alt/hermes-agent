@@ -1,17 +1,26 @@
-"""Dispatch consume repair eligibility — Phase 12N.
+"""Dispatch consume repair eligibility — Phase 12N / prepared cleanup apply — Phase 12O.
 
-Read-only dry-run evaluation of repair eligibility. No writes, locks,
-audit records, or artifact/transaction mutation.
+Dry-run eligibility is read-only. Apply mutates only prepared consume transactions
+and append-only repair audit records; bundle/confirmation artifacts are untouched.
 """
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from agent.coo.dispatch_cli_consume_recovery import (
     CooDispatchConsumeRecoveryAssessment,
     assess_dispatch_consume_recovery,
+)
+from agent.coo.dispatch_consume_repair_audit import (
+    CooDispatchConsumeRepairAuditRecord,
+    append_consume_repair_audit,
+)
+from agent.coo.dispatch_consume_repair_lock import (
+    DispatchConsumeRepairLockError,
+    consume_repair_pair_lock,
 )
 from agent.coo.dispatch_consume_transaction import (
     CONSUME_STATE_COMMITTED,
@@ -20,6 +29,10 @@ from agent.coo.dispatch_consume_transaction import (
     CONSUME_STATE_PARTIAL,
     CONSUME_STATE_PREPARED,
     CONSUME_STATE_UNCONSUMED,
+    DispatchConsumeTransactionError,
+    abort_prepared_consume_transaction,
+    assess_consume_status,
+    read_consume_transaction,
 )
 
 REPAIR_ACTION_NOT_REQUIRED = "repair_not_required"
@@ -37,6 +50,24 @@ BLOCKED_MISSING_AUDIT_FOR_PARTIAL = "missing_audit_for_partial"
 BLOCKED_MISSING_EVIDENCE_FOR_PARTIAL = "missing_evidence_for_partial"
 BLOCKED_CORRELATION_INVALID = "correlation_invalid"
 BLOCKED_EVIDENCE_NOT_SUCCESSFUL = "evidence_not_successful"
+
+REQUIRED_CONSUME_REPAIR_PHRASE = "CONFIRM-CONSUME-REPAIR"
+
+
+@dataclass(frozen=True)
+class CooDispatchConsumeRepairApplyResult:
+    """Safe apply summary for prepared transaction cleanup."""
+
+    repair_attempt_id: str
+    repair_action: str
+    consume_state_before: str
+    consume_state_after: str
+    applied: bool
+    bundle_consumed: bool
+    confirmation_consumed: bool
+    recovery_required: bool
+    phrase_verified: bool
+    operator_id: str
 
 
 @dataclass(frozen=True)
@@ -187,3 +218,192 @@ def evaluate_consume_repair_eligibility(
         evidence_dir=evidence_dir,
     )
     return _eligibility_from_recovery(assessment, operator_valid=operator_valid)
+
+
+def validate_consume_repair_phrase(phrase: str) -> bool:
+    """Return whether the operator repair phrase matches exactly."""
+    return isinstance(phrase, str) and phrase == REQUIRED_CONSUME_REPAIR_PHRASE
+
+
+def apply_prepared_transaction_cleanup(
+    *,
+    ticket_id: str,
+    confirmation_id: str,
+    operator_id: str,
+    operator_name: str,
+    reason: str,
+    phrase: str,
+    bundle_dir: Path | None = None,
+    confirmation_dir: Path | None = None,
+    transaction_dir: Path | None = None,
+    audit_dir: Path | None = None,
+    evidence_dir: Path | None = None,
+    repair_audit_dir: Path | None = None,
+) -> CooDispatchConsumeRepairApplyResult:
+    """Abort a stale prepared consume transaction without touching artifacts."""
+    operator_valid = validate_repair_operator_fields(
+        operator_id=operator_id,
+        operator_name=operator_name,
+        reason=reason,
+    )
+    if not operator_valid:
+        raise ValueError("operator_id, operator_name, and reason are required")
+
+    phrase_verified = validate_consume_repair_phrase(phrase)
+    if not phrase_verified:
+        raise ValueError(
+            f"phrase must equal {REQUIRED_CONSUME_REPAIR_PHRASE!r}"
+        )
+
+    resolved_transaction_dir = transaction_dir
+    if resolved_transaction_dir is None:
+        from agent.coo.dispatch_consume_transaction import default_consume_transaction_dir
+
+        resolved_transaction_dir = default_consume_transaction_dir()
+
+    try:
+        with consume_repair_pair_lock(
+            ticket_id,
+            confirmation_id,
+            transaction_dir=resolved_transaction_dir,
+        ):
+            return _apply_prepared_transaction_cleanup_locked(
+                ticket_id=ticket_id,
+                confirmation_id=confirmation_id,
+                operator_id=operator_id,
+                operator_name=operator_name,
+                reason=reason,
+                bundle_dir=bundle_dir,
+                confirmation_dir=confirmation_dir,
+                transaction_dir=transaction_dir,
+                audit_dir=audit_dir,
+                evidence_dir=evidence_dir,
+                repair_audit_dir=repair_audit_dir,
+            )
+    except DispatchConsumeRepairLockError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _apply_prepared_transaction_cleanup_locked(
+    *,
+    ticket_id: str,
+    confirmation_id: str,
+    operator_id: str,
+    operator_name: str,
+    reason: str,
+    bundle_dir: Path | None,
+    confirmation_dir: Path | None,
+    transaction_dir: Path | None,
+    audit_dir: Path | None,
+    evidence_dir: Path | None,
+    repair_audit_dir: Path | None,
+) -> CooDispatchConsumeRepairApplyResult:
+    """Apply prepared cleanup while holding the pair repair lock."""
+    eligibility = evaluate_consume_repair_eligibility(
+        ticket_id=ticket_id,
+        confirmation_id=confirmation_id,
+        operator_id=operator_id,
+        operator_name=operator_name,
+        reason=reason,
+        bundle_dir=bundle_dir,
+        confirmation_dir=confirmation_dir,
+        transaction_dir=transaction_dir,
+        audit_dir=audit_dir,
+        evidence_dir=evidence_dir,
+    )
+    if not eligibility.repair_eligible:
+        raise ValueError(
+            "Dispatch consume repair apply is not eligible for this pair."
+        )
+    if eligibility.repair_action != REPAIR_ACTION_PREPARED_CLEANUP:
+        raise ValueError(
+            "Dispatch consume repair apply only supports prepared cleanup."
+        )
+    if eligibility.consume_state != CONSUME_STATE_PREPARED:
+        raise ValueError(
+            f"Dispatch consume repair apply requires prepared state, "
+            f"not {eligibility.consume_state!r}."
+        )
+
+    try:
+        prepared = read_consume_transaction(
+            ticket_id,
+            confirmation_id,
+            transaction_dir=transaction_dir,
+        )
+    except DispatchConsumeTransactionError as exc:
+        raise ValueError(str(exc)) from exc
+    if prepared is None:
+        raise ValueError("Consume transaction record is missing.")
+    if prepared.state != CONSUME_STATE_PREPARED:
+        raise ValueError("Consume transaction record is not prepared.")
+    if (
+        prepared.ticket_id != ticket_id.strip()
+        or prepared.confirmation_id != confirmation_id.strip()
+    ):
+        raise ValueError("Consume transaction record ids do not match lookup keys.")
+    if prepared.transaction_id != eligibility.transaction_id:
+        raise ValueError("Consume transaction id does not match recovery assessment.")
+    if prepared.bundle_consumed or prepared.confirmation_consumed:
+        raise ValueError(
+            "Prepared cleanup requires both bundle and confirmation unconsumed."
+        )
+
+    repair_attempt_id = str(uuid.uuid4())
+    consume_state_before = eligibility.consume_state
+    try:
+        abort_prepared_consume_transaction(
+            prepared=prepared,
+            repair_attempt_id=repair_attempt_id,
+            repair_action=REPAIR_ACTION_PREPARED_CLEANUP,
+            operator_id=operator_id.strip(),
+            reason=reason.strip(),
+            transaction_dir=transaction_dir,
+        )
+    except (DispatchConsumeTransactionError, OSError) as exc:
+        raise ValueError(str(exc)) from exc
+
+    append_consume_repair_audit(
+        CooDispatchConsumeRepairAuditRecord(
+            repair_attempt_id=repair_attempt_id,
+            repair_action=REPAIR_ACTION_PREPARED_CLEANUP,
+            ticket_id=prepared.ticket_id,
+            confirmation_id=prepared.confirmation_id,
+            transaction_id=prepared.transaction_id,
+            execution_attempt_id=prepared.execution_attempt_id,
+            consume_state_before=consume_state_before,
+            consume_state_after=CONSUME_STATE_UNCONSUMED,
+            operator_id=operator_id.strip(),
+            operator_name=operator_name.strip(),
+            reason=reason.strip(),
+            phrase_verified=True,
+            applied_at=_repair_applied_at(),
+        ),
+        audit_dir=repair_audit_dir,
+    )
+
+    after_status = assess_consume_status(
+        ticket_id=ticket_id,
+        confirmation_id=confirmation_id,
+        bundle_dir=bundle_dir,
+        confirmation_dir=confirmation_dir,
+        transaction_dir=transaction_dir,
+    )
+    return CooDispatchConsumeRepairApplyResult(
+        repair_attempt_id=repair_attempt_id,
+        repair_action=REPAIR_ACTION_PREPARED_CLEANUP,
+        consume_state_before=consume_state_before,
+        consume_state_after=after_status.consume_state,
+        applied=True,
+        bundle_consumed=after_status.bundle_consumed,
+        confirmation_consumed=after_status.confirmation_consumed,
+        recovery_required=after_status.recovery_required,
+        phrase_verified=True,
+        operator_id=operator_id.strip(),
+    )
+
+
+def _repair_applied_at() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()

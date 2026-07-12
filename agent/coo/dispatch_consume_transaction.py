@@ -29,6 +29,7 @@ _TRANSACTION_VERSION = 1
 _TRANSACTION_STATE_PREPARED = "prepared"
 _TRANSACTION_STATE_COMMITTED = "committed"
 _TRANSACTION_STATE_PARTIAL = "partial"
+_TRANSACTION_STATE_ABORTED = "aborted"
 
 CONSUME_STATE_UNCONSUMED = "unconsumed"
 CONSUME_STATE_PREPARED = "prepared"
@@ -42,8 +43,10 @@ _KNOWN_TRANSACTION_STATES = frozenset(
         _TRANSACTION_STATE_PREPARED,
         _TRANSACTION_STATE_COMMITTED,
         _TRANSACTION_STATE_PARTIAL,
+        _TRANSACTION_STATE_ABORTED,
     }
 )
+_INACTIVE_TRANSACTION_STATES = frozenset({_TRANSACTION_STATE_ABORTED})
 _KNOWN_TRANSACTION_KEYS = frozenset(
     {
         "version",
@@ -58,6 +61,12 @@ _KNOWN_TRANSACTION_KEYS = frozenset(
         "bundle_consumed",
         "confirmation_consumed",
         "failure_reason",
+        "aborted_at",
+        "repair_attempt_id",
+        "repair_action",
+        "operator_id",
+        "reason",
+        "phrase_verified",
     }
 )
 
@@ -81,6 +90,12 @@ class DispatchConsumeTransaction:
     bundle_consumed: bool = False
     confirmation_consumed: bool = False
     failure_reason: str = ""
+    aborted_at: str = ""
+    repair_attempt_id: str = ""
+    repair_action: str = ""
+    operator_id: str = ""
+    reason: str = ""
+    phrase_verified: bool = False
 
 
 @dataclass(frozen=True)
@@ -179,6 +194,12 @@ def _transaction_to_dict(transaction: DispatchConsumeTransaction) -> Dict[str, A
         "bundle_consumed": transaction.bundle_consumed,
         "confirmation_consumed": transaction.confirmation_consumed,
         "failure_reason": transaction.failure_reason,
+        "aborted_at": transaction.aborted_at,
+        "repair_attempt_id": transaction.repair_attempt_id,
+        "repair_action": transaction.repair_action,
+        "operator_id": transaction.operator_id,
+        "reason": transaction.reason,
+        "phrase_verified": transaction.phrase_verified,
     }
 
 
@@ -250,6 +271,50 @@ def _parse_transaction_payload(payload: Mapping[str, Any]) -> DispatchConsumeTra
         raise DispatchConsumeTransactionError(
             "Consume transaction partial_at must be a string."
         )
+    aborted_at = payload.get("aborted_at", "")
+    repair_attempt_id = payload.get("repair_attempt_id", "")
+    repair_action = payload.get("repair_action", "")
+    operator_id = payload.get("operator_id", "")
+    reason = payload.get("reason", "")
+    phrase_verified = payload.get("phrase_verified", False)
+    if aborted_at != "" and not isinstance(aborted_at, str):
+        raise DispatchConsumeTransactionError(
+            "Consume transaction aborted_at must be a string."
+        )
+    for field_name, value in (
+        ("repair_attempt_id", repair_attempt_id),
+        ("repair_action", repair_action),
+        ("operator_id", operator_id),
+        ("reason", reason),
+    ):
+        if value != "" and not isinstance(value, str):
+            raise DispatchConsumeTransactionError(
+                f"Consume transaction field {field_name} must be a string."
+            )
+    if not isinstance(phrase_verified, bool):
+        raise DispatchConsumeTransactionError(
+            "Consume transaction phrase_verified must be a boolean."
+        )
+    if normalized_state == _TRANSACTION_STATE_ABORTED:
+        if bundle_consumed or confirmation_consumed:
+            raise DispatchConsumeTransactionError(
+                "Aborted consume transaction must mark both artifacts unconsumed."
+            )
+        for field_name, value in (
+            ("aborted_at", aborted_at),
+            ("repair_attempt_id", repair_attempt_id),
+            ("repair_action", repair_action),
+            ("operator_id", operator_id),
+            ("reason", reason),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise DispatchConsumeTransactionError(
+                    f"Aborted consume transaction field {field_name} is required."
+                )
+        if not phrase_verified:
+            raise DispatchConsumeTransactionError(
+                "Aborted consume transaction phrase_verified must be true."
+            )
     return DispatchConsumeTransaction(
         transaction_id=transaction_id.strip(),
         execution_attempt_id=execution_attempt_id.strip(),
@@ -262,6 +327,12 @@ def _parse_transaction_payload(payload: Mapping[str, Any]) -> DispatchConsumeTra
         bundle_consumed=bundle_consumed,
         confirmation_consumed=confirmation_consumed,
         failure_reason=str(failure_reason).strip(),
+        aborted_at=str(aborted_at).strip(),
+        repair_attempt_id=str(repair_attempt_id).strip(),
+        repair_action=str(repair_action).strip(),
+        operator_id=str(operator_id).strip(),
+        reason=str(reason).strip(),
+        phrase_verified=phrase_verified,
     )
 
 
@@ -299,6 +370,17 @@ def read_consume_transaction(
         raise DispatchConsumeTransactionError(
             "Consume transaction record ids do not match lookup keys."
         )
+    return transaction
+
+
+def active_consume_transaction(
+    transaction: Optional[DispatchConsumeTransaction],
+) -> Optional[DispatchConsumeTransaction]:
+    """Return transaction when it still blocks consume replay."""
+    if transaction is None:
+        return None
+    if transaction.state in _INACTIVE_TRANSACTION_STATES:
+        return None
     return transaction
 
 
@@ -391,10 +473,11 @@ def assess_consume_status(
         normalized_confirmation_id,
         transaction_dir=transaction_dir,
     )
+    active_transaction = active_consume_transaction(transaction)
     consume_state = _derive_consume_state(
         bundle_consumed=bundle_consumed,
         confirmation_consumed=confirmation_consumed,
-        transaction=transaction,
+        transaction=active_transaction,
     )
     recovery_required = consume_state in {
         CONSUME_STATE_PARTIAL,
@@ -402,8 +485,10 @@ def assess_consume_status(
     }
     return CooDispatchConsumeStatus(
         consume_state=consume_state,
-        transaction_id=transaction.transaction_id if transaction else "",
-        execution_attempt_id=transaction.execution_attempt_id if transaction else "",
+        transaction_id=active_transaction.transaction_id if active_transaction else "",
+        execution_attempt_id=(
+            active_transaction.execution_attempt_id if active_transaction else ""
+        ),
         bundle_consumed=bundle_consumed,
         confirmation_consumed=confirmation_consumed,
         recovery_required=recovery_required,
@@ -575,3 +660,115 @@ def execute_consume_transaction(
         transaction_dir=resolved_transaction_dir,
     )
     return committed
+
+
+def abort_prepared_consume_transaction(
+    *,
+    prepared: DispatchConsumeTransaction,
+    repair_attempt_id: str,
+    repair_action: str,
+    operator_id: str,
+    reason: str,
+    transaction_dir: Path | None = None,
+) -> DispatchConsumeTransaction:
+    """Atomically tombstone a prepared consume transaction as aborted."""
+    if prepared.state != _TRANSACTION_STATE_PREPARED:
+        raise DispatchConsumeTransactionError(
+            "Only prepared consume transactions can be aborted."
+        )
+    if prepared.bundle_consumed or prepared.confirmation_consumed:
+        raise DispatchConsumeTransactionError(
+            "Prepared consume transaction artifacts must remain unconsumed."
+        )
+    normalized_repair_attempt_id = _normalize_pair_id(
+        repair_attempt_id,
+        field_name="repair_attempt_id",
+    )
+    normalized_repair_action = (repair_action or "").strip()
+    normalized_operator_id = (operator_id or "").strip()
+    normalized_reason = (reason or "").strip()
+    if not normalized_repair_action:
+        raise DispatchConsumeTransactionError("repair_action is required.")
+    if not normalized_operator_id:
+        raise DispatchConsumeTransactionError("operator_id is required.")
+    if not normalized_reason:
+        raise DispatchConsumeTransactionError("reason is required.")
+
+    aborted = DispatchConsumeTransaction(
+        transaction_id=prepared.transaction_id,
+        execution_attempt_id=prepared.execution_attempt_id,
+        ticket_id=prepared.ticket_id,
+        confirmation_id=prepared.confirmation_id,
+        state=_TRANSACTION_STATE_ABORTED,
+        prepared_at=prepared.prepared_at,
+        aborted_at=_utc_now_iso(),
+        repair_attempt_id=normalized_repair_attempt_id,
+        repair_action=normalized_repair_action,
+        operator_id=normalized_operator_id,
+        reason=normalized_reason,
+        phrase_verified=True,
+    )
+    resolved_transaction_dir = transaction_dir or default_consume_transaction_dir()
+    _write_transaction_record(
+        ticket_id=prepared.ticket_id,
+        confirmation_id=prepared.confirmation_id,
+        transaction=aborted,
+        transaction_dir=resolved_transaction_dir,
+    )
+    return aborted
+
+
+def abort_prepared_consume_transaction(
+    *,
+    prepared: DispatchConsumeTransaction,
+    repair_attempt_id: str,
+    repair_action: str,
+    operator_id: str,
+    reason: str,
+    transaction_dir: Path | None = None,
+) -> DispatchConsumeTransaction:
+    """Atomically tombstone a prepared consume transaction as aborted."""
+    if prepared.state != _TRANSACTION_STATE_PREPARED:
+        raise DispatchConsumeTransactionError(
+            "Only prepared consume transactions can be aborted."
+        )
+    if prepared.bundle_consumed or prepared.confirmation_consumed:
+        raise DispatchConsumeTransactionError(
+            "Prepared consume transaction artifacts must remain unconsumed."
+        )
+    normalized_repair_attempt_id = _normalize_pair_id(
+        repair_attempt_id,
+        field_name="repair_attempt_id",
+    )
+    normalized_repair_action = (repair_action or "").strip()
+    normalized_operator_id = (operator_id or "").strip()
+    normalized_reason = (reason or "").strip()
+    if not normalized_repair_action:
+        raise DispatchConsumeTransactionError("repair_action is required.")
+    if not normalized_operator_id:
+        raise DispatchConsumeTransactionError("operator_id is required.")
+    if not normalized_reason:
+        raise DispatchConsumeTransactionError("reason is required.")
+
+    aborted = DispatchConsumeTransaction(
+        transaction_id=prepared.transaction_id,
+        execution_attempt_id=prepared.execution_attempt_id,
+        ticket_id=prepared.ticket_id,
+        confirmation_id=prepared.confirmation_id,
+        state=_TRANSACTION_STATE_ABORTED,
+        prepared_at=prepared.prepared_at,
+        aborted_at=_utc_now_iso(),
+        repair_attempt_id=normalized_repair_attempt_id,
+        repair_action=normalized_repair_action,
+        operator_id=normalized_operator_id,
+        reason=normalized_reason,
+        phrase_verified=True,
+    )
+    resolved_transaction_dir = transaction_dir or default_consume_transaction_dir()
+    _write_transaction_record(
+        ticket_id=prepared.ticket_id,
+        confirmation_id=prepared.confirmation_id,
+        transaction=aborted,
+        transaction_dir=resolved_transaction_dir,
+    )
+    return aborted
