@@ -307,7 +307,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     consume_repair_apply_parser = consume_repair_subparsers.add_parser(
         "apply",
-        help="Apply prepared consume transaction cleanup",
+        help="Apply the eligible consume repair action (prepared cleanup or partial forward-complete)",
     )
     consume_repair_apply_parser.add_argument(
         "--ticket-id",

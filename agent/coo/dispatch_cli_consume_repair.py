@@ -1,4 +1,4 @@
-"""CLI dispatch consume repair dry-run and apply — Phase 12N / 12O."""
+"""CLI dispatch consume repair dry-run and apply — Phase 12N / 12O / 12P."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 from agent.coo.dispatch_consume_repair import (
     CooDispatchConsumeRepairApplyResult,
     CooDispatchConsumeRepairEligibility,
-    apply_prepared_transaction_cleanup,
+    apply_consume_repair,
     evaluate_consume_repair_eligibility,
     validate_repair_operator_fields,
 )
@@ -78,7 +78,7 @@ def run_dispatch_consume_repair_dry_run(
 def format_dispatch_consume_repair_apply_result(
     result: CooDispatchConsumeRepairApplyResult,
 ) -> str:
-    """Format safe prepared cleanup apply fields for CLI stdout."""
+    """Format safe repair apply fields for CLI stdout."""
     return "\n".join(
         (
             f"repair_attempt_id: {result.repair_attempt_id}",
@@ -89,8 +89,11 @@ def format_dispatch_consume_repair_apply_result(
             f"bundle_consumed: {str(result.bundle_consumed).lower()}",
             f"confirmation_consumed: {str(result.confirmation_consumed).lower()}",
             f"recovery_required: {str(result.recovery_required).lower()}",
+            f"correlation_valid: {str(result.correlation_valid).lower()}",
+            f"evidence_success: {str(result.evidence_success).lower()}",
             f"phrase_verified: {str(result.phrase_verified).lower()}",
             f"operator_id: {result.operator_id}",
+            f"execution_attempt_id: {result.execution_attempt_id or '(none)'}",
         )
     )
 
@@ -110,8 +113,8 @@ def run_dispatch_consume_repair_apply(
     evidence_dir: Path | None = None,
     repair_audit_dir: Path | None = None,
 ) -> tuple[CooDispatchConsumeRepairApplyResult, int]:
-    """Apply prepared transaction cleanup and return safe summary + exit code."""
-    result = apply_prepared_transaction_cleanup(
+    """Apply the eligible repair action and return safe summary + exit code."""
+    result = apply_consume_repair(
         ticket_id=ticket_id,
         confirmation_id=confirmation_id,
         operator_id=operator_id,

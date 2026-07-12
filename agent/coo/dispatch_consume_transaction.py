@@ -718,23 +718,27 @@ def abort_prepared_consume_transaction(
     return aborted
 
 
-def abort_prepared_consume_transaction(
+def complete_partial_consume_transaction(
     *,
-    prepared: DispatchConsumeTransaction,
+    partial: DispatchConsumeTransaction,
     repair_attempt_id: str,
     repair_action: str,
     operator_id: str,
     reason: str,
     transaction_dir: Path | None = None,
 ) -> DispatchConsumeTransaction:
-    """Atomically tombstone a prepared consume transaction as aborted."""
-    if prepared.state != _TRANSACTION_STATE_PREPARED:
+    """Atomically forward-complete a partial consume transaction as committed.
+
+    Both artifacts must already be consumed by the caller before this write;
+    this only transitions the transaction record partial -> committed.
+    """
+    if partial.state != _TRANSACTION_STATE_PARTIAL:
         raise DispatchConsumeTransactionError(
-            "Only prepared consume transactions can be aborted."
+            "Only partial consume transactions can be forward-completed."
         )
-    if prepared.bundle_consumed or prepared.confirmation_consumed:
+    if not partial.bundle_consumed or partial.confirmation_consumed:
         raise DispatchConsumeTransactionError(
-            "Prepared consume transaction artifacts must remain unconsumed."
+            "Partial consume transaction must have bundle consumed only."
         )
     normalized_repair_attempt_id = _normalize_pair_id(
         repair_attempt_id,
@@ -750,14 +754,18 @@ def abort_prepared_consume_transaction(
     if not normalized_reason:
         raise DispatchConsumeTransactionError("reason is required.")
 
-    aborted = DispatchConsumeTransaction(
-        transaction_id=prepared.transaction_id,
-        execution_attempt_id=prepared.execution_attempt_id,
-        ticket_id=prepared.ticket_id,
-        confirmation_id=prepared.confirmation_id,
-        state=_TRANSACTION_STATE_ABORTED,
-        prepared_at=prepared.prepared_at,
-        aborted_at=_utc_now_iso(),
+    committed = DispatchConsumeTransaction(
+        transaction_id=partial.transaction_id,
+        execution_attempt_id=partial.execution_attempt_id,
+        ticket_id=partial.ticket_id,
+        confirmation_id=partial.confirmation_id,
+        state=_TRANSACTION_STATE_COMMITTED,
+        prepared_at=partial.prepared_at,
+        committed_at=_utc_now_iso(),
+        partial_at=partial.partial_at,
+        bundle_consumed=True,
+        confirmation_consumed=True,
+        failure_reason="",
         repair_attempt_id=normalized_repair_attempt_id,
         repair_action=normalized_repair_action,
         operator_id=normalized_operator_id,
@@ -766,9 +774,9 @@ def abort_prepared_consume_transaction(
     )
     resolved_transaction_dir = transaction_dir or default_consume_transaction_dir()
     _write_transaction_record(
-        ticket_id=prepared.ticket_id,
-        confirmation_id=prepared.confirmation_id,
-        transaction=aborted,
+        ticket_id=partial.ticket_id,
+        confirmation_id=partial.confirmation_id,
+        transaction=committed,
         transaction_dir=resolved_transaction_dir,
     )
-    return aborted
+    return committed

@@ -67,6 +67,9 @@ class CooDispatchConsumeRepairAuditRecord:
     reason: str
     phrase_verified: bool
     applied_at: str
+    outcome: str = "applied"
+    correlation_valid: bool = False
+    evidence_success: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -83,6 +86,9 @@ class CooDispatchConsumeRepairAuditRecord:
             "reason": self.reason,
             "phrase_verified": self.phrase_verified,
             "applied_at": self.applied_at,
+            "outcome": self.outcome,
+            "correlation_valid": self.correlation_valid,
+            "evidence_success": self.evidence_success,
         }
 
 
