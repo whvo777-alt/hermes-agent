@@ -464,6 +464,25 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     production_signoff_parser.set_defaults(handler=_cmd_production_signoff)
 
+    production_cutover_parser = production_subparsers.add_parser(
+        "cutover-check",
+        help="Evaluate read-only production cutover checklist (execution remains disabled)",
+    )
+    production_cutover_parser.add_argument(
+        "--ticket-id",
+        action="append",
+        default=None,
+        dest="ticket_ids",
+        help="Ticket id to include in pilot fleet review (repeatable)",
+    )
+    production_cutover_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional limit for recent pilot history records per ticket",
+    )
+    production_cutover_parser.set_defaults(handler=_cmd_production_cutover_check)
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot (production root hard-denied)",
@@ -565,6 +584,25 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         help="Optional limit for recent pilot history records",
     )
     pilot_runbook_parser.set_defaults(handler=_cmd_pilot_runbook)
+
+    pilot_fleet_parser = pilot_subparsers.add_parser(
+        "fleet",
+        help="Show read-only multi-ticket isolated operational pilot fleet view",
+    )
+    pilot_fleet_parser.add_argument(
+        "--ticket-id",
+        action="append",
+        default=None,
+        dest="ticket_ids",
+        help="Ticket id to include (repeatable; defaults to recent history tickets)",
+    )
+    pilot_fleet_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional limit for recent pilot history records per ticket",
+    )
+    pilot_fleet_parser.set_defaults(handler=_cmd_pilot_fleet)
 
     pilot_history_parser = pilot_subparsers.add_parser(
         "history",
@@ -1129,6 +1167,28 @@ def _cmd_pilot_runbook(args: argparse.Namespace) -> int:
     return 0 if summary.pilot_runbook_ready else 1
 
 
+def _cmd_pilot_fleet(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_pilot_fleet import (
+        FLEET_STATUS_NOT_READY,
+        format_pilot_fleet_summary,
+        summarize_pilot_fleet,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        summary = summarize_pilot_fleet(
+            ticket_ids=args.ticket_ids,
+            limit=args.limit,
+            merged_config=load_config(),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_pilot_fleet_summary(summary))
+    return 1 if summary.fleet_status == FLEET_STATUS_NOT_READY else 0
+
+
 def _cmd_pilot_history_show(args: argparse.Namespace) -> int:
     from agent.coo.dispatch_cli_pilot_history import (
         format_pilot_history_summary,
@@ -1187,6 +1247,27 @@ def _cmd_production_signoff(args: argparse.Namespace) -> int:
     summary = evaluate_dispatch_production_signoff(merged_config=load_config())
     print(format_dispatch_production_signoff(summary))
     return 0 if summary.signoff_ready else 1
+
+
+def _cmd_production_cutover_check(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_production_cutover import (
+        format_production_cutover_checklist,
+        evaluate_production_cutover_checklist,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        summary = evaluate_production_cutover_checklist(
+            ticket_ids=args.ticket_ids,
+            limit=args.limit,
+            merged_config=load_config(),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(format_production_cutover_checklist(summary))
+    return 0 if summary.cutover_ready else 1
 
 
 def _cmd_production_readiness(args: argparse.Namespace) -> int:
