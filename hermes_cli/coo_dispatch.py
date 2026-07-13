@@ -775,6 +775,25 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     gateway_pilot_run_parser.set_defaults(handler=_cmd_gateway_pilot_run)
 
+    gateway_audit_parser = gateway_subparsers.add_parser(
+        "audit",
+        help="Read-only gateway request audit correlation commands",
+    )
+    gateway_audit_subparsers = gateway_audit_parser.add_subparsers(
+        dest="coo_dispatch_gateway_audit_command",
+        required=True,
+    )
+    gateway_audit_show_parser = gateway_audit_subparsers.add_parser(
+        "show",
+        help="Show read-only audit correlation for one gateway request id",
+    )
+    gateway_audit_show_parser.add_argument(
+        "--gateway-request-id",
+        required=True,
+        help="Gateway request id to audit",
+    )
+    gateway_audit_show_parser.set_defaults(handler=_cmd_gateway_audit_show)
+
     binding_parser = subparsers.add_parser(
         "binding",
         help="Read-only and operator-controlled runner binding state commands",
@@ -1442,6 +1461,21 @@ def _cmd_gateway_status(args: argparse.Namespace) -> int:
 
     summary = summarize_dispatch_gateway_status(merged_config=load_config())
     print(format_dispatch_gateway_status_summary(summary))
+    return 0
+
+
+def _cmd_gateway_audit_show(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_gateway_request_audit import (
+        run_gateway_request_audit_show,
+    )
+
+    try:
+        output = run_gateway_request_audit_show(args.gateway_request_id)
+    except (ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
     return 0
 
 
