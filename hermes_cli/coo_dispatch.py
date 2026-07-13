@@ -864,6 +864,53 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_activation_execution_gate
     )
 
+    production_activation_live_pilot_parser = (
+        production_activation_subparsers.add_parser(
+            "live-pilot",
+            help=read_only(
+                "Live pilot preflight, reservation, and permit without execution"
+            ),
+        )
+    )
+    production_activation_live_pilot_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for live pilot preflight",
+    )
+    production_activation_live_pilot_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Ticket id for scoped live pilot preflight",
+    )
+    production_activation_live_pilot_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Confirmation id for scoped live pilot preflight",
+    )
+    production_activation_live_pilot_parser.add_argument(
+        "--unlock-token-id",
+        required=True,
+        help="Unlock token id for bundle/confirmation correlation",
+    )
+    production_activation_live_pilot_parser.add_argument(
+        "--requester-id",
+        required=True,
+        help="Dispatch requester id for audit correlation",
+    )
+    production_activation_live_pilot_parser.add_argument(
+        "--pipeline-root",
+        required=True,
+        help="Isolated production mirror root (not production Repository2 root)",
+    )
+    production_activation_live_pilot_parser.add_argument(
+        "--phrase",
+        required=True,
+        help="Execution confirmation phrase (CLI only)",
+    )
+    production_activation_live_pilot_parser.set_defaults(
+        handler=_cmd_production_activation_live_pilot
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -2170,6 +2217,32 @@ def _cmd_production_activation_execution_gate(args: argparse.Namespace) -> int:
             merged_config=load_config(),
         )
     except ProductionActivationExecutionGateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_live_pilot(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_live_pilot import (
+        ProductionActivationLivePilotError,
+        run_activation_live_pilot,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_activation_live_pilot(
+            activation_request_id=args.activation_request_id,
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+            unlock_token_id=args.unlock_token_id,
+            requester_id=args.requester_id,
+            pipeline_root=args.pipeline_root,
+            phrase=args.phrase,
+            merged_config=load_config(),
+        )
+    except ProductionActivationLivePilotError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

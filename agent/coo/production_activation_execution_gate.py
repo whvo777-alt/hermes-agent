@@ -334,6 +334,22 @@ def _load_execution_gate_records(
     ]
 
 
+def find_ready_execution_gate_record(
+    activation_request_id: str,
+    *,
+    gate_key: str,
+    history_dir: Path | None = None,
+) -> ProductionActivationExecutionGateRecord | None:
+    """Return the latest ready execution gate record for a gate key."""
+    normalized_key = (gate_key or "").strip()
+    for record in reversed(
+        _load_execution_gate_records(activation_request_id, history_dir=history_dir)
+    ):
+        if record.gate_key == normalized_key and record.result == "ready":
+            return record
+    return None
+
+
 def _atomic_append_execution_gate_record(
     record: ProductionActivationExecutionGateRecord,
     *,
