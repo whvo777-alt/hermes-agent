@@ -515,6 +515,81 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     production_cutover_parser.set_defaults(handler=_cmd_production_cutover_check)
 
+    production_activation_parser = production_subparsers.add_parser(
+        "activation",
+        help=read_only("Production activation proposal commands"),
+        description=read_only(
+            "Production activation governance proposals. Execution remains disabled."
+        ),
+    )
+    production_activation_subparsers = production_activation_parser.add_subparsers(
+        dest="coo_dispatch_production_activation_command",
+        required=True,
+    )
+    production_activation_propose_parser = production_activation_subparsers.add_parser(
+        "propose",
+        help=(
+            "Create a proposed production activation artifact "
+            "(append-only; no approval or execution)"
+        ),
+    )
+    production_activation_propose_parser.add_argument(
+        "--tested-commit-sha",
+        required=True,
+        help="Git commit SHA under test (must match current repository HEAD)",
+    )
+    production_activation_propose_parser.add_argument(
+        "--release-tag",
+        required=True,
+        help="Release tag for the tested commit (e.g. v1.0.0-rc.1)",
+    )
+    production_activation_propose_parser.add_argument(
+        "--repository-attestation-hash",
+        required=True,
+        help="SHA-256 digest of the read-only repository attestation snapshot",
+    )
+    production_activation_propose_parser.add_argument(
+        "--requested-by",
+        required=True,
+        help="Operator id submitting the activation proposal",
+    )
+    production_activation_propose_parser.add_argument(
+        "--rollback-commit",
+        required=True,
+        help="Rollback commit SHA if activation must be revoked",
+    )
+    production_activation_propose_parser.add_argument(
+        "--activation-scope",
+        required=True,
+        dest="scope_type",
+        choices=("one_shot", "ticket_scoped", "maintenance_window"),
+        help="Activation scope type",
+    )
+    production_activation_propose_parser.add_argument(
+        "--platform",
+        default="cli",
+        choices=("cli", "gateway"),
+        help="Activation platform surface (default: cli)",
+    )
+    production_activation_propose_parser.add_argument(
+        "--ticket-id",
+        default="",
+        help="Ticket id when activation scope is ticket_scoped",
+    )
+    production_activation_propose_parser.add_argument(
+        "--maintenance-window-start",
+        default="",
+        help="ISO-8601 maintenance window start (maintenance_window scope only)",
+    )
+    production_activation_propose_parser.add_argument(
+        "--maintenance-window-end",
+        default="",
+        help="ISO-8601 maintenance window end (maintenance_window scope only)",
+    )
+    production_activation_propose_parser.set_defaults(
+        handler=_cmd_production_activation_propose
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -1557,6 +1632,33 @@ def _cmd_production_cutover_check(args: argparse.Namespace) -> int:
 
     print(format_production_cutover_checklist(summary))
     return 0 if summary.cutover_ready else 1
+
+
+def _cmd_production_activation_propose(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_production_activation import (
+        ProductionActivationCliError,
+        run_production_activation_propose,
+    )
+
+    try:
+        output, exit_code = run_production_activation_propose(
+            tested_commit_sha=args.tested_commit_sha,
+            release_tag=args.release_tag,
+            repository_attestation_hash=args.repository_attestation_hash,
+            requested_by=args.requested_by,
+            rollback_commit=args.rollback_commit,
+            scope_type=args.scope_type,
+            platform=args.platform,
+            ticket_id=args.ticket_id,
+            maintenance_window_start=args.maintenance_window_start,
+            maintenance_window_end=args.maintenance_window_end,
+        )
+    except ProductionActivationCliError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
 
 
 def _cmd_production_readiness(args: argparse.Namespace) -> int:

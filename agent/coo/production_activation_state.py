@@ -129,6 +129,8 @@ class ActivationScope:
     platform: str
     publish_allowed: bool = False
     ticket_id: str = ""
+    maintenance_window_start: str = ""
+    maintenance_window_end: str = ""
 
     def to_dict(self) -> dict[str, str | bool]:
         return {
@@ -136,6 +138,8 @@ class ActivationScope:
             "platform": self.platform,
             "publish_allowed": self.publish_allowed,
             "ticket_id": self.ticket_id,
+            "maintenance_window_start": self.maintenance_window_start,
+            "maintenance_window_end": self.maintenance_window_end,
         }
 
 
@@ -288,11 +292,38 @@ def validate_activation_scope(scope: ActivationScope) -> ActivationScope:
             "activation_scope.ticket_id must not contain path separators"
         )
 
+    window_start = (scope.maintenance_window_start or "").strip()
+    window_end = (scope.maintenance_window_end or "").strip()
+    if scope_type == ACTIVATION_SCOPE_MAINTENANCE_WINDOW:
+        if not window_start or not window_end:
+            raise ProductionActivationStateError(
+                "maintenance_window_start and maintenance_window_end are required "
+                "for maintenance_window scope"
+            )
+        start_dt = _parse_iso8601(
+            window_start,
+            field_name="activation_scope.maintenance_window_start",
+        )
+        end_dt = _parse_iso8601(
+            window_end,
+            field_name="activation_scope.maintenance_window_end",
+        )
+        if end_dt <= start_dt:
+            raise ProductionActivationStateError(
+                "maintenance_window_end must follow maintenance_window_start"
+            )
+    elif window_start or window_end:
+        raise ProductionActivationStateError(
+            "maintenance_window fields are only allowed for maintenance_window scope"
+        )
+
     return ActivationScope(
         scope_type=scope_type,
         platform=platform,
         publish_allowed=False,
         ticket_id=ticket_id,
+        maintenance_window_start=window_start,
+        maintenance_window_end=window_end,
     )
 
 
