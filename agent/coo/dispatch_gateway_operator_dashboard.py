@@ -183,6 +183,12 @@ class CooDispatchGatewayOperatorDashboardSummary:
     rollback_ready: bool = False
     rollback_cleanup_required: bool = False
     rollback_recommended_action: str = ""
+    production_final_signoff_status: str = ""
+    production_release_ready: bool = False
+    production_final_signoff_present: bool = False
+    production_final_blocking_count: int = 0
+    production_final_warning_count: int = 0
+    production_final_recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -678,9 +684,15 @@ def build_operator_dashboard_summary(
     from agent.coo.production_live_rollback_validation import (
         resolve_latest_rollback_dashboard_digest,
     )
+    from agent.coo.production_final_signoff import (
+        resolve_latest_final_signoff_dashboard_digest,
+    )
 
     live_pilot = resolve_latest_live_pilot_dashboard_digest(merged_config=merged_config)
     rollback = resolve_latest_rollback_dashboard_digest(merged_config=merged_config)
+    final_signoff = resolve_latest_final_signoff_dashboard_digest(
+        merged_config=merged_config
+    )
 
     return CooDispatchGatewayOperatorDashboardSummary(
         dashboard_health=dashboard_health,
@@ -727,6 +739,12 @@ def build_operator_dashboard_summary(
         rollback_ready=rollback.rollback_ready,
         rollback_cleanup_required=rollback.rollback_cleanup_required,
         rollback_recommended_action=rollback.rollback_recommended_action,
+        production_final_signoff_status=final_signoff.production_final_signoff_status,
+        production_release_ready=final_signoff.production_release_ready,
+        production_final_signoff_present=final_signoff.production_final_signoff_present,
+        production_final_blocking_count=final_signoff.production_final_blocking_count,
+        production_final_warning_count=final_signoff.production_final_warning_count,
+        production_final_recommended_action=final_signoff.production_final_recommended_action,
     )
 
 
@@ -949,6 +967,14 @@ def format_operator_dashboard_summary(
             f"rollback_ready: {str(summary.rollback_ready).lower()}",
             f"rollback_cleanup_required: {str(summary.rollback_cleanup_required).lower()}",
             f"rollback_recommended_action: {summary.rollback_recommended_action or _NONE_LABEL}",
+            f"production_final_signoff_status: {summary.production_final_signoff_status or _NONE_LABEL}",
+            f"production_release_ready: {str(summary.production_release_ready).lower()}",
+            "production_final_signoff_present: "
+            f"{str(summary.production_final_signoff_present).lower()}",
+            f"production_final_blocking_count: {summary.production_final_blocking_count}",
+            f"production_final_warning_count: {summary.production_final_warning_count}",
+            "production_final_recommended_action: "
+            f"{summary.production_final_recommended_action or _NONE_LABEL}",
         ]
     )
     output = "\n".join(lines)

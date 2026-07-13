@@ -515,6 +515,47 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     production_cutover_parser.set_defaults(handler=_cmd_production_cutover_check)
 
+    production_final_signoff_status_parser = production_subparsers.add_parser(
+        "final-signoff-status",
+        help=read_only("Read-only final production sign-off assessment"),
+    )
+    production_final_signoff_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for final sign-off status",
+    )
+    production_final_signoff_status_parser.add_argument(
+        "--reservation-id",
+        required=True,
+        help="Reservation id correlated with finalized live pilot",
+    )
+    production_final_signoff_status_parser.set_defaults(
+        handler=_cmd_production_final_signoff_status
+    )
+
+    production_final_signoff_parser = production_subparsers.add_parser(
+        "final-signoff",
+        help=read_only(
+            "Record final production sign-off when release candidate is ready"
+        ),
+    )
+    production_final_signoff_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for final sign-off",
+    )
+    production_final_signoff_parser.add_argument(
+        "--reservation-id",
+        required=True,
+        help="Reservation id correlated with finalized live pilot",
+    )
+    production_final_signoff_parser.add_argument(
+        "--signer-id",
+        required=True,
+        help="Release approver id performing final sign-off",
+    )
+    production_final_signoff_parser.set_defaults(handler=_cmd_production_final_signoff)
+
     production_activation_parser = production_subparsers.add_parser(
         "activation",
         help=read_only("Production activation proposal commands"),
@@ -2466,6 +2507,49 @@ def _cmd_production_activation_rollback_plan(args: argparse.Namespace) -> int:
             merged_config=load_config(),
         )
     except ProductionLiveRollbackValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_final_signoff_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_final_signoff import (
+        ProductionFinalSignoffError,
+        run_production_final_signoff_status,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_final_signoff_status(
+            activation_request_id=args.activation_request_id,
+            reservation_id=args.reservation_id,
+            merged_config=load_config(),
+        )
+    except ProductionFinalSignoffError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_final_signoff(args: argparse.Namespace) -> int:
+    from agent.coo.production_final_signoff import (
+        ProductionFinalSignoffError,
+        run_production_final_signoff,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_final_signoff(
+            activation_request_id=args.activation_request_id,
+            reservation_id=args.reservation_id,
+            signer_id=args.signer_id,
+            merged_config=load_config(),
+        )
+    except ProductionFinalSignoffError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
