@@ -107,7 +107,11 @@ hermes coo dispatch consume repair lock status --ticket-id <ticket-id> --confirm
 
 ```
 hermes coo dispatch operator runbook --ticket-id <ticket-id> --confirmation-id <confirmation-id>
+hermes coo dispatch operator guidance --recommended-action <code>
 ```
+
+`operator guidance` is read-only: it maps a `recommended_action` code to
+`runbook_ref` and `guidance_summary` without emitting shell commands.
 
 ## `repository`
 
@@ -143,6 +147,7 @@ hermes coo dispatch pilot history find --ticket-id <ticket-id>
 hermes coo dispatch enablement check
 ```
 
+<!-- anchor: gateway -->
 ## `gateway`
 
 ```

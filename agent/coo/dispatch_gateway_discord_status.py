@@ -254,12 +254,19 @@ def format_discord_gateway_status_response(result: DiscordGatewayStatusResult) -
         f"ticket_id: {_short(result.ticket_id)}",
         f"health_status: {result.health_status}",
         f"recommended_action: {result.recommended_action}",
-        f"failure_reason_code: {result.failure_reason_code}",
-        f"gateway_state: {result.gateway_state}",
-        "production_execution_allowed: false",
-        f"production_root_hard_deny: {str(result.production_root_hard_deny).lower()}",
-        f"gateway_execution_scope: {result.gateway_execution_scope}",
     ]
+    from agent.coo.dispatch_operator_guidance import append_guidance_output_lines
+
+    append_guidance_output_lines(lines, result.recommended_action)
+    lines.extend(
+        [
+            f"failure_reason_code: {result.failure_reason_code}",
+            f"gateway_state: {result.gateway_state}",
+            "production_execution_allowed: false",
+            f"production_root_hard_deny: {str(result.production_root_hard_deny).lower()}",
+            f"gateway_execution_scope: {result.gateway_execution_scope}",
+        ]
+    )
     if summary is None:
         return "\n".join(lines)
 

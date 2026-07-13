@@ -83,6 +83,7 @@ hermes coo dispatch gateway dashboard
 
 Shows `signoff_ready`, `cutover_ready`, and `dashboard_health` together.
 
+<!-- anchor: why-production-stays-blocked -->
 ## Why production stays blocked
 
 1. **Policy** — COO layer hard-denies production roots and execution flag.

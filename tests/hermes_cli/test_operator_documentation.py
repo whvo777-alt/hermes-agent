@@ -24,6 +24,7 @@ _EXPECTED_OPERATOR_DOCS = (
     "Operator_Checklist.md",
     "CLI_Command_Reference.md",
     "Architecture_Overview.md",
+    "Recommended_Action_Mapping.md",
 )
 
 _FORBIDDEN_DOC_TOKENS = (
@@ -83,7 +84,9 @@ class TestOperatorDocumentation(unittest.TestCase):
         self.assertIn("dashboard", output)
         self.assertIn("correlation", output)
         self.assertIn("docs/operator/README.md", output)
-        self.assertIn("production_execution_allowed", output)
+        self.assertIn("Production execution remains disabled", output)
+        self.assertIn("Read-only command", output)
+        self.assertIn("operator guidance", output)
 
     def test_gateway_dashboard_subcommand_parses(self) -> None:
         parser = build_coo_dispatch_parser()

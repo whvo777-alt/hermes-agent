@@ -682,12 +682,19 @@ def format_gateway_correlation_chain(
         f"ambiguity_detected: {str(chain.ambiguity_detected).lower()}",
         f"failure_reason_code: {chain.failure_reason_code}",
         f"recommended_action: {chain.recommended_action}",
-        "",
-        "[Safety]",
-        "production_execution_allowed: false",
-        f"production_root_hard_deny: {str(chain.production_root_hard_deny).lower()}",
-        f"gateway_execution_scope: {chain.gateway_execution_scope}",
     ]
+    from agent.coo.dispatch_operator_guidance import append_guidance_output_lines
+
+    append_guidance_output_lines(lines, chain.recommended_action)
+    lines.extend(
+        [
+            "",
+            "[Safety]",
+            "production_execution_allowed: false",
+            f"production_root_hard_deny: {str(chain.production_root_hard_deny).lower()}",
+            f"gateway_execution_scope: {chain.gateway_execution_scope}",
+        ]
+    )
     output = "\n".join(lines)
     lowered = output.lower()
     for token in _FORBIDDEN_OUTPUT_KEYS:

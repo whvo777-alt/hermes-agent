@@ -198,6 +198,7 @@ commands; production execution remains disabled by policy.
 | [Operator Checklist](docs/operator/Operator_Checklist.md) | Daily / weekly / incident checks |
 | [CLI Reference](docs/operator/CLI_Command_Reference.md) | Full `hermes coo dispatch` tree |
 | [Architecture Overview](docs/operator/Architecture_Overview.md) | Approval → dashboard flow |
+| [Recommended Action Mapping](docs/operator/Recommended_Action_Mapping.md) | `recommended_action` → runbook_ref codes |
 
 ---
 

@@ -31,6 +31,7 @@ unless explicitly marked as gated mutation.
 - [ ] `gateway audit show` on release gateway request id
 - [ ] `gateway dashboard --ticket-id <ticket-id>` — target `HEALTHY` or documented `DEGRADED`
 
+<!-- anchor: pilot-incident -->
 ## Pilot incident
 
 - [ ] `gateway correlation show` with failing opaque id
@@ -50,6 +51,7 @@ unless explicitly marked as gated mutation.
 - [ ] `consume repair audit list` after apply
 - [ ] `gateway dashboard` — confirm recovery cleared
 
+<!-- anchor: gateway-incident -->
 ## Gateway incident
 
 - [ ] `gateway status` + `gateway facade`

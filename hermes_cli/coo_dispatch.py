@@ -18,11 +18,20 @@ from agent.coo.dispatch_pipeline_root_trust import (
 
 
 def register_cli(parser: argparse.ArgumentParser) -> None:
+    from hermes_cli.coo_dispatch_help_text import (
+        mock_pilot,
+        read_only,
+        repository_read_only,
+        write_gated,
+    )
+
     subparsers = parser.add_subparsers(dest="coo_dispatch_command", required=True)
 
     confirm_parser = subparsers.add_parser(
         "confirm-run",
-        help="Create a production executor confirmation record (no dispatch run)",
+        help=write_gated(
+            "Create a production executor confirmation record (no dispatch run)"
+        ),
     )
     confirm_parser.add_argument("--ticket-id", required=True, help="Execution ticket id")
     confirm_parser.add_argument("--plan-id", required=True, help="Dispatch plan id")
@@ -57,7 +66,9 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     run_parser = subparsers.add_parser(
         "run",
-        help="Run approved dispatch from persisted bundle + confirmation files",
+        help=write_gated(
+            "Run approved dispatch from persisted bundle + confirmation files"
+        ),
     )
     run_parser.add_argument(
         "--ticket-id",
@@ -97,7 +108,9 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     status_parser = subparsers.add_parser(
         "status",
-        help="Read-only summary of persisted dispatch bundle and confirmation files",
+        help=read_only(
+            "Summary of persisted dispatch bundle and confirmation files"
+        ),
     )
     status_parser.add_argument(
         "--ticket-id",
@@ -124,9 +137,8 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     readiness_parser = subparsers.add_parser(
         "readiness",
-        help=(
-            "Read-only operator readiness check before dispatch run "
-            "(config, persistence, policy preflight)"
+        help=read_only(
+            "Operator readiness check before dispatch run (config, persistence, policy)"
         ),
     )
     readiness_parser.add_argument(
@@ -162,7 +174,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     audit_parser = subparsers.add_parser(
         "audit",
-        help="Read-only dispatch execution audit commands",
+        help=read_only("Dispatch execution audit commands"),
     )
     audit_subparsers = audit_parser.add_subparsers(
         dest="coo_dispatch_audit_command",
@@ -198,7 +210,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     evidence_parser = subparsers.add_parser(
         "evidence",
-        help="Read-only dispatch execution evidence commands",
+        help=read_only("Dispatch execution evidence commands"),
     )
     evidence_subparsers = evidence_parser.add_subparsers(
         dest="coo_dispatch_evidence_command",
@@ -228,7 +240,11 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     consume_parser = subparsers.add_parser(
         "consume",
-        help="Read-only dispatch consume transaction commands",
+        help="Consume transaction status, recovery, and repair commands",
+        description=(
+            "Consume operator surface. status/recovery are read-only; repair apply "
+            "requires operator confirmation. Production execution remains disabled."
+        ),
     )
     consume_subparsers = consume_parser.add_subparsers(
         dest="coo_dispatch_consume_command",
@@ -236,7 +252,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     consume_status_parser = consume_subparsers.add_parser(
         "status",
-        help="Show safe consume status for bundle + confirmation pair",
+        help=read_only("Consume status for bundle + confirmation pair"),
     )
     consume_status_parser.add_argument(
         "--ticket-id",
@@ -252,7 +268,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     consume_recovery_parser = consume_subparsers.add_parser(
         "recovery",
-        help="Read-only recovery assessment for bundle + confirmation consume pair",
+        help=read_only("Recovery assessment for bundle + confirmation consume pair"),
     )
     consume_recovery_parser.add_argument(
         "--ticket-id",
@@ -276,7 +292,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     consume_repair_dry_run_parser = consume_repair_subparsers.add_parser(
         "dry-run",
-        help="Evaluate repair eligibility without mutating persisted state",
+        help=read_only("Evaluate repair eligibility without mutating persisted state"),
     )
     consume_repair_dry_run_parser.add_argument(
         "--ticket-id",
@@ -307,7 +323,9 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     consume_repair_apply_parser = consume_repair_subparsers.add_parser(
         "apply",
-        help="Apply the eligible consume repair action (prepared cleanup or partial forward-complete)",
+        help=write_gated(
+            "Apply eligible consume repair (prepared cleanup or partial forward-complete)"
+        ),
     )
     consume_repair_apply_parser.add_argument(
         "--ticket-id",
@@ -397,7 +415,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     operator_parser = subparsers.add_parser(
         "operator",
-        help="Read-only operator guidance commands",
+        help=read_only("Operator guidance and runbook commands"),
     )
     operator_subparsers = operator_parser.add_subparsers(
         dest="coo_dispatch_operator_command",
@@ -419,9 +437,20 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     operator_runbook_parser.set_defaults(handler=_cmd_operator_runbook)
 
+    operator_guidance_parser = operator_subparsers.add_parser(
+        "guidance",
+        help=read_only("Map recommended_action code to in-repo runbook guidance"),
+    )
+    operator_guidance_parser.add_argument(
+        "--recommended-action",
+        required=True,
+        help="Fixed recommended_action code (no shell commands emitted)",
+    )
+    operator_guidance_parser.set_defaults(handler=_cmd_operator_guidance)
+
     repository_parser = subparsers.add_parser(
         "repository",
-        help="Read-only Repository2 attestation commands",
+        help=repository_read_only("Repository2 attestation commands"),
     )
     repository_subparsers = repository_parser.add_subparsers(
         dest="coo_dispatch_repository_command",
@@ -446,7 +475,10 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     production_parser = subparsers.add_parser(
         "production",
-        help="Read-only production readiness review commands",
+        help=read_only("Production readiness review commands"),
+        description=read_only(
+            "Production sign-off and cutover review. Execution remains disabled."
+        ),
     )
     production_subparsers = production_parser.add_subparsers(
         dest="coo_dispatch_production_command",
@@ -485,7 +517,10 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     pilot_parser = subparsers.add_parser(
         "pilot",
-        help="Isolated operational dispatch pilot (production root hard-denied)",
+        help="Isolated operational dispatch pilot",
+        description=mock_pilot(
+            "Isolated pilot surface. Live mock uses injected runner only."
+        ),
     )
     pilot_subparsers = pilot_parser.add_subparsers(
         dest="coo_dispatch_pilot_command",
@@ -514,9 +549,8 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     pilot_run_parser = pilot_subparsers.add_parser(
         "run",
-        help=(
-            "Run isolated operational pilot dispatch after sign-off and "
-            "readiness gates (production root hard-denied)"
+        help=mock_pilot(
+            "Run isolated operational pilot dispatch after sign-off and readiness gates"
         ),
     )
     pilot_run_parser.add_argument(
@@ -656,7 +690,10 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     gateway_parser = subparsers.add_parser(
         "gateway",
-        help="Read-only gateway enablement status commands",
+        help="Gateway enablement, observability, and mock pilot",
+        description=read_only(
+            "Gateway operator surface: status, readiness, audit, correlation, dashboard."
+        ),
     )
     gateway_subparsers = gateway_parser.add_subparsers(
         dest="coo_dispatch_gateway_command",
@@ -664,13 +701,13 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     gateway_status_parser = gateway_subparsers.add_parser(
         "status",
-        help="Show safe summary of gateway enablement state",
+        help=read_only("Gateway enablement state summary"),
     )
     gateway_status_parser.set_defaults(handler=_cmd_gateway_status)
 
     gateway_readiness_parser = gateway_subparsers.add_parser(
         "readiness",
-        help="Evaluate read-only gateway readiness without mutating state",
+        help=read_only("Gateway readiness without mutating state"),
     )
     gateway_readiness_parser.add_argument(
         "--ticket-id",
@@ -697,7 +734,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     gateway_pilot_parser = gateway_subparsers.add_parser(
         "pilot",
-        help="Gateway pilot mock dispatch (staged only; production root hard-denied)",
+        help=mock_pilot("Gateway pilot mock dispatch (staged only)"),
     )
     gateway_pilot_subparsers = gateway_pilot_parser.add_subparsers(
         dest="coo_dispatch_gateway_pilot_command",
@@ -796,7 +833,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     gateway_correlation_parser = gateway_subparsers.add_parser(
         "correlation",
-        help="Read-only gateway correlation explorer commands",
+        help=read_only("Gateway correlation explorer commands"),
     )
     gateway_correlation_subparsers = gateway_correlation_parser.add_subparsers(
         dest="coo_dispatch_gateway_correlation_command",
@@ -851,7 +888,7 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
     gateway_dashboard_parser = gateway_subparsers.add_parser(
         "dashboard",
-        help="Read-only gateway operator dashboard",
+        help=read_only("Gateway operator dashboard"),
     )
     gateway_dashboard_parser.add_argument(
         "--ticket-id",
@@ -923,20 +960,23 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
+    from hermes_cli.coo_dispatch_help_text import DOCS_OPERATOR_INDEX, SAFETY_FOOTER
+
     parser = argparse.ArgumentParser(
         prog="hermes coo dispatch",
         description=(
             "COO dispatch operator surface: read-only review, gated consume repair, "
-            "and isolated mock pilot. production_execution_allowed remains false."
+            "and isolated mock pilot. Production execution remains disabled."
         ),
         epilog=(
             "Examples:\n"
             "  hermes coo dispatch gateway dashboard\n"
             "  hermes coo dispatch gateway correlation show --gateway-request-id <id>\n"
+            "  hermes coo dispatch operator guidance --recommended-action <code>\n"
             "  hermes coo dispatch production sign-off\n"
-            "  hermes coo dispatch pilot regression\n"
             "\n"
-            "Operator documentation: docs/operator/README.md"
+            f"Operator documentation: {DOCS_OPERATOR_INDEX}\n"
+            f"{SAFETY_FOOTER}"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1266,6 +1306,22 @@ def _cmd_operator_runbook(args: argparse.Namespace) -> int:
 
     print(format_dispatch_operator_runbook(summary))
     return 0
+
+
+def _cmd_operator_guidance(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_operator_guidance import run_operator_guidance_show
+    from agent.coo.dispatch_operator_guidance import OperatorGuidanceError
+
+    try:
+        output, exit_code = run_operator_guidance_show(
+            recommended_action=args.recommended_action,
+        )
+    except OperatorGuidanceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
 
 
 def _cmd_repository_attest(args: argparse.Namespace) -> int:

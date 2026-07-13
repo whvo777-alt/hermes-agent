@@ -2,6 +2,7 @@
 
 Operator guide for gateway enablement, mock pilot, and read-only observability.
 
+<!-- anchor: gateway-state -->
 ## Gateway state
 
 | State | Meaning | Operator note |
@@ -38,6 +39,7 @@ hermes coo dispatch gateway facade
 Status covers enablement flags. Facade reports connection scaffold for isolated
 mock execution (`facade_connected`, `isolated_execution_supported`).
 
+<!-- anchor: gateway-pilot -->
 ## Gateway pilot
 
 Staged mock-only pilot path:
@@ -67,6 +69,7 @@ Health values: `HEALTHY`, `DEGRADED`, `BLOCKED`, `NOT_CONFIGURED`.
 
 Exit code `1` when `BLOCKED`.
 
+<!-- anchor: correlation-explorer -->
 ## Correlation explorer
 
 Resolve full chain from any single opaque id:
@@ -103,6 +106,7 @@ Discord surfaces mirror CLI summaries: health, regression, trend, timeline, and
 recommended action codes. Use messaging status when CLI access is inconvenient;
 semantics match read-only CLI builders.
 
+<!-- anchor: recommended-action-codes -->
 ## Recommended action codes (gateway)
 
 | Code | Meaning |

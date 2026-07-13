@@ -3,6 +3,7 @@
 Operator guide for consume recovery, repair, locks, and correlation-assisted
 investigation.
 
+<!-- anchor: when-recovery-required -->
 ## When recovery is required
 
 `consume recovery` and `gateway dashboard` surface `recovery_required` when bundle
@@ -73,6 +74,7 @@ hermes coo dispatch consume repair audit show --repair-attempt-id <repair-attemp
 hermes coo dispatch consume repair audit list --ticket-id <ticket-id>
 ```
 
+<!-- anchor: correlation-during-recovery -->
 ## Correlation during recovery
 
 Link recovery context to gateway and pilot artifacts:
@@ -88,6 +90,7 @@ Use correlation `recommended_action`:
 - `inspect_consume_state`
 - `resolve_correlation_mismatch`
 
+<!-- anchor: manual-recovery -->
 ## Manual recovery operator flow
 
 1. **Confirm scope** — `consume status` + `consume recovery` for the ticket pair.

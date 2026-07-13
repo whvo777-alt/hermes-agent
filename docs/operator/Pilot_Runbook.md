@@ -27,6 +27,7 @@ Gateway-scoped readiness:
 hermes coo dispatch gateway pilot readiness --session-id <session-id> ...
 ```
 
+<!-- anchor: history -->
 ## History
 
 ```bash
@@ -38,6 +39,7 @@ hermes coo dispatch pilot history find --ticket-id <ticket-id>
 History records include status, evidence flags, audit flags, consume flag, and
 opaque correlation ids.
 
+<!-- anchor: regression -->
 ## Regression
 
 Fleet regression summary:

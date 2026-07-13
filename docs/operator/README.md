@@ -16,6 +16,16 @@ They do not enable production execution.
 | [Operator_Checklist.md](Operator_Checklist.md) | Daily, weekly, release, and incident checklists |
 | [CLI_Command_Reference.md](CLI_Command_Reference.md) | Full `hermes coo dispatch` command tree |
 | [Architecture_Overview.md](Architecture_Overview.md) | High-level flow from approval to dashboard |
+| [Recommended_Action_Mapping.md](Recommended_Action_Mapping.md) | `recommended_action` → runbook_ref mapping |
+
+## Operator guidance CLI
+
+```bash
+hermes coo dispatch operator guidance --recommended-action <code>
+```
+
+Read-only lookup for `runbook_ref` and `guidance_summary`. Does not emit shell
+commands or enable production execution.
 
 ## Safety policy
 
