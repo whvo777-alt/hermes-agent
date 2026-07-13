@@ -794,6 +794,45 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     gateway_audit_show_parser.set_defaults(handler=_cmd_gateway_audit_show)
 
+    gateway_correlation_parser = gateway_subparsers.add_parser(
+        "correlation",
+        help="Read-only gateway correlation explorer commands",
+    )
+    gateway_correlation_subparsers = gateway_correlation_parser.add_subparsers(
+        dest="coo_dispatch_gateway_correlation_command",
+        required=True,
+    )
+    gateway_correlation_show_parser = gateway_correlation_subparsers.add_parser(
+        "show",
+        help="Show read-only gateway correlation chain for one query id",
+    )
+    gateway_correlation_show_parser.add_argument(
+        "--gateway-request-id",
+        default="",
+        help="Gateway request id query",
+    )
+    gateway_correlation_show_parser.add_argument(
+        "--pilot-attempt-id",
+        default="",
+        help="Pilot attempt id query",
+    )
+    gateway_correlation_show_parser.add_argument(
+        "--execution-attempt-id",
+        default="",
+        help="Execution attempt id query",
+    )
+    gateway_correlation_show_parser.add_argument(
+        "--dispatch-run-id",
+        default="",
+        help="Dispatch run id query",
+    )
+    gateway_correlation_show_parser.add_argument(
+        "--ticket-id",
+        default="",
+        help="Ticket id query (newest gateway request)",
+    )
+    gateway_correlation_show_parser.set_defaults(handler=_cmd_gateway_correlation_show)
+
     binding_parser = subparsers.add_parser(
         "binding",
         help="Read-only and operator-controlled runner binding state commands",
@@ -1462,6 +1501,28 @@ def _cmd_gateway_status(args: argparse.Namespace) -> int:
     summary = summarize_dispatch_gateway_status(merged_config=load_config())
     print(format_dispatch_gateway_status_summary(summary))
     return 0
+
+
+def _cmd_gateway_correlation_show(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_gateway_correlation import run_gateway_correlation_show
+    from agent.coo.dispatch_gateway_correlation_explorer import (
+        GatewayCorrelationExplorerError,
+    )
+
+    try:
+        output, exit_code = run_gateway_correlation_show(
+            gateway_request_id=args.gateway_request_id,
+            pilot_attempt_id=args.pilot_attempt_id,
+            execution_attempt_id=args.execution_attempt_id,
+            dispatch_run_id=args.dispatch_run_id,
+            ticket_id=args.ticket_id,
+        )
+    except GatewayCorrelationExplorerError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
 
 
 def _cmd_gateway_audit_show(args: argparse.Namespace) -> int:
