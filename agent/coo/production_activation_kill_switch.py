@@ -56,6 +56,7 @@ REASON_RUNTIME_EXCEPTION = "runtime_exception"
 REASON_RUNTIME_SOURCE_MUTATION = "runtime_source_mutation"
 REASON_RUNTIME_PUBLISH_ATTEMPT = "runtime_publish_attempt_detected"
 REASON_POLICY_VIOLATION = "policy_violation"
+REASON_LIVE_PILOT_E2E_COMPLETED = "live_pilot_e2e_completed"
 
 REASON_SUSPENDED_REVOKED = "suspended_revoked"
 REASON_INCIDENT_CLOSED = "incident_closed"
@@ -95,6 +96,7 @@ _REVOKE_REASON_CODES = frozenset(
         REASON_INCIDENT_CLOSED,
         REASON_ROLLBACK_REQUIRED,
         REASON_OPERATOR_CANCELLED,
+        REASON_LIVE_PILOT_E2E_COMPLETED,
     }
 )
 _ALLOWED_SUSPEND_ROLES = frozenset({ROLE_OPERATOR, ROLE_INCIDENT_COMMANDER})

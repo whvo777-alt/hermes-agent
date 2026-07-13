@@ -916,6 +916,28 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_activation_live_pilot
     )
 
+    production_activation_live_pilot_finalize_parser = (
+        production_activation_subparsers.add_parser(
+            "live-pilot-finalize",
+            help=read_only(
+                "Finalize live pilot E2E after isolated mirror runtime success"
+            ),
+        )
+    )
+    production_activation_live_pilot_finalize_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for E2E finalize",
+    )
+    production_activation_live_pilot_finalize_parser.add_argument(
+        "--reservation-id",
+        required=True,
+        help="Reservation id correlated with runtime completion",
+    )
+    production_activation_live_pilot_finalize_parser.set_defaults(
+        handler=_cmd_production_activation_live_pilot_finalize
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -2251,6 +2273,25 @@ def _cmd_production_activation_live_pilot(args: argparse.Namespace) -> int:
             ),
         )
     except ProductionActivationLivePilotError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_live_pilot_finalize(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_live_e2e import (
+        ProductionActivationLiveE2EError,
+        run_activation_live_pilot_finalize,
+    )
+
+    try:
+        output, exit_code = run_activation_live_pilot_finalize(
+            activation_request_id=args.activation_request_id,
+            reservation_id=args.reservation_id,
+        )
+    except ProductionActivationLiveE2EError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
