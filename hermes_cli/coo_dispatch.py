@@ -938,6 +938,53 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_activation_live_pilot_finalize
     )
 
+    production_activation_live_pilot_status_parser = (
+        production_activation_subparsers.add_parser(
+            "live-pilot-status",
+            help=read_only("Read-only live pilot operational status assessment"),
+        )
+    )
+    production_activation_live_pilot_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for live pilot status",
+    )
+    production_activation_live_pilot_status_parser.add_argument(
+        "--reservation-id",
+        required=True,
+        help="Reservation id for live pilot status correlation",
+    )
+    production_activation_live_pilot_status_parser.set_defaults(
+        handler=_cmd_production_activation_live_pilot_status
+    )
+
+    production_activation_live_pilot_signoff_parser = (
+        production_activation_subparsers.add_parser(
+            "live-pilot-signoff",
+            help=read_only(
+                "Record operator sign-off after successful live pilot validation"
+            ),
+        )
+    )
+    production_activation_live_pilot_signoff_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for operator sign-off",
+    )
+    production_activation_live_pilot_signoff_parser.add_argument(
+        "--reservation-id",
+        required=True,
+        help="Reservation id correlated with finalized live pilot",
+    )
+    production_activation_live_pilot_signoff_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Operator id performing supervised sign-off",
+    )
+    production_activation_live_pilot_signoff_parser.set_defaults(
+        handler=_cmd_production_activation_live_pilot_signoff
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -2292,6 +2339,49 @@ def _cmd_production_activation_live_pilot_finalize(args: argparse.Namespace) -> 
             reservation_id=args.reservation_id,
         )
     except ProductionActivationLiveE2EError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_live_pilot_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_live_operational_signoff import (
+        ProductionLiveOperationalSignoffError,
+        run_activation_live_pilot_status,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_activation_live_pilot_status(
+            activation_request_id=args.activation_request_id,
+            reservation_id=args.reservation_id,
+            merged_config=load_config(),
+        )
+    except ProductionLiveOperationalSignoffError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_live_pilot_signoff(args: argparse.Namespace) -> int:
+    from agent.coo.production_live_operational_signoff import (
+        ProductionLiveOperationalSignoffError,
+        run_activation_live_pilot_signoff,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_activation_live_pilot_signoff(
+            activation_request_id=args.activation_request_id,
+            reservation_id=args.reservation_id,
+            operator_id=args.operator_id,
+            merged_config=load_config(),
+        )
+    except ProductionLiveOperationalSignoffError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

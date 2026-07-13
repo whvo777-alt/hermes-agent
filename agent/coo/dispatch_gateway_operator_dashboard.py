@@ -175,6 +175,10 @@ class CooDispatchGatewayOperatorDashboardSummary:
     production_root_hard_deny: bool
     gateway_execution_scope: str
     facade_connected: bool = False
+    live_pilot_status: str = ""
+    live_pilot_signoff_status: str = ""
+    live_pilot_activation_request_id: str = ""
+    live_pilot_recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -664,6 +668,12 @@ def build_operator_dashboard_summary(
         production_policy_valid=production_policy_valid,
     )
 
+    from agent.coo.production_live_operational_signoff import (
+        resolve_latest_live_pilot_dashboard_digest,
+    )
+
+    live_pilot = resolve_latest_live_pilot_dashboard_digest(merged_config=merged_config)
+
     return CooDispatchGatewayOperatorDashboardSummary(
         dashboard_health=dashboard_health,
         gateway_state=gateway_state,
@@ -701,6 +711,10 @@ def build_operator_dashboard_summary(
         production_root_hard_deny=enablement.production_root_hard_deny,
         gateway_execution_scope=EXECUTION_SCOPE_ISOLATED_GATEWAY_MOCK,
         facade_connected=facade.facade_connected,
+        live_pilot_status=live_pilot.live_pilot_status,
+        live_pilot_signoff_status=live_pilot.live_pilot_signoff_status,
+        live_pilot_activation_request_id=live_pilot.latest_activation_request_id,
+        live_pilot_recommended_action=live_pilot.recommended_action,
     )
 
 
@@ -913,6 +927,12 @@ def format_operator_dashboard_summary(
             "production_execution_allowed: false",
             f"production_root_hard_deny: {str(summary.production_root_hard_deny).lower()}",
             f"gateway_execution_scope: {summary.gateway_execution_scope}",
+            "",
+            "[Live Pilot]",
+            f"live_pilot_status: {summary.live_pilot_status or _NONE_LABEL}",
+            f"live_pilot_signoff_status: {summary.live_pilot_signoff_status or _NONE_LABEL}",
+            f"live_pilot_activation_request_id: {summary.live_pilot_activation_request_id or _NONE_LABEL}",
+            f"live_pilot_recommended_action: {summary.live_pilot_recommended_action or _NONE_LABEL}",
         ]
     )
     output = "\n".join(lines)
