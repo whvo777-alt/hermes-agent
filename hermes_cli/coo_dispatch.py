@@ -833,6 +833,44 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     gateway_correlation_show_parser.set_defaults(handler=_cmd_gateway_correlation_show)
 
+    gateway_correlation_diff_parser = gateway_correlation_subparsers.add_parser(
+        "diff",
+        help="Compare read-only correlation chains for two gateway request ids",
+    )
+    gateway_correlation_diff_parser.add_argument(
+        "--left-gateway-request-id",
+        required=True,
+        help="Left (older) gateway request id",
+    )
+    gateway_correlation_diff_parser.add_argument(
+        "--right-gateway-request-id",
+        required=True,
+        help="Right (newer) gateway request id",
+    )
+    gateway_correlation_diff_parser.set_defaults(handler=_cmd_gateway_correlation_diff)
+
+    gateway_dashboard_parser = gateway_subparsers.add_parser(
+        "dashboard",
+        help="Read-only gateway operator dashboard",
+    )
+    gateway_dashboard_parser.add_argument(
+        "--ticket-id",
+        default="",
+        help="Filter dashboard to one ticket id",
+    )
+    gateway_dashboard_parser.add_argument(
+        "--session-id",
+        default="",
+        help="Filter dashboard to one session id",
+    )
+    gateway_dashboard_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum recent gateway requests to include",
+    )
+    gateway_dashboard_parser.set_defaults(handler=_cmd_gateway_dashboard)
+
     binding_parser = subparsers.add_parser(
         "binding",
         help="Read-only and operator-controlled runner binding state commands",
@@ -1518,6 +1556,47 @@ def _cmd_gateway_correlation_show(args: argparse.Namespace) -> int:
             ticket_id=args.ticket_id,
         )
     except GatewayCorrelationExplorerError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_gateway_correlation_diff(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_gateway_dashboard import run_gateway_correlation_diff
+    from agent.coo.dispatch_gateway_operator_dashboard import (
+        GatewayOperatorDashboardError,
+    )
+
+    try:
+        output, exit_code = run_gateway_correlation_diff(
+            left_gateway_request_id=args.left_gateway_request_id,
+            right_gateway_request_id=args.right_gateway_request_id,
+        )
+    except GatewayOperatorDashboardError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_gateway_dashboard(args: argparse.Namespace) -> int:
+    from agent.coo.dispatch_cli_gateway_dashboard import run_operator_dashboard
+    from agent.coo.dispatch_gateway_operator_dashboard import (
+        GatewayOperatorDashboardError,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_operator_dashboard(
+            ticket_id=args.ticket_id,
+            session_id=args.session_id,
+            limit=args.limit,
+            merged_config=load_config(),
+        )
+    except GatewayOperatorDashboardError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
