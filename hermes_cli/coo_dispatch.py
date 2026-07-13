@@ -985,6 +985,48 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_activation_live_pilot_signoff
     )
 
+    production_activation_rollback_check_parser = (
+        production_activation_subparsers.add_parser(
+            "rollback-check",
+            help=read_only(
+                "Read-only rollback readiness validation for live pilot artifacts"
+            ),
+        )
+    )
+    production_activation_rollback_check_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for rollback validation",
+    )
+    production_activation_rollback_check_parser.add_argument(
+        "--reservation-id",
+        required=True,
+        help="Reservation id correlated with finalized live pilot",
+    )
+    production_activation_rollback_check_parser.set_defaults(
+        handler=_cmd_production_activation_rollback_check
+    )
+
+    production_activation_rollback_plan_parser = (
+        production_activation_subparsers.add_parser(
+            "rollback-plan",
+            help=read_only("Read-only rollback plan summary without execution"),
+        )
+    )
+    production_activation_rollback_plan_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for rollback plan",
+    )
+    production_activation_rollback_plan_parser.add_argument(
+        "--reservation-id",
+        required=True,
+        help="Reservation id correlated with finalized live pilot",
+    )
+    production_activation_rollback_plan_parser.set_defaults(
+        handler=_cmd_production_activation_rollback_plan
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -2382,6 +2424,48 @@ def _cmd_production_activation_live_pilot_signoff(args: argparse.Namespace) -> i
             merged_config=load_config(),
         )
     except ProductionLiveOperationalSignoffError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_rollback_check(args: argparse.Namespace) -> int:
+    from agent.coo.production_live_rollback_validation import (
+        ProductionLiveRollbackValidationError,
+        run_activation_rollback_check,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_activation_rollback_check(
+            activation_request_id=args.activation_request_id,
+            reservation_id=args.reservation_id,
+            merged_config=load_config(),
+        )
+    except ProductionLiveRollbackValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_rollback_plan(args: argparse.Namespace) -> int:
+    from agent.coo.production_live_rollback_validation import (
+        ProductionLiveRollbackValidationError,
+        run_activation_rollback_plan,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_activation_rollback_plan(
+            activation_request_id=args.activation_request_id,
+            reservation_id=args.reservation_id,
+            merged_config=load_config(),
+        )
+    except ProductionLiveRollbackValidationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
