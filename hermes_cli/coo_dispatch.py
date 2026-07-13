@@ -834,6 +834,36 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_activation_active_status
     )
 
+    production_activation_execution_gate_parser = (
+        production_activation_subparsers.add_parser(
+            "execution-gate",
+            help=read_only("Evaluate production execution gate without execution"),
+        )
+    )
+    production_activation_execution_gate_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to evaluate",
+    )
+    production_activation_execution_gate_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Ticket id for scoped execution gate validation",
+    )
+    production_activation_execution_gate_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Confirmation id for scoped execution gate validation",
+    )
+    production_activation_execution_gate_parser.add_argument(
+        "--pipeline-root",
+        required=True,
+        help="Isolated production mirror root (not production Repository2 root)",
+    )
+    production_activation_execution_gate_parser.set_defaults(
+        handler=_cmd_production_activation_execution_gate
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -2117,6 +2147,29 @@ def _cmd_production_activation_active_status(args: argparse.Namespace) -> int:
             activation_request_id=args.activation_request_id,
         )
     except ProductionActivationActiveError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_execution_gate(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_execution_gate import (
+        ProductionActivationExecutionGateError,
+        run_activation_execution_gate,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_activation_execution_gate(
+            activation_request_id=args.activation_request_id,
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+            pipeline_root=args.pipeline_root,
+            merged_config=load_config(),
+        )
+    except ProductionActivationExecutionGateError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

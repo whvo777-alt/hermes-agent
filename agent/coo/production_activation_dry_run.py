@@ -334,6 +334,45 @@ def load_latest_dry_run_record(
     return records[-1]
 
 
+def find_dry_run_record(
+    activation_request_id: str,
+    *,
+    event_id: str = "",
+    dry_run_key: str = "",
+    history_dir: Path | None = None,
+) -> ProductionActivationDryRunRecord | None:
+    """Return a dry-run record linked by event id and/or dry-run key."""
+    records = _load_dry_run_records(
+        activation_request_id,
+        history_dir=history_dir,
+    )
+    normalized_event = (event_id or "").strip()
+    normalized_key = (dry_run_key or "").strip().lower()
+    for record in reversed(records):
+        if normalized_event and record.event_id != normalized_event:
+            continue
+        if normalized_key and record.dry_run_key != normalized_key:
+            continue
+        return record
+    return None
+
+
+def compute_dry_run_key(
+    *,
+    activation_request_id: str,
+    ticket_id: str,
+    confirmation_id: str,
+    pipeline_root_resolved: str,
+) -> str:
+    """Compute the dry-run idempotency key for an evaluation input set."""
+    return _dry_run_key(
+        activation_request_id=activation_request_id,
+        ticket_id=ticket_id,
+        confirmation_id=confirmation_id,
+        pipeline_root_resolved=pipeline_root_resolved,
+    )
+
+
 def _mirror_in_allowlist(resolved_root: str, *, merged_config: Mapping[str, Any] | None) -> bool:
     policy = load_dispatch_executor_policy(merged_config=merged_config)
     if not policy.allowed_pipeline_roots:
