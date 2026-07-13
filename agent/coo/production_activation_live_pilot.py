@@ -33,6 +33,10 @@ from agent.coo.production_activation_execution_permit import (
     ActivationExecutionPermitError,
     evaluate_permit_ready,
 )
+from agent.coo.production_activation_live_harness import (
+    ProductionActivationLiveHarnessError,
+    run_live_harness_wiring,
+)
 from agent.coo.production_activation_execution_reservation import (
     ProductionActivationExecutionReservation,
     ProductionActivationExecutionReservationError,
@@ -78,9 +82,11 @@ FAIL_REQUIRES_NEW_PROPOSAL = "activation_execution_requires_new_proposal"
 FAIL_RESERVATION_SCOPE_CONFLICT = "reservation_scope_conflict"
 FAIL_RESERVATION_WRITE_FAILED = "reservation_write_failed"
 FAIL_PERMIT_NOT_READY = "permit_not_ready"
-FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C = "blocked_wait_for_phase_14h_3c"
+FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C_2 = "blocked_wait_for_phase_14h_3c_2"
+FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C = FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C_2
 
-ACTION_CONTINUE_TO_PHASE_14H_3C = "continue_to_phase_14h_3c"
+ACTION_CONTINUE_TO_PHASE_14H_3C_2 = "continue_to_phase_14h_3c_2"
+ACTION_CONTINUE_TO_PHASE_14H_3C = ACTION_CONTINUE_TO_PHASE_14H_3C_2
 ACTION_WAIT_FOR_EXISTING_RESERVATION = "wait_for_existing_reservation"
 ACTION_CREATE_NEW_ACTIVATION_PROPOSAL = "create_new_activation_proposal"
 ACTION_RESOLVE_EXECUTION_GATE = "resolve_execution_gate"
@@ -101,7 +107,7 @@ _EVENT_LIVE_PILOT_PREFLIGHT_EVALUATED = "live_pilot_preflight_evaluated"
 _EVENT_RESERVATION_CREATED = "reservation_created"
 _EVENT_RESERVATION_BLOCKED = "reservation_blocked"
 _EVENT_PERMIT_EVALUATED = "permit_evaluated"
-_EVENT_EXECUTION_BLOCKED_WAITING = "execution_blocked_waiting_phase_14h_3c"
+_EVENT_EXECUTION_BLOCKED_WAITING = "execution_blocked_waiting_phase_14h_3c_2"
 
 _FORBIDDEN_OUTPUT_TOKENS = frozenset(
     {
@@ -156,6 +162,19 @@ class ProductionActivationLivePilotPreflightResult:
     production_execution_allowed: bool = False
     repository2_execution_attempted: bool = False
     execution_runtime_invoked: bool = False
+    harness_ready: bool = False
+    runtime_invocation_planned: bool = False
+    harness_request_valid: bool = False
+    harness_reservation_valid: bool = False
+    harness_permit_valid: bool = False
+    harness_active_valid: bool = False
+    harness_gate_valid: bool = False
+    harness_mirror_valid: bool = False
+    harness_runner_profile_valid: bool = False
+    harness_argv_contract_valid: bool = False
+    harness_cwd_contract_valid: bool = False
+    harness_env_contract_valid: bool = False
+    harness_timeout_valid: bool = False
     failure_reason_code: str = ""
     recommended_action: str = ""
 
@@ -808,6 +827,34 @@ def run_production_activation_live_pilot_preflight(
             draft_only=assessment.draft_only,
         )
 
+    try:
+        harness_result = run_live_harness_wiring(
+            request=request,
+            reservation=reservation,
+            ticket_id=normalized_ticket,
+            confirmation_id=normalized_confirmation,
+            pipeline_root=pipeline_root,
+            permit_ready=True,
+            merged_config=merged_config,
+            gate_history_dir=resolved_gate_history,
+            dry_run_history_dir=resolved_dry_run_history,
+            now=now,
+        )
+    except ProductionActivationLiveHarnessError as exc:
+        raise ProductionActivationLivePilotError(str(exc)) from exc
+
+    plan = harness_result.plan
+    failure_code = (
+        FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C_2
+        if harness_result.harness_ready
+        else harness_result.failure_reason_code
+    )
+    recommended = (
+        ACTION_CONTINUE_TO_PHASE_14H_3C_2
+        if harness_result.harness_ready
+        else harness_result.recommended_action
+    )
+
     _append_preflight_event(
         event_type=_EVENT_EXECUTION_BLOCKED_WAITING,
         activation_request_id=normalized_activation,
@@ -818,7 +865,7 @@ def run_production_activation_live_pilot_preflight(
         gate_event_id=reservation.execution_gate_event_id,
         dry_run_event_id=reservation.dry_run_event_id,
         result="blocked",
-        failure_reason_code=FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C,
+        failure_reason_code=failure_code,
         history_dir=preflight_history_dir,
         now=now,
     )
@@ -828,15 +875,28 @@ def run_production_activation_live_pilot_preflight(
         reservation_id=reservation.reservation_id,
         execution_attempt_id=reservation.execution_attempt_id,
         state=RESERVATION_STATE_RESERVED,
-        preflight_ready=True,
+        preflight_ready=harness_result.harness_ready,
         permit_ready=True,
         phrase_verified=True,
         execution_gate_verified=True,
         dry_run_verified=True,
         single_ticket_scope=assessment.single_ticket_scope,
         draft_only=assessment.draft_only,
-        failure_reason_code=FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C,
-        recommended_action=ACTION_CONTINUE_TO_PHASE_14H_3C,
+        harness_ready=harness_result.harness_ready,
+        runtime_invocation_planned=plan.runtime_invocation_planned,
+        harness_request_valid=plan.request_valid,
+        harness_reservation_valid=plan.reservation_valid,
+        harness_permit_valid=plan.permit_valid,
+        harness_active_valid=plan.active_valid,
+        harness_gate_valid=plan.gate_valid,
+        harness_mirror_valid=plan.mirror_valid,
+        harness_runner_profile_valid=plan.runner_profile_valid,
+        harness_argv_contract_valid=plan.argv_contract_valid,
+        harness_cwd_contract_valid=plan.cwd_contract_valid,
+        harness_env_contract_valid=plan.env_contract_valid,
+        harness_timeout_valid=plan.timeout_valid,
+        failure_reason_code=failure_code,
+        recommended_action=recommended,
     )
 
 
@@ -846,11 +906,25 @@ def _assert_safe_output(output: str) -> None:
         "repository2_execution_attempted: false",
         "production_execution_allowed: false",
         "execution_runtime_invoked: false",
+        "runtime_invoked: false",
         "phrase_verified:",
         "execution_gate_verified:",
         "dry_run_verified:",
         "permit_ready:",
         "preflight_ready:",
+        "harness_ready:",
+        "runtime_invocation_planned:",
+        "harness_request_valid:",
+        "harness_reservation_valid:",
+        "harness_permit_valid:",
+        "harness_active_valid:",
+        "harness_gate_valid:",
+        "harness_mirror_valid:",
+        "harness_runner_profile_valid:",
+        "harness_argv_contract_valid:",
+        "harness_cwd_contract_valid:",
+        "harness_env_contract_valid:",
+        "harness_timeout_valid:",
     ):
         sanitized = sanitized.replace(allowed, "")
     lowered = sanitized.lower()
@@ -879,6 +953,19 @@ def format_live_pilot_preflight_result(
         f"single_ticket_scope: {str(result.single_ticket_scope).lower()}",
         f"draft_only: {str(result.draft_only).lower()}",
         f"publish_allowed: false",
+        f"harness_ready: {str(result.harness_ready).lower()}",
+        f"runtime_invocation_planned: {str(result.runtime_invocation_planned).lower()}",
+        f"harness_request_valid: {str(result.harness_request_valid).lower()}",
+        f"harness_reservation_valid: {str(result.harness_reservation_valid).lower()}",
+        f"harness_permit_valid: {str(result.harness_permit_valid).lower()}",
+        f"harness_active_valid: {str(result.harness_active_valid).lower()}",
+        f"harness_gate_valid: {str(result.harness_gate_valid).lower()}",
+        f"harness_mirror_valid: {str(result.harness_mirror_valid).lower()}",
+        f"harness_runner_profile_valid: {str(result.harness_runner_profile_valid).lower()}",
+        f"harness_argv_contract_valid: {str(result.harness_argv_contract_valid).lower()}",
+        f"harness_cwd_contract_valid: {str(result.harness_cwd_contract_valid).lower()}",
+        f"harness_env_contract_valid: {str(result.harness_env_contract_valid).lower()}",
+        f"harness_timeout_valid: {str(result.harness_timeout_valid).lower()}",
         f"failure_reason_code: {result.failure_reason_code or '(none)'}",
         f"recommended_action: {result.recommended_action}",
         "",
@@ -886,6 +973,7 @@ def format_live_pilot_preflight_result(
         "production_execution_allowed: false",
         "repository2_execution_attempted: false",
         "execution_runtime_invoked: false",
+        "runtime_invoked: false",
     ]
     output = "\n".join(lines)
     _assert_safe_output(output)

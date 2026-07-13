@@ -45,9 +45,11 @@ from agent.coo.production_activation_execution_reservation import (
     load_execution_reservation,
 )
 from agent.coo.production_activation_live_pilot import (
+    ACTION_CONTINUE_TO_PHASE_14H_3C_2,
     ACTION_CONTINUE_TO_PHASE_14H_3C,
     FAIL_ACTIVATION_NOT_ACTIVE,
     FAIL_ALREADY_COMPLETED,
+    FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C_2,
     FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C,
     FAIL_BUNDLE_CONSUMED,
     FAIL_CONFIRMATION_CONSUMED,
@@ -110,6 +112,16 @@ _FORBIDDEN_OUTPUT_TOKENS = (
 )
 
 
+def _seed_mirror_structure(mirror_root: Path) -> None:
+    (mirror_root / "pipeline.js").write_text("// test\n", encoding="utf-8")
+    (mirror_root / "package.json").write_text(
+        json.dumps({"scripts": {"start": "node pipeline.js"}}),
+        encoding="utf-8",
+    )
+    for name in ("publishers", "prompts", "config"):
+        (mirror_root / name).mkdir(parents=True, exist_ok=True)
+
+
 def _hermes_home(tmp_path: Path) -> Path:
     home = tmp_path / ".hermes"
     for sub in (
@@ -118,6 +130,7 @@ def _hermes_home(tmp_path: Path) -> Path:
         "production-execution-gate",
         "production-activation-execution-reservation",
         "production-activation-execution-preflight",
+        "production-live-harness",
         "dispatch-bundles",
         "confirmations",
     ):
@@ -212,6 +225,7 @@ class TestProductionActivationExecutionReservation(unittest.TestCase):
         )
         self.mirror_root = self.tmp_path / "isolated-mirror"
         self.mirror_root.mkdir()
+        _seed_mirror_structure(self.mirror_root)
         self.fake_node = _write_fake_node(self.tmp_path)
         self.store_dir = self.hermes_home / "coo" / "production-activation"
         self.history_dir = self.hermes_home / "coo" / "production-activation-dry-run"
@@ -225,6 +239,7 @@ class TestProductionActivationExecutionReservation(unittest.TestCase):
         self.bundle_dir = self.hermes_home / "coo" / "dispatch-bundles"
         self.confirmation_dir = self.hermes_home / "coo" / "confirmations"
         self.merged_config = _bound_config(self.mirror_root, self.fake_node)
+        _write_binding_state(self.hermes_home)
         self.env_patch = patch.dict("os.environ", {"HERMES_HOME": str(self.hermes_home)})
         self.env_patch.start()
         self._now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
@@ -437,8 +452,11 @@ class TestProductionActivationExecutionReservation(unittest.TestCase):
         self.assertTrue(result.preflight_ready)
         self.assertTrue(result.permit_ready)
         self.assertEqual(result.state, RESERVATION_STATE_RESERVED)
-        self.assertEqual(result.failure_reason_code, FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C)
-        self.assertEqual(result.recommended_action, ACTION_CONTINUE_TO_PHASE_14H_3C)
+        self.assertEqual(result.failure_reason_code, FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C_2)
+        self.assertEqual(result.recommended_action, ACTION_CONTINUE_TO_PHASE_14H_3C_2)
+        self.assertTrue(result.harness_ready)
+        self.assertTrue(result.runtime_invocation_planned)
+        self.assertFalse(result.execution_runtime_invoked)
         reservation = load_execution_reservation(
             activation_id,
             store_dir=self.reservation_dir,
@@ -730,7 +748,7 @@ class TestProductionActivationExecutionReservation(unittest.TestCase):
         self.assertGreaterEqual(len(records), 2)
         event_types = {record.event_type for record in records}
         self.assertIn("reservation_created", event_types)
-        self.assertIn("execution_blocked_waiting_phase_14h_3c", event_types)
+        self.assertIn("execution_blocked_waiting_phase_14h_3c_2", event_types)
 
     def test_safe_output(self) -> None:
         activation_id, confirmation_id = self._active_setup()
@@ -743,7 +761,21 @@ class TestProductionActivationExecutionReservation(unittest.TestCase):
             "repository2_execution_attempted: false",
             "production_execution_allowed: false",
             "execution_runtime_invoked: false",
+            "runtime_invoked: false",
             "phrase_verified:",
+            "harness_ready:",
+            "runtime_invocation_planned:",
+            "harness_request_valid:",
+            "harness_reservation_valid:",
+            "harness_permit_valid:",
+            "harness_active_valid:",
+            "harness_gate_valid:",
+            "harness_mirror_valid:",
+            "harness_runner_profile_valid:",
+            "harness_argv_contract_valid:",
+            "harness_cwd_contract_valid:",
+            "harness_env_contract_valid:",
+            "harness_timeout_valid:",
         ):
             sanitized = sanitized.replace(allowed, "")
         lowered = sanitized.lower()
