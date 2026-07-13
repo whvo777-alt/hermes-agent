@@ -907,6 +907,11 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         required=True,
         help="Execution confirmation phrase (CLI only)",
     )
+    production_activation_live_pilot_parser.add_argument(
+        "--execute-isolated-mirror",
+        action="store_true",
+        help="Opt in to one bounded isolated-mirror runtime execution",
+    )
     production_activation_live_pilot_parser.set_defaults(
         handler=_cmd_production_activation_live_pilot
     )
@@ -2241,6 +2246,9 @@ def _cmd_production_activation_live_pilot(args: argparse.Namespace) -> int:
             pipeline_root=args.pipeline_root,
             phrase=args.phrase,
             merged_config=load_config(),
+            execute_isolated_mirror=bool(
+                getattr(args, "execute_isolated_mirror", False)
+            ),
         )
     except ProductionActivationLivePilotError as exc:
         print(f"error: {exc}", file=sys.stderr)

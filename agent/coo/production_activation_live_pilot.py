@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Union
 
 from agent.coo.dispatch_pipeline_root_trust import (
     assert_pipeline_root_allowed,
@@ -31,11 +31,18 @@ from agent.coo.production_activation_execution_gate import (
 )
 from agent.coo.production_activation_execution_permit import (
     ActivationExecutionPermitError,
+    build_activation_execution_permit,
     evaluate_permit_ready,
 )
 from agent.coo.production_activation_live_harness import (
     ProductionActivationLiveHarnessError,
+    build_live_harness_request,
     run_live_harness_wiring,
+)
+from agent.coo.production_activation_live_runtime import (
+    ProductionActivationLiveRuntimeError,
+    ProductionActivationLiveRuntimeResult,
+    run_isolated_mirror_live_runtime,
 )
 from agent.coo.production_activation_execution_reservation import (
     ProductionActivationExecutionReservation,
@@ -82,6 +89,7 @@ FAIL_REQUIRES_NEW_PROPOSAL = "activation_execution_requires_new_proposal"
 FAIL_RESERVATION_SCOPE_CONFLICT = "reservation_scope_conflict"
 FAIL_RESERVATION_WRITE_FAILED = "reservation_write_failed"
 FAIL_PERMIT_NOT_READY = "permit_not_ready"
+FAIL_ISOLATED_RUNTIME_NOT_ENABLED = "isolated_runtime_not_enabled"
 FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C_2 = "blocked_wait_for_phase_14h_3c_2"
 FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C = FAIL_BLOCKED_WAIT_FOR_PHASE_14H_3C_2
 
@@ -177,6 +185,12 @@ class ProductionActivationLivePilotPreflightResult:
     harness_timeout_valid: bool = False
     failure_reason_code: str = ""
     recommended_action: str = ""
+
+
+LivePilotOutcome = Union[
+    ProductionActivationLivePilotPreflightResult,
+    ProductionActivationLiveRuntimeResult,
+]
 
 
 @dataclass(frozen=True)
@@ -450,7 +464,10 @@ def run_production_activation_live_pilot_preflight(
     confirmation_dir: Path | None = None,
     merged_config: Mapping[str, Any] | None = None,
     now: datetime | None = None,
-) -> ProductionActivationLivePilotPreflightResult:
+    execute_isolated_mirror: bool = False,
+    runtime_timeout_seconds: int | None = None,
+    runner_factory: Any = None,
+) -> LivePilotOutcome:
     """Run live pilot preflight without execution or reservation on phrase failure."""
     normalized_activation = (activation_request_id or "").strip()
     normalized_ticket = (ticket_id or "").strip()
@@ -509,6 +526,7 @@ def run_production_activation_live_pilot_preflight(
         normalized_activation,
         store_dir=reservation_dir,
     )
+    reservation: ProductionActivationExecutionReservation | None = None
     if existing is not None:
         if not _reservation_scope_matches(
             existing,
@@ -532,26 +550,29 @@ def run_production_activation_live_pilot_preflight(
                 failure_code=failure,
                 phrase_verified=True,
             )
-        failure = _idempotent_failure_for_state(existing.state)
-        _append_preflight_event(
-            event_type=_EVENT_LIVE_PILOT_PREFLIGHT_EVALUATED,
-            activation_request_id=normalized_activation,
-            ticket_id=normalized_ticket,
-            confirmation_id=normalized_confirmation,
-            reservation_id=existing.reservation_id,
-            execution_attempt_id=existing.execution_attempt_id,
-            gate_event_id=existing.execution_gate_event_id,
-            dry_run_event_id=existing.dry_run_event_id,
-            result="blocked",
-            failure_reason_code=failure,
-            history_dir=preflight_history_dir,
-            now=now,
-        )
-        return _blocked_result(
-            activation_request_id=normalized_activation,
-            failure_code=failure,
-            phrase_verified=True,
-        )
+        if execute_isolated_mirror and existing.state == RESERVATION_STATE_RESERVED:
+            reservation = existing
+        else:
+            failure = _idempotent_failure_for_state(existing.state)
+            _append_preflight_event(
+                event_type=_EVENT_LIVE_PILOT_PREFLIGHT_EVALUATED,
+                activation_request_id=normalized_activation,
+                ticket_id=normalized_ticket,
+                confirmation_id=normalized_confirmation,
+                reservation_id=existing.reservation_id,
+                execution_attempt_id=existing.execution_attempt_id,
+                gate_event_id=existing.execution_gate_event_id,
+                dry_run_event_id=existing.dry_run_event_id,
+                result="blocked",
+                failure_reason_code=failure,
+                history_dir=preflight_history_dir,
+                now=now,
+            )
+            return _blocked_result(
+                activation_request_id=normalized_activation,
+                failure_code=failure,
+                phrase_verified=True,
+            )
 
     try:
         assessment = evaluate_production_execution_gate(
@@ -725,68 +746,159 @@ def run_production_activation_live_pilot_preflight(
 
     _ = (requester_id or "").strip()
 
-    try:
-        reservation = create_execution_reservation(
-            request,
-            ticket_id=normalized_ticket,
-            confirmation_id=normalized_confirmation,
-            pipeline_root_resolved=resolved_root,
-            gate_record=gate_record,
-            dry_run_event_id=dry_run_record.event_id,
-            gate_key=gate_key,
-            store_dir=reservation_dir,
-            now=now,
-        )
-    except ProductionActivationExecutionReservationError as exc:
-        message = str(exc)
-        if message == "reservation_scope_conflict":
-            failure = FAIL_RESERVATION_SCOPE_CONFLICT
-        elif message == "reservation_write_failed":
-            failure = FAIL_RESERVATION_WRITE_FAILED
-        elif message in {
-            "reservation_in_progress",
-            "execution_in_progress",
-            "activation_execution_already_completed",
-            "activation_execution_requires_new_proposal",
-        }:
-            failure = message
-        else:
-            failure = FAIL_RESERVATION_WRITE_FAILED
+    if reservation is None:
+        try:
+            reservation = create_execution_reservation(
+                request,
+                ticket_id=normalized_ticket,
+                confirmation_id=normalized_confirmation,
+                pipeline_root_resolved=resolved_root,
+                gate_record=gate_record,
+                dry_run_event_id=dry_run_record.event_id,
+                gate_key=gate_key,
+                store_dir=reservation_dir,
+                now=now,
+            )
+        except ProductionActivationExecutionReservationError as exc:
+            message = str(exc)
+            if message == "reservation_scope_conflict":
+                failure = FAIL_RESERVATION_SCOPE_CONFLICT
+            elif message == "reservation_write_failed":
+                failure = FAIL_RESERVATION_WRITE_FAILED
+            elif message in {
+                "reservation_in_progress",
+                "execution_in_progress",
+                "activation_execution_already_completed",
+                "activation_execution_requires_new_proposal",
+            }:
+                failure = message
+            else:
+                failure = FAIL_RESERVATION_WRITE_FAILED
+            _append_preflight_event(
+                event_type=_EVENT_RESERVATION_BLOCKED,
+                activation_request_id=normalized_activation,
+                ticket_id=normalized_ticket,
+                confirmation_id=normalized_confirmation,
+                gate_event_id=gate_record.event_id,
+                dry_run_event_id=dry_run_record.event_id,
+                result="blocked",
+                failure_reason_code=failure,
+                history_dir=preflight_history_dir,
+                now=now,
+            )
+            return _blocked_result(
+                activation_request_id=normalized_activation,
+                failure_code=failure,
+                phrase_verified=True,
+                execution_gate_verified=True,
+                dry_run_verified=True,
+                single_ticket_scope=assessment.single_ticket_scope,
+                draft_only=assessment.draft_only,
+            )
+
         _append_preflight_event(
-            event_type=_EVENT_RESERVATION_BLOCKED,
+            event_type=_EVENT_RESERVATION_CREATED,
             activation_request_id=normalized_activation,
             ticket_id=normalized_ticket,
             confirmation_id=normalized_confirmation,
-            gate_event_id=gate_record.event_id,
-            dry_run_event_id=dry_run_record.event_id,
-            result="blocked",
-            failure_reason_code=failure,
+            reservation_id=reservation.reservation_id,
+            execution_attempt_id=reservation.execution_attempt_id,
+            gate_event_id=reservation.execution_gate_event_id,
+            dry_run_event_id=reservation.dry_run_event_id,
+            result="reserved",
             history_dir=preflight_history_dir,
             now=now,
         )
-        return _blocked_result(
-            activation_request_id=normalized_activation,
-            failure_code=failure,
-            phrase_verified=True,
-            execution_gate_verified=True,
-            dry_run_verified=True,
-            single_ticket_scope=assessment.single_ticket_scope,
-            draft_only=assessment.draft_only,
-        )
 
-    _append_preflight_event(
-        event_type=_EVENT_RESERVATION_CREATED,
-        activation_request_id=normalized_activation,
-        ticket_id=normalized_ticket,
-        confirmation_id=normalized_confirmation,
-        reservation_id=reservation.reservation_id,
-        execution_attempt_id=reservation.execution_attempt_id,
-        gate_event_id=reservation.execution_gate_event_id,
-        dry_run_event_id=reservation.dry_run_event_id,
-        result="reserved",
-        history_dir=preflight_history_dir,
-        now=now,
-    )
+    assert reservation is not None
+
+    if execute_isolated_mirror:
+        permit = build_activation_execution_permit(
+            reservation,
+            pipeline_root=pipeline_root,
+            store_dir=store_dir,
+            reservation_dir=reservation_dir,
+            gate_history_dir=resolved_gate_history,
+            dry_run_history_dir=resolved_dry_run_history,
+            bundle_dir=bundle_dir,
+            confirmation_dir=confirmation_dir,
+            merged_config=merged_config,
+            now=now,
+        )
+        try:
+            with permit:
+                harness_kwargs = {
+                    "request": request,
+                    "reservation": reservation,
+                    "ticket_id": normalized_ticket,
+                    "confirmation_id": normalized_confirmation,
+                    "pipeline_root": pipeline_root,
+                    "permit_ready": True,
+                    "merged_config": merged_config,
+                    "gate_history_dir": resolved_gate_history,
+                    "dry_run_history_dir": resolved_dry_run_history,
+                    "now": now,
+                }
+                if runtime_timeout_seconds is not None:
+                    harness_kwargs["timeout_seconds"] = runtime_timeout_seconds
+                harness_result = run_live_harness_wiring(**harness_kwargs)
+                if not harness_result.harness_ready:
+                    return ProductionActivationLivePilotPreflightResult(
+                        activation_request_id=normalized_activation,
+                        reservation_id=reservation.reservation_id,
+                        execution_attempt_id=reservation.execution_attempt_id,
+                        state=reservation.state,
+                        preflight_ready=False,
+                        permit_ready=True,
+                        phrase_verified=True,
+                        execution_gate_verified=True,
+                        dry_run_verified=True,
+                        single_ticket_scope=assessment.single_ticket_scope,
+                        draft_only=assessment.draft_only,
+                        harness_ready=False,
+                        failure_reason_code=harness_result.failure_reason_code,
+                        recommended_action=harness_result.recommended_action,
+                    )
+                harness_request = build_live_harness_request(
+                    activation_request_id=normalized_activation,
+                    reservation=reservation,
+                    ticket_id=normalized_ticket,
+                    confirmation_id=normalized_confirmation,
+                    pipeline_root_resolved=resolved_root,
+                    **(
+                        {"timeout_seconds": runtime_timeout_seconds}
+                        if runtime_timeout_seconds is not None
+                        else {}
+                    ),
+                    now=now,
+                )
+                try:
+                    return run_isolated_mirror_live_runtime(
+                        request=request,
+                        reservation=reservation,
+                        harness_request=harness_request,
+                        harness_plan=harness_result.plan,
+                        pipeline_root=pipeline_root,
+                        merged_config=merged_config,
+                        store_dir=store_dir,
+                        reservation_dir=reservation_dir,
+                        gate_history_dir=resolved_gate_history,
+                        dry_run_history_dir=resolved_dry_run_history,
+                        runner_factory=runner_factory,
+                        now=now,
+                    )
+                except ProductionActivationLiveRuntimeError as exc:
+                    raise ProductionActivationLivePilotError(str(exc)) from exc
+        except ActivationExecutionPermitError:
+            return _blocked_result(
+                activation_request_id=normalized_activation,
+                failure_code=FAIL_PERMIT_NOT_READY,
+                phrase_verified=True,
+                execution_gate_verified=True,
+                dry_run_verified=True,
+                single_ticket_scope=assessment.single_ticket_scope,
+                draft_only=assessment.draft_only,
+            )
 
     permit_ready = evaluate_permit_ready(
         reservation,
@@ -980,6 +1092,74 @@ def format_live_pilot_preflight_result(
     return output
 
 
+def format_live_pilot_runtime_result(
+    result: ProductionActivationLiveRuntimeResult,
+) -> str:
+    lines = [
+        "Production Activation Live Pilot Runtime",
+        "",
+        f"activation_request_id: {result.activation_request_id}",
+        f"reservation_id: {result.reservation_id}",
+        f"execution_attempt_id: {result.execution_attempt_id}",
+        f"reservation_state: {result.reservation_state}",
+        f"activation_state_before: {result.activation_state_before}",
+        f"activation_state_after: {result.activation_state_after}",
+        f"runtime_invoked: {str(result.runtime_invoked).lower()}",
+        f"isolated_mirror_runtime_invoked: {str(result.isolated_mirror_runtime_invoked).lower()}",
+        f"started: {str(result.started).lower()}",
+        f"completed: {str(result.completed).lower()}",
+        f"failed: {str(result.failed).lower()}",
+        f"exit_code: {result.exit_code}",
+        f"timed_out: {str(result.timed_out).lower()}",
+        f"duration_ms: {result.duration_ms}",
+        f"stdout_truncated: {str(result.stdout_truncated).lower()}",
+        f"stderr_truncated: {str(result.stderr_truncated).lower()}",
+        f"stdout_size_bytes: {result.stdout_size_bytes}",
+        f"stderr_size_bytes: {result.stderr_size_bytes}",
+        f"draft_artifacts_detected: {str(result.draft_artifacts_detected).lower()}",
+        f"source_tree_unchanged: {str(result.source_tree_unchanged).lower()}",
+        f"publish_attempted: {str(result.publish_attempted).lower()}",
+        f"consume_attempted: {str(result.consume_attempted).lower()}",
+        f"evidence_written: {str(result.evidence_written).lower()}",
+        f"dispatch_audit_written: {str(result.dispatch_audit_written).lower()}",
+        f"failure_reason_code: {result.failure_reason_code or '(none)'}",
+        f"recommended_action: {result.recommended_action}",
+        "",
+        "[Safety]",
+        "production_execution_allowed: false",
+        "original_repository2_execution_attempted: false",
+        "repository2_execution_attempted: false",
+    ]
+    output = "\n".join(lines)
+    _assert_safe_runtime_output(output)
+    return output
+
+
+def _assert_safe_runtime_output(output: str) -> None:
+    sanitized = output
+    for allowed in (
+        "repository2_execution_attempted: false",
+        "original_repository2_execution_attempted: false",
+        "production_execution_allowed: false",
+        "runtime_invoked:",
+        "isolated_mirror_runtime_invoked:",
+        "stdout_truncated:",
+        "stderr_truncated:",
+        "stdout_size_bytes:",
+        "stderr_size_bytes:",
+        "consume_attempted: false",
+        "evidence_written: false",
+        "dispatch_audit_written: false",
+    ):
+        sanitized = sanitized.replace(allowed, "")
+    lowered = sanitized.lower()
+    for token in _FORBIDDEN_OUTPUT_TOKENS:
+        if token in lowered:
+            raise ProductionActivationLivePilotError(
+                f"Unsafe live pilot runtime output field: {token!r}"
+            )
+
+
 def run_activation_live_pilot(
     *,
     activation_request_id: str,
@@ -999,8 +1179,11 @@ def run_activation_live_pilot(
     confirmation_dir: Path | None = None,
     merged_config: Mapping[str, Any] | None = None,
     now: datetime | None = None,
+    execute_isolated_mirror: bool = False,
+    runtime_timeout_seconds: int | None = None,
+    runner_factory: Any = None,
 ) -> tuple[str, int]:
-    result = run_production_activation_live_pilot_preflight(
+    outcome = run_production_activation_live_pilot_preflight(
         activation_request_id=activation_request_id,
         ticket_id=ticket_id,
         confirmation_id=confirmation_id,
@@ -1018,9 +1201,14 @@ def run_activation_live_pilot(
         confirmation_dir=confirmation_dir,
         merged_config=merged_config,
         now=now,
+        execute_isolated_mirror=execute_isolated_mirror,
+        runtime_timeout_seconds=runtime_timeout_seconds,
+        runner_factory=runner_factory,
     )
-    exit_code = 1
-    return format_live_pilot_preflight_result(result), exit_code
+    if isinstance(outcome, ProductionActivationLiveRuntimeResult):
+        exit_code = 0 if outcome.completed else 1
+        return format_live_pilot_runtime_result(outcome), exit_code
+    return format_live_pilot_preflight_result(outcome), 1
 
 
 def load_preflight_records(

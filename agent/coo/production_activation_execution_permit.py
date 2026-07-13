@@ -166,6 +166,19 @@ def build_activation_execution_permit(
     )
 
 
+def get_active_execution_permit() -> ActivationExecutionPermit | None:
+    """Return the in-process permit when inside its context manager."""
+    return getattr(_thread_state, "active_permit", None)
+
+
+def require_active_execution_permit() -> ActivationExecutionPermit:
+    """Fail closed when runtime is invoked outside an active permit context."""
+    permit = get_active_execution_permit()
+    if permit is None or not permit.granted or permit.consumed:
+        raise ActivationExecutionPermitError("permit_not_active")
+    return permit
+
+
 def evaluate_permit_ready(
     reservation: ProductionActivationExecutionReservation,
     *,

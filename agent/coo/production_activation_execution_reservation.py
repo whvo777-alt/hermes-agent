@@ -441,3 +441,146 @@ def probe_reservation_store_available(*, store_dir: Path | None = None) -> bool:
         return os.access(base, os.W_OK)
     except OSError:
         return False
+
+
+def _atomic_update_reservation(
+    reservation: ProductionActivationExecutionReservation,
+    *,
+    store_dir: Path | None = None,
+) -> None:
+    path = _reservation_path(
+        reservation.activation_request_id,
+        store_dir=store_dir,
+    )
+    if not path.is_file():
+        raise ProductionActivationExecutionReservationError("reservation_missing")
+    payload = {
+        "version": _RESERVATION_STORE_VERSION,
+        "reservation": _reservation_to_dict(reservation),
+    }
+    tmp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except OSError as exc:
+        raise ProductionActivationExecutionReservationError(
+            "reservation_write_failed"
+        ) from exc
+
+
+def transition_execution_reservation_to_started(
+    reservation: ProductionActivationExecutionReservation,
+    *,
+    store_dir: Path | None = None,
+    now: datetime | None = None,
+) -> ProductionActivationExecutionReservation:
+    """Atomically transition reserved → started before runtime invocation."""
+    if reservation.state != RESERVATION_STATE_RESERVED:
+        raise ProductionActivationExecutionReservationError(
+            "reservation_not_reserved"
+        )
+    if reservation.max_executions != _MAX_EXECUTIONS or reservation.execution_count != 0:
+        raise ProductionActivationExecutionReservationError("reservation_start_failed")
+    updated = ProductionActivationExecutionReservation(
+        reservation_id=reservation.reservation_id,
+        activation_request_id=reservation.activation_request_id,
+        ticket_id=reservation.ticket_id,
+        confirmation_id=reservation.confirmation_id,
+        execution_attempt_id=reservation.execution_attempt_id,
+        execution_gate_event_id=reservation.execution_gate_event_id,
+        dry_run_event_id=reservation.dry_run_event_id,
+        state=RESERVATION_STATE_STARTED,
+        reserved_at=reservation.reserved_at,
+        started_at=_utc_now_iso(now),
+        completed_at="",
+        failed_at="",
+        max_executions=reservation.max_executions,
+        execution_count=1,
+        failure_reason_code="",
+        tested_commit_sha=reservation.tested_commit_sha,
+        release_tag=reservation.release_tag,
+        gate_key=reservation.gate_key,
+        production_execution_allowed=False,
+        repository2_execution_attempted=False,
+    )
+    _atomic_update_reservation(updated, store_dir=store_dir)
+    return updated
+
+
+def transition_execution_reservation_to_completed(
+    reservation: ProductionActivationExecutionReservation,
+    *,
+    store_dir: Path | None = None,
+    now: datetime | None = None,
+) -> ProductionActivationExecutionReservation:
+    """Atomically transition started → completed after successful runtime."""
+    if reservation.state != RESERVATION_STATE_STARTED:
+        raise ProductionActivationExecutionReservationError(
+            "reservation_completion_failed"
+        )
+    updated = ProductionActivationExecutionReservation(
+        reservation_id=reservation.reservation_id,
+        activation_request_id=reservation.activation_request_id,
+        ticket_id=reservation.ticket_id,
+        confirmation_id=reservation.confirmation_id,
+        execution_attempt_id=reservation.execution_attempt_id,
+        execution_gate_event_id=reservation.execution_gate_event_id,
+        dry_run_event_id=reservation.dry_run_event_id,
+        state=RESERVATION_STATE_COMPLETED,
+        reserved_at=reservation.reserved_at,
+        started_at=reservation.started_at,
+        completed_at=_utc_now_iso(now),
+        failed_at="",
+        max_executions=reservation.max_executions,
+        execution_count=reservation.execution_count,
+        failure_reason_code="",
+        tested_commit_sha=reservation.tested_commit_sha,
+        release_tag=reservation.release_tag,
+        gate_key=reservation.gate_key,
+        production_execution_allowed=False,
+        repository2_execution_attempted=False,
+    )
+    _atomic_update_reservation(updated, store_dir=store_dir)
+    return updated
+
+
+def transition_execution_reservation_to_failed(
+    reservation: ProductionActivationExecutionReservation,
+    *,
+    failure_reason_code: str,
+    store_dir: Path | None = None,
+    now: datetime | None = None,
+) -> ProductionActivationExecutionReservation:
+    """Atomically transition started → failed after runtime failure."""
+    if reservation.state != RESERVATION_STATE_STARTED:
+        raise ProductionActivationExecutionReservationError(
+            "reservation_failure_write_failed"
+        )
+    updated = ProductionActivationExecutionReservation(
+        reservation_id=reservation.reservation_id,
+        activation_request_id=reservation.activation_request_id,
+        ticket_id=reservation.ticket_id,
+        confirmation_id=reservation.confirmation_id,
+        execution_attempt_id=reservation.execution_attempt_id,
+        execution_gate_event_id=reservation.execution_gate_event_id,
+        dry_run_event_id=reservation.dry_run_event_id,
+        state=RESERVATION_STATE_FAILED,
+        reserved_at=reservation.reserved_at,
+        started_at=reservation.started_at,
+        completed_at="",
+        failed_at=_utc_now_iso(now),
+        max_executions=reservation.max_executions,
+        execution_count=reservation.execution_count,
+        failure_reason_code=(failure_reason_code or "").strip(),
+        tested_commit_sha=reservation.tested_commit_sha,
+        release_tag=reservation.release_tag,
+        gate_key=reservation.gate_key,
+        production_execution_allowed=False,
+        repository2_execution_attempted=False,
+    )
+    _atomic_update_reservation(updated, store_dir=store_dir)
+    return updated
