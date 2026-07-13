@@ -765,6 +765,34 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_activation_revoke
     )
 
+    production_activation_dry_run_parser = production_activation_subparsers.add_parser(
+        "dry-run",
+        help=read_only("Evaluate production dry-run contract without execution"),
+    )
+    production_activation_dry_run_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to evaluate",
+    )
+    production_activation_dry_run_parser.add_argument(
+        "--ticket-id",
+        required=True,
+        help="Ticket id for scoped dry-run validation",
+    )
+    production_activation_dry_run_parser.add_argument(
+        "--confirmation-id",
+        required=True,
+        help="Confirmation id for scoped dry-run validation",
+    )
+    production_activation_dry_run_parser.add_argument(
+        "--pipeline-root",
+        required=True,
+        help="Isolated production mirror root (not production Repository2 root)",
+    )
+    production_activation_dry_run_parser.set_defaults(
+        handler=_cmd_production_activation_dry_run
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -1988,6 +2016,27 @@ def _cmd_production_activation_revoke(args: argparse.Namespace) -> int:
             reason_code=args.reason_code,
         )
     except ProductionActivationKillSwitchError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_dry_run(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_dry_run import (
+        ProductionActivationDryRunError,
+        run_activation_dry_run,
+    )
+
+    try:
+        output, exit_code = run_activation_dry_run(
+            activation_request_id=args.activation_request_id,
+            ticket_id=args.ticket_id,
+            confirmation_id=args.confirmation_id,
+            pipeline_root=args.pipeline_root,
+        )
+    except ProductionActivationDryRunError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
