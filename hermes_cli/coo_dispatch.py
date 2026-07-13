@@ -590,6 +590,61 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_activation_propose
     )
 
+    production_activation_approve_parser = production_activation_subparsers.add_parser(
+        "approve",
+        help="Record one release approver approval for a proposed activation",
+    )
+    production_activation_approve_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to approve",
+    )
+    production_activation_approve_parser.add_argument(
+        "--approver-id",
+        required=True,
+        help="Release approver operator id",
+    )
+    production_activation_approve_parser.add_argument(
+        "--approver-role",
+        default="release_approver",
+        choices=("release_approver",),
+        help="Approver role (release_approver only in this phase)",
+    )
+    production_activation_approve_parser.set_defaults(
+        handler=_cmd_production_activation_approve
+    )
+
+    production_activation_security_parser = production_activation_subparsers.add_parser(
+        "security-review",
+        help="Record security reviewer approval for a proposed activation",
+    )
+    production_activation_security_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to review",
+    )
+    production_activation_security_parser.add_argument(
+        "--reviewer-id",
+        required=True,
+        help="Security reviewer operator id",
+    )
+    production_activation_security_parser.set_defaults(
+        handler=_cmd_production_activation_security_review
+    )
+
+    production_activation_status_parser = production_activation_subparsers.add_parser(
+        "status",
+        help=read_only("Show safe activation approval status"),
+    )
+    production_activation_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to inspect",
+    )
+    production_activation_status_parser.set_defaults(
+        handler=_cmd_production_activation_status
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -1654,6 +1709,63 @@ def _cmd_production_activation_propose(args: argparse.Namespace) -> int:
             maintenance_window_end=args.maintenance_window_end,
         )
     except ProductionActivationCliError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_approve(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_approval import (
+        ProductionActivationApprovalError,
+        run_activation_approve,
+    )
+
+    try:
+        output, exit_code = run_activation_approve(
+            activation_request_id=args.activation_request_id,
+            approver_id=args.approver_id,
+            approver_role=args.approver_role,
+        )
+    except ProductionActivationApprovalError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_security_review(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_approval import (
+        ProductionActivationApprovalError,
+        run_activation_security_review,
+    )
+
+    try:
+        output, exit_code = run_activation_security_review(
+            activation_request_id=args.activation_request_id,
+            reviewer_id=args.reviewer_id,
+        )
+    except ProductionActivationApprovalError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_approval import (
+        ProductionActivationApprovalError,
+        run_activation_status,
+    )
+
+    try:
+        output, exit_code = run_activation_status(
+            activation_request_id=args.activation_request_id,
+        )
+    except ProductionActivationApprovalError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

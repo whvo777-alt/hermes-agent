@@ -133,6 +133,12 @@ def _approval_from_dict(payload: Mapping[str, Any]) -> ActivationApprovalRecord:
         approver_id=str(payload.get("approver_id", "")),
         role=str(payload.get("role", "")),
         timestamp=str(payload.get("timestamp", "")),
+        approval_id=str(payload.get("approval_id", "")),
+        activation_request_id=str(payload.get("activation_request_id", "")),
+        decision=str(payload.get("decision", "approved")),
+        reason_code=str(payload.get("reason_code", "")),
+        tested_commit_sha=str(payload.get("tested_commit_sha", "")),
+        release_tag=str(payload.get("release_tag", "")),
     )
 
 
@@ -169,6 +175,12 @@ def activation_request_to_dict(request: ActivationRequest) -> dict[str, Any]:
                 "approver_id": item.approver_id,
                 "role": item.role,
                 "timestamp": item.timestamp,
+                "approval_id": item.approval_id,
+                "activation_request_id": item.activation_request_id,
+                "decision": item.decision,
+                "reason_code": item.reason_code,
+                "tested_commit_sha": item.tested_commit_sha,
+                "release_tag": item.release_tag,
             }
             for item in validated.approval_history
         ],
@@ -247,6 +259,45 @@ def _atomic_create_json(path: Path, payload: Mapping[str, Any]) -> None:
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp_path, resolved_path)
+
+
+def _atomic_replace_json(path: Path, payload: Mapping[str, Any]) -> None:
+    hermes_root = get_hermes_home().resolve()
+    resolved_path = path.resolve()
+    _assert_path_within_hermes_home(resolved_path, hermes_root, label="path")
+    if not resolved_path.is_file():
+        raise ProductionActivationStoreError(
+            "Activation artifact does not exist; create-only writes are required."
+        )
+    tmp_path = resolved_path.with_name(f".{resolved_path.name}.{uuid.uuid4().hex}.tmp")
+    _assert_path_within_hermes_home(tmp_path.resolve(), hermes_root, label="temp file")
+    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, resolved_path)
+
+
+def save_activation_request(
+    request: ActivationRequest,
+    *,
+    store_dir: Path | None = None,
+) -> ActivationRequest:
+    """Atomically replace one existing activation artifact."""
+    validated = validate_activation_request(request)
+    path = activation_request_path(
+        validated.activation_request_id,
+        store_dir=store_dir or default_production_activation_dir(),
+    )
+    payload = activation_request_to_dict(validated)
+    try:
+        _atomic_replace_json(path, payload)
+    except OSError as exc:
+        raise ProductionActivationStoreError(
+            "Activation artifact update failed."
+        ) from exc
+    return validated
 
 
 def list_activation_request_ids(*, store_dir: Path | None = None) -> tuple[str, ...]:

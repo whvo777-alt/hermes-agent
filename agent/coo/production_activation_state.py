@@ -162,6 +162,12 @@ class ActivationApprovalRecord:
     approver_id: str
     role: str
     timestamp: str
+    approval_id: str = ""
+    activation_request_id: str = ""
+    decision: str = "approved"
+    reason_code: str = ""
+    tested_commit_sha: str = ""
+    release_tag: str = ""
 
 
 @dataclass(frozen=True)
@@ -381,6 +387,75 @@ def _validate_state_history(
         )
 
 
+def _validate_pending_approval_history(
+    request: ActivationRequest,
+    approval_history: Sequence[ActivationApprovalRecord],
+) -> None:
+    """Validate partial approval records while activation remains proposed."""
+    allowed_roles = frozenset({ROLE_RELEASE_APPROVER, ROLE_SECURITY_REVIEWER})
+    seen_actor_roles: set[tuple[str, str]] = set()
+    release_approvers: set[str] = set()
+    security_reviewers: set[str] = set()
+    previous_ts: datetime | None = None
+
+    for index, record in enumerate(approval_history):
+        actor = _validate_operator_id(
+            record.approver_id,
+            field_name=f"approval_history[{index}].approver_id",
+        )
+        role = (record.role or "").strip()
+        if role not in allowed_roles:
+            raise ProductionActivationStateError(
+                f"approval_history[{index}].role must be release_approver or "
+                "security_reviewer during proposed state"
+            )
+        if actor == request.requested_by:
+            raise ProductionActivationStateError(
+                "requester cannot appear in approval_history"
+            )
+        actor_role = (actor, role)
+        if actor_role in seen_actor_roles:
+            raise ProductionActivationStateError(
+                "duplicate approval actor and role in approval_history"
+            )
+        seen_actor_roles.add(actor_role)
+
+        decision = (record.decision or "").strip().lower()
+        if decision != "approved":
+            raise ProductionActivationStateError(
+                "approval_history decision must be approved during proposed state"
+            )
+
+        if record.tested_commit_sha and record.tested_commit_sha != request.tested_commit_sha:
+            raise ProductionActivationStateError(
+                "approval_history tested_commit_sha drift detected"
+            )
+        if record.release_tag and record.release_tag != request.release_tag:
+            raise ProductionActivationStateError(
+                "approval_history release_tag drift detected"
+            )
+
+        ts = _parse_iso8601(record.timestamp, field_name="approval.timestamp")
+        if previous_ts is not None and ts < previous_ts:
+            raise ProductionActivationStateError(
+                "approval_history timestamps must be monotonic (append-only)"
+            )
+        previous_ts = ts
+
+        if role == ROLE_RELEASE_APPROVER:
+            if actor in security_reviewers:
+                raise ProductionActivationStateError(
+                    "release approver cannot match security reviewer identity"
+                )
+            release_approvers.add(actor)
+        else:
+            if actor in release_approvers:
+                raise ProductionActivationStateError(
+                    "security reviewer cannot match release approver identity"
+                )
+            security_reviewers.add(actor)
+
+
 def _validate_approval_history(
     request: ActivationRequest,
     approval_history: Sequence[ActivationApprovalRecord],
@@ -393,9 +468,14 @@ def _validate_approval_history(
         return
 
     if request.state == ACTIVATION_STATE_PROPOSED:
-        if approval_history:
+        _validate_pending_approval_history(request, approval_history)
+        if request.approved_by:
             raise ProductionActivationStateError(
-                "approval_history must be empty until approved state"
+                "approved_by must be empty while activation remains proposed"
+            )
+        if request.security_reviewed_by:
+            raise ProductionActivationStateError(
+                "security_reviewed_by must be empty while activation remains proposed"
             )
         return
 
