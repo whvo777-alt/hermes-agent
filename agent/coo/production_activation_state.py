@@ -193,6 +193,7 @@ class ActivationControlEvent:
     timestamp: str
     tested_commit_sha: str
     release_tag: str
+    dry_run_event_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -221,6 +222,10 @@ class ActivationRequest:
     armed_at: str = ""
     disarmed_at: str = ""
     disarm_reason_code: str = ""
+    active_at: str = ""
+    active_actor_id: str = ""
+    dry_run_event_id: str = ""
+    dry_run_key: str = ""
     control_history: tuple[ActivationControlEvent, ...] = ()
 
 
@@ -606,18 +611,66 @@ def _validate_executor_fields(request: ActivationRequest) -> None:
             )
         return
 
-    if request.state in {ACTIVATION_STATE_ACTIVE, ACTIVATION_STATE_SUSPENDED}:
+    if request.state == ACTIVATION_STATE_ACTIVE:
+        executor_id = _validate_operator_id(executor, field_name="executor_id")
+        if not request.phrase_verified:
+            raise ProductionActivationStateError(
+                "phrase_verified must be true in active state"
+            )
+        if not armed_at:
+            raise ProductionActivationStateError("armed_at is required in active state")
+        active_at = (request.active_at or "").strip()
+        if not active_at:
+            raise ProductionActivationStateError("active_at is required in active state")
+        active_actor = _validate_operator_id(
+            request.active_actor_id,
+            field_name="active_actor_id",
+        )
+        if active_actor != executor_id:
+            raise ProductionActivationStateError(
+                "active_actor_id must match executor_id in active state"
+            )
+        dry_run_event_id = (request.dry_run_event_id or "").strip()
+        if not dry_run_event_id:
+            raise ProductionActivationStateError(
+                "dry_run_event_id is required in active state"
+            )
+        _validate_uuid(dry_run_event_id, field_name="dry_run_event_id")
+        dry_run_key = (request.dry_run_key or "").strip().lower()
+        if not dry_run_key or not _SHA256_RE.match(dry_run_key):
+            raise ProductionActivationStateError(
+                "dry_run_key must be a 64-character SHA-256 hex digest in active state"
+            )
+        if disarmed_at or disarm_reason:
+            raise ProductionActivationStateError(
+                "disarm metadata must remain empty in active state"
+            )
+        return
+
+    if request.state == ACTIVATION_STATE_SUSPENDED:
         if executor:
             _validate_operator_id(executor, field_name="executor_id")
         if request.phrase_verified and not armed_at:
             raise ProductionActivationStateError(
-                "armed_at is required when phrase_verified is true in active/suspended state"
+                "armed_at is required when phrase_verified is true in suspended state"
             )
         if disarmed_at or disarm_reason:
             raise ProductionActivationStateError(
-                "disarm metadata must remain empty in active/suspended state"
+                "disarm metadata must remain empty in suspended state"
             )
         return
+
+    if any(
+        (
+            (request.active_at or "").strip(),
+            (request.active_actor_id or "").strip(),
+            (request.dry_run_event_id or "").strip(),
+            (request.dry_run_key or "").strip(),
+        )
+    ):
+        raise ProductionActivationStateError(
+            "active metadata must remain empty before active state"
+        )
 
     if executor or request.phrase_verified or armed_at or disarmed_at or disarm_reason:
         raise ProductionActivationStateError(
@@ -828,6 +881,10 @@ def validate_activation_request(request: ActivationRequest) -> ActivationRequest
             armed_at="",
             disarmed_at="",
             disarm_reason_code="",
+            active_at="",
+            active_actor_id="",
+            dry_run_event_id="",
+            dry_run_key="",
             control_history=request.control_history,
         )
 
@@ -874,6 +931,10 @@ def validate_activation_request(request: ActivationRequest) -> ActivationRequest
         armed_at=(request.armed_at or "").strip(),
         disarmed_at=(request.disarmed_at or "").strip(),
         disarm_reason_code=(request.disarm_reason_code or "").strip(),
+        active_at=(request.active_at or "").strip(),
+        active_actor_id=(request.active_actor_id or "").strip(),
+        dry_run_event_id=(request.dry_run_event_id or "").strip(),
+        dry_run_key=(request.dry_run_key or "").strip().lower(),
         control_history=request.control_history,
     )
 

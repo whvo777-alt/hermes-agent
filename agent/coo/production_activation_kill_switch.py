@@ -14,6 +14,7 @@ from pathlib import Path
 
 from agent.coo.production_activation_arm import refresh_activation_lifecycle
 from agent.coo.production_activation_state import (
+    ACTIVATION_STATE_ACTIVE,
     ACTIVATION_STATE_ARMED,
     ACTIVATION_STATE_REVOKED,
     ACTIVATION_STATE_SUSPENDED,
@@ -156,7 +157,11 @@ def is_kill_switch_available(
     *,
     store_dir: Path | None = None,
 ) -> bool:
-    if request.state not in {ACTIVATION_STATE_ARMED, ACTIVATION_STATE_SUSPENDED}:
+    if request.state not in {
+        ACTIVATION_STATE_ARMED,
+        ACTIVATION_STATE_ACTIVE,
+        ACTIVATION_STATE_SUSPENDED,
+    }:
         return False
     return probe_audit_store_available(store_dir=store_dir)
 
@@ -173,6 +178,7 @@ def build_kill_switch_status(
     suspended = request.state == ACTIVATION_STATE_SUSPENDED
     revoked = request.state == ACTIVATION_STATE_REVOKED
     armed = request.state == ACTIVATION_STATE_ARMED
+    active = request.state == ACTIVATION_STATE_ACTIVE
     if already_revoked or revoked:
         recommended = ACTION_ALREADY_REVOKED if already_revoked else ACTION_ACTIVATION_REVOKED_CREATE_NEW_PROPOSAL
     elif already_suspended or suspended:
@@ -183,7 +189,7 @@ def build_kill_switch_status(
         )
     elif not available:
         recommended = ACTION_KILL_SWITCH_UNAVAILABLE
-    elif armed:
+    elif armed or active:
         recommended = ACTION_SUSPEND_ACTIVATION
     else:
         recommended = ACTION_RESOLVE_ACTIVATION_ARTIFACT_ERROR
@@ -236,6 +242,7 @@ def build_control_event(
     actor_role: str,
     reason_code: str,
     now: datetime | None = None,
+    dry_run_event_id: str = "",
 ) -> ActivationControlEvent:
     return ActivationControlEvent(
         event_id=str(uuid.uuid4()),
@@ -249,6 +256,7 @@ def build_control_event(
         timestamp=_utc_now_iso(now),
         tested_commit_sha=request.tested_commit_sha,
         release_tag=request.release_tag,
+        dry_run_event_id=dry_run_event_id,
     )
 
 
@@ -279,6 +287,10 @@ def append_control_event(
         armed_at=request.armed_at,
         disarmed_at=request.disarmed_at,
         disarm_reason_code=request.disarm_reason_code,
+        active_at=request.active_at,
+        active_actor_id=request.active_actor_id,
+        dry_run_event_id=request.dry_run_event_id,
+        dry_run_key=request.dry_run_key,
         control_history=request.control_history + (event,),
     )
 
@@ -403,6 +415,10 @@ def _transition_with_control(
         armed_at=request.armed_at,
         disarmed_at=disarmed_at,
         disarm_reason_code=disarm_reason,
+        active_at=request.active_at,
+        active_actor_id=request.active_actor_id,
+        dry_run_event_id=request.dry_run_event_id,
+        dry_run_key=request.dry_run_key,
         control_history=request.control_history + events,
     )
     validate_activation_request(pending)
@@ -440,7 +456,7 @@ def suspend_production_activation(
         raise ProductionActivationKillSwitchError(
             "revoked activation cannot be suspended"
         )
-    if request.state != ACTIVATION_STATE_ARMED:
+    if request.state not in {ACTIVATION_STATE_ARMED, ACTIVATION_STATE_ACTIVE}:
         raise ProductionActivationKillSwitchError(
             f"activation cannot be suspended from state {request.state!r}"
         )

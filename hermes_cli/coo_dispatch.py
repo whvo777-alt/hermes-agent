@@ -793,6 +793,47 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_activation_dry_run
     )
 
+    production_activation_activate_parser = production_activation_subparsers.add_parser(
+        "activate",
+        help=read_only("Transition armed activation to active without execution"),
+    )
+    production_activation_activate_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to activate",
+    )
+    production_activation_activate_parser.add_argument(
+        "--actor-id",
+        required=True,
+        help="Production executor actor id",
+    )
+    production_activation_activate_parser.add_argument(
+        "--actor-role",
+        required=True,
+        help="Actor role (must be production_executor)",
+    )
+    production_activation_activate_parser.add_argument(
+        "--phrase",
+        required=True,
+        help="Activation confirmation phrase",
+    )
+    production_activation_activate_parser.set_defaults(
+        handler=_cmd_production_activation_activate
+    )
+
+    production_activation_active_status_parser = production_activation_subparsers.add_parser(
+        "active-status",
+        help=read_only("Show controlled active transition status"),
+    )
+    production_activation_active_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to inspect",
+    )
+    production_activation_active_status_parser.set_defaults(
+        handler=_cmd_production_activation_active_status
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -2037,6 +2078,45 @@ def _cmd_production_activation_dry_run(args: argparse.Namespace) -> int:
             pipeline_root=args.pipeline_root,
         )
     except ProductionActivationDryRunError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_activate(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_active import (
+        ProductionActivationActiveError,
+        run_activation_activate,
+    )
+
+    try:
+        output, exit_code = run_activation_activate(
+            activation_request_id=args.activation_request_id,
+            actor_id=args.actor_id,
+            actor_role=args.actor_role,
+            phrase=args.phrase,
+        )
+    except ProductionActivationActiveError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_active_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_active import (
+        ProductionActivationActiveError,
+        run_activation_active_status,
+    )
+
+    try:
+        output, exit_code = run_activation_active_status(
+            activation_request_id=args.activation_request_id,
+        )
+    except ProductionActivationActiveError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

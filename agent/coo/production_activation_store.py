@@ -157,6 +157,7 @@ def _control_from_dict(payload: Mapping[str, Any]) -> ActivationControlEvent:
         timestamp=str(payload.get("timestamp", "")),
         tested_commit_sha=str(payload.get("tested_commit_sha", "")),
         release_tag=str(payload.get("release_tag", "")),
+        dry_run_event_id=str(payload.get("dry_run_event_id", "")),
     )
 
 
@@ -210,6 +211,10 @@ def activation_request_to_dict(request: ActivationRequest) -> dict[str, Any]:
         "armed_at": validated.armed_at,
         "disarmed_at": validated.disarmed_at,
         "disarm_reason_code": validated.disarm_reason_code,
+        "active_at": validated.active_at,
+        "active_actor_id": validated.active_actor_id,
+        "dry_run_event_id": validated.dry_run_event_id,
+        "dry_run_key": validated.dry_run_key,
         "control_history": [
             {
                 "event_id": item.event_id,
@@ -223,6 +228,7 @@ def activation_request_to_dict(request: ActivationRequest) -> dict[str, Any]:
                 "timestamp": item.timestamp,
                 "tested_commit_sha": item.tested_commit_sha,
                 "release_tag": item.release_tag,
+                "dry_run_event_id": item.dry_run_event_id,
             }
             for item in validated.control_history
         ],
@@ -286,6 +292,10 @@ def activation_request_from_dict(payload: Mapping[str, Any]) -> ActivationReques
         armed_at=str(payload.get("armed_at", "")),
         disarmed_at=str(payload.get("disarmed_at", "")),
         disarm_reason_code=str(payload.get("disarm_reason_code", "")),
+        active_at=str(payload.get("active_at", "")),
+        active_actor_id=str(payload.get("active_actor_id", "")),
+        dry_run_event_id=str(payload.get("dry_run_event_id", "")),
+        dry_run_key=str(payload.get("dry_run_key", "")),
         control_history=tuple(
             _control_from_dict(item)
             for item in control_payload

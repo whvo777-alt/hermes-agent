@@ -421,6 +421,10 @@ class TestActivationArmedActiveStates(unittest.TestCase):
                 **armed.__dict__,
                 "state": ACTIVATION_STATE_ACTIVE,
                 "updated_at": _iso(4),
+                "active_at": _iso(4),
+                "active_actor_id": "executor-e",
+                "dry_run_event_id": str(uuid.uuid4()),
+                "dry_run_key": "a" * 64,
                 "active_expires_at": _iso(64),
                 "state_history": (
                     *armed.state_history,

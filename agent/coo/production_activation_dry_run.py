@@ -319,6 +319,21 @@ def probe_dry_run_audit_store_available(*, history_dir: Path | None = None) -> b
         return False
 
 
+def load_latest_dry_run_record(
+    activation_request_id: str,
+    *,
+    history_dir: Path | None = None,
+) -> ProductionActivationDryRunRecord | None:
+    """Return the latest append-only dry-run record for an activation."""
+    records = _load_dry_run_records(
+        activation_request_id,
+        history_dir=history_dir,
+    )
+    if not records:
+        return None
+    return records[-1]
+
+
 def _mirror_in_allowlist(resolved_root: str, *, merged_config: Mapping[str, Any] | None) -> bool:
     policy = load_dispatch_executor_policy(merged_config=merged_config)
     if not policy.allowed_pipeline_roots:
