@@ -41,6 +41,7 @@ _FORBIDDEN_RECORD_KEYS = frozenset(
         "operator_reason",
         "repository2",
         "filesystem",
+        "phrase",
     }
 )
 
@@ -187,6 +188,11 @@ def activation_request_to_dict(request: ActivationRequest) -> dict[str, Any]:
         "expires_at": validated.expires_at,
         "armed_expires_at": validated.armed_expires_at,
         "active_expires_at": validated.active_expires_at,
+        "executor_id": validated.executor_id,
+        "phrase_verified": validated.phrase_verified,
+        "armed_at": validated.armed_at,
+        "disarmed_at": validated.disarmed_at,
+        "disarm_reason_code": validated.disarm_reason_code,
         "production_execution_allowed": False,
     }
     _validate_safe_record_payload(payload)
@@ -238,6 +244,11 @@ def activation_request_from_dict(payload: Mapping[str, Any]) -> ActivationReques
         expires_at=str(payload.get("expires_at", "")),
         armed_expires_at=str(payload.get("armed_expires_at", "")),
         active_expires_at=str(payload.get("active_expires_at", "")),
+        executor_id=str(payload.get("executor_id", "")),
+        phrase_verified=bool(payload.get("phrase_verified", False)),
+        armed_at=str(payload.get("armed_at", "")),
+        disarmed_at=str(payload.get("disarmed_at", "")),
+        disarm_reason_code=str(payload.get("disarm_reason_code", "")),
     )
     return validate_activation_request(request)
 

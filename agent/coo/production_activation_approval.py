@@ -551,10 +551,10 @@ def run_activation_status(
     store_dir: Path | None = None,
     now: datetime | None = None,
 ) -> tuple[str, int]:
-    status = show_activation_approval_status(
+    from agent.coo.production_activation_arm import run_activation_status as run_lifecycle_status
+
+    return run_lifecycle_status(
         activation_request_id=activation_request_id,
         store_dir=store_dir,
         now=now,
     )
-    exit_code = 1 if status.expired else 0
-    return format_activation_approval_status(status), exit_code

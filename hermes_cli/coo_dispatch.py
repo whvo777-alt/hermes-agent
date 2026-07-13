@@ -645,6 +645,55 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_activation_status
     )
 
+    production_activation_arm_parser = production_activation_subparsers.add_parser(
+        "arm",
+        help="Arm an approved activation with production executor confirmation",
+    )
+    production_activation_arm_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to arm",
+    )
+    production_activation_arm_parser.add_argument(
+        "--executor-id",
+        required=True,
+        help="Production executor operator id",
+    )
+    production_activation_arm_parser.add_argument(
+        "--phrase",
+        required=True,
+        help="Arm confirmation phrase (CLI only)",
+    )
+    production_activation_arm_parser.set_defaults(handler=_cmd_production_activation_arm)
+
+    production_activation_disarm_parser = production_activation_subparsers.add_parser(
+        "disarm",
+        help="Disarm or cancel an approved/armed activation",
+    )
+    production_activation_disarm_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to disarm",
+    )
+    production_activation_disarm_parser.add_argument(
+        "--actor-id",
+        required=True,
+        help="Operator performing the disarm",
+    )
+    production_activation_disarm_parser.add_argument(
+        "--reason-code",
+        required=True,
+        help="Disarm reason code",
+    )
+    production_activation_disarm_parser.add_argument(
+        "--actor-role",
+        default="",
+        help="Optional actor role override (operator, production_executor, incident_commander)",
+    )
+    production_activation_disarm_parser.set_defaults(
+        handler=_cmd_production_activation_disarm
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -1756,8 +1805,8 @@ def _cmd_production_activation_security_review(args: argparse.Namespace) -> int:
 
 
 def _cmd_production_activation_status(args: argparse.Namespace) -> int:
-    from agent.coo.production_activation_approval import (
-        ProductionActivationApprovalError,
+    from agent.coo.production_activation_arm import (
+        ProductionActivationArmError,
         run_activation_status,
     )
 
@@ -1765,7 +1814,49 @@ def _cmd_production_activation_status(args: argparse.Namespace) -> int:
         output, exit_code = run_activation_status(
             activation_request_id=args.activation_request_id,
         )
-    except ProductionActivationApprovalError as exc:
+    except ProductionActivationArmError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_arm(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_arm import (
+        ProductionActivationArmError,
+        run_activation_arm,
+    )
+
+    try:
+        output, exit_code = run_activation_arm(
+            activation_request_id=args.activation_request_id,
+            executor_id=args.executor_id,
+            phrase=args.phrase,
+        )
+    except ProductionActivationArmError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_disarm(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_arm import (
+        ProductionActivationArmError,
+        run_activation_disarm,
+    )
+
+    actor_role = (args.actor_role or "").strip() or None
+    try:
+        output, exit_code = run_activation_disarm(
+            activation_request_id=args.activation_request_id,
+            actor_id=args.actor_id,
+            reason_code=args.reason_code,
+            actor_role=actor_role,
+        )
+    except ProductionActivationArmError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

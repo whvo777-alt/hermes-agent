@@ -25,6 +25,7 @@ from agent.coo.production_activation_state import (
     ActivationStateTransition,
     ProductionActivationStateError,
     ROLE_OPERATOR,
+    ROLE_PRODUCTION_EXECUTOR,
     ROLE_RELEASE_APPROVER,
     ROLE_SECURITY_REVIEWER,
     format_activation_request,
@@ -175,7 +176,9 @@ class TestActivationTransitions(unittest.TestCase):
         validate_activation_transition(ACTIVATION_STATE_DISABLED, ACTIVATION_STATE_PROPOSED)
         validate_activation_transition(ACTIVATION_STATE_PROPOSED, ACTIVATION_STATE_APPROVED)
         validate_activation_transition(ACTIVATION_STATE_APPROVED, ACTIVATION_STATE_ARMED)
+        validate_activation_transition(ACTIVATION_STATE_APPROVED, ACTIVATION_STATE_REVOKED)
         validate_activation_transition(ACTIVATION_STATE_ARMED, ACTIVATION_STATE_ACTIVE)
+        validate_activation_transition(ACTIVATION_STATE_ARMED, ACTIVATION_STATE_REVOKED)
         validate_activation_transition(ACTIVATION_STATE_ACTIVE, ACTIVATION_STATE_SUSPENDED)
         validate_activation_transition(ACTIVATION_STATE_SUSPENDED, ACTIVATION_STATE_ACTIVE)
         validate_activation_transition(ACTIVATION_STATE_SUSPENDED, ACTIVATION_STATE_REVOKED)
@@ -183,8 +186,6 @@ class TestActivationTransitions(unittest.TestCase):
     def test_unknown_transition_rejected(self) -> None:
         with self.assertRaises(ProductionActivationStateError):
             validate_activation_transition(ACTIVATION_STATE_PROPOSED, ACTIVATION_STATE_ARMED)
-        with self.assertRaises(ProductionActivationStateError):
-            validate_activation_transition(ACTIVATION_STATE_APPROVED, ACTIVATION_STATE_REVOKED)
         with self.assertRaises(ProductionActivationStateError):
             validate_activation_transition(ACTIVATION_STATE_REVOKED, ACTIVATION_STATE_ACTIVE)
 
@@ -312,6 +313,9 @@ class TestActivationFailClosed(unittest.TestCase):
             **{
                 **request.__dict__,
                 "state": ACTIVATION_STATE_ARMED,
+                "executor_id": "executor-e",
+                "phrase_verified": True,
+                "armed_at": _iso(3),
                 "armed_expires_at": _iso(90),
                 "active_expires_at": _iso(30),
                 "state_history": (
@@ -321,6 +325,7 @@ class TestActivationFailClosed(unittest.TestCase):
                         ACTIVATION_STATE_ARMED,
                         offset=3,
                         actor="executor-e",
+                        role=ROLE_PRODUCTION_EXECUTOR,
                     ),
                 ),
             }
@@ -386,7 +391,10 @@ class TestActivationArmedActiveStates(unittest.TestCase):
                 **approved.__dict__,
                 "state": ACTIVATION_STATE_ARMED,
                 "updated_at": _iso(3),
+                "armed_at": _iso(3),
                 "armed_expires_at": _iso(18),
+                "executor_id": "executor-e",
+                "phrase_verified": True,
                 "state_history": (
                     *approved.state_history,
                     _transition(
@@ -394,6 +402,7 @@ class TestActivationArmedActiveStates(unittest.TestCase):
                         ACTIVATION_STATE_ARMED,
                         offset=3,
                         actor="executor-e",
+                        role=ROLE_PRODUCTION_EXECUTOR,
                     ),
                 ),
             }

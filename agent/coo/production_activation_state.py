@@ -71,8 +71,12 @@ _OPERATOR_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     ACTIVATION_STATE_DISABLED: frozenset({ACTIVATION_STATE_PROPOSED}),
     ACTIVATION_STATE_PROPOSED: frozenset({ACTIVATION_STATE_APPROVED}),
-    ACTIVATION_STATE_APPROVED: frozenset({ACTIVATION_STATE_ARMED}),
-    ACTIVATION_STATE_ARMED: frozenset({ACTIVATION_STATE_ACTIVE}),
+    ACTIVATION_STATE_APPROVED: frozenset(
+        {ACTIVATION_STATE_ARMED, ACTIVATION_STATE_REVOKED}
+    ),
+    ACTIVATION_STATE_ARMED: frozenset(
+        {ACTIVATION_STATE_ACTIVE, ACTIVATION_STATE_REVOKED}
+    ),
     ACTIVATION_STATE_ACTIVE: frozenset({ACTIVATION_STATE_SUSPENDED}),
     ACTIVATION_STATE_SUSPENDED: frozenset(
         {ACTIVATION_STATE_ACTIVE, ACTIVATION_STATE_REVOKED}
@@ -191,6 +195,11 @@ class ActivationRequest:
     expires_at: str
     armed_expires_at: str
     active_expires_at: str
+    executor_id: str = ""
+    phrase_verified: bool = False
+    armed_at: str = ""
+    disarmed_at: str = ""
+    disarm_reason_code: str = ""
 
 
 def _parse_iso8601(value: str, *, field_name: str) -> datetime:
@@ -504,6 +513,92 @@ def _validate_approval_history(
         previous_ts = ts
 
 
+def _validate_executor_fields(request: ActivationRequest) -> None:
+    executor = (request.executor_id or "").strip()
+    armed_at = (request.armed_at or "").strip()
+    disarmed_at = (request.disarmed_at or "").strip()
+    disarm_reason = (request.disarm_reason_code or "").strip()
+
+    if request.state in {ACTIVATION_STATE_DISABLED, ACTIVATION_STATE_PROPOSED}:
+        if executor or request.phrase_verified or armed_at or disarmed_at or disarm_reason:
+            raise ProductionActivationStateError(
+                "executor and arm metadata must remain empty before approved state"
+            )
+        if (request.armed_expires_at or "").strip():
+            raise ProductionActivationStateError(
+                "armed_expires_at must remain empty before armed state"
+            )
+        return
+
+    if request.state == ACTIVATION_STATE_APPROVED:
+        if executor or request.phrase_verified or armed_at or disarmed_at or disarm_reason:
+            raise ProductionActivationStateError(
+                "executor and arm metadata must remain empty in approved state"
+            )
+        if (request.armed_expires_at or "").strip():
+            raise ProductionActivationStateError(
+                "armed_expires_at must remain empty in approved state"
+            )
+        return
+
+    if request.state == ACTIVATION_STATE_ARMED:
+        executor_id = _validate_operator_id(executor, field_name="executor_id")
+        if not request.phrase_verified:
+            raise ProductionActivationStateError(
+                "phrase_verified must be true in armed state"
+            )
+        if not armed_at:
+            raise ProductionActivationStateError("armed_at is required in armed state")
+        if disarmed_at or disarm_reason:
+            raise ProductionActivationStateError(
+                "disarm metadata must remain empty in armed state"
+            )
+        if executor_id == request.requested_by:
+            raise ProductionActivationStateError(
+                "executor_id must not match requested_by"
+            )
+        if executor_id in request.approved_by:
+            raise ProductionActivationStateError(
+                "executor_id must not match approved_by entries"
+            )
+        if executor_id == request.security_reviewed_by:
+            raise ProductionActivationStateError(
+                "executor_id must not match security_reviewed_by"
+            )
+        return
+
+    if request.state == ACTIVATION_STATE_REVOKED:
+        if not disarmed_at:
+            raise ProductionActivationStateError(
+                "disarmed_at is required in revoked state"
+            )
+        if not disarm_reason:
+            raise ProductionActivationStateError(
+                "disarm_reason_code is required in revoked state"
+            )
+        if executor:
+            _validate_operator_id(executor, field_name="executor_id")
+        if request.phrase_verified and not armed_at:
+            raise ProductionActivationStateError(
+                "armed_at is required when phrase_verified is true in revoked state"
+            )
+        return
+
+    if request.state in {ACTIVATION_STATE_ACTIVE, ACTIVATION_STATE_SUSPENDED}:
+        if executor:
+            _validate_operator_id(executor, field_name="executor_id")
+        if request.phrase_verified and not armed_at:
+            raise ProductionActivationStateError(
+                "armed_at is required when phrase_verified is true in active/suspended state"
+            )
+        return
+
+    if executor or request.phrase_verified or armed_at or disarmed_at or disarm_reason:
+        raise ProductionActivationStateError(
+            "executor and arm metadata are only valid for armed/revoked states"
+        )
+
+
 def _validate_approver_list(request: ActivationRequest) -> None:
     approvers = tuple(
         _validate_operator_id(item, field_name="approved_by entry")
@@ -597,7 +692,7 @@ def _validate_ttl_fields(request: ActivationRequest) -> None:
             armed_text,
             field_name="armed_expires_at",
         )
-        if armed_expires_at < updated:
+        if request.state != ACTIVATION_STATE_REVOKED and armed_expires_at < updated:
             raise ProductionActivationStateError(
                 "armed_expires_at must not precede updated_at"
             )
@@ -672,6 +767,11 @@ def validate_activation_request(request: ActivationRequest) -> ActivationRequest
             expires_at="",
             armed_expires_at="",
             active_expires_at="",
+            executor_id="",
+            phrase_verified=False,
+            armed_at="",
+            disarmed_at="",
+            disarm_reason_code="",
         )
 
     tested_commit_sha = _validate_commit_sha(
@@ -690,6 +790,7 @@ def validate_activation_request(request: ActivationRequest) -> ActivationRequest
     _validate_state_history(request.state_history, expected_state=state)
     _validate_approval_history(request, request.approval_history)
     _validate_approver_list(request)
+    _validate_executor_fields(request)
     _validate_ttl_fields(request)
 
     return ActivationRequest(
@@ -710,6 +811,11 @@ def validate_activation_request(request: ActivationRequest) -> ActivationRequest
         expires_at=(request.expires_at or "").strip(),
         armed_expires_at=(request.armed_expires_at or "").strip(),
         active_expires_at=(request.active_expires_at or "").strip(),
+        executor_id=(request.executor_id or "").strip(),
+        phrase_verified=bool(request.phrase_verified),
+        armed_at=(request.armed_at or "").strip(),
+        disarmed_at=(request.disarmed_at or "").strip(),
+        disarm_reason_code=(request.disarm_reason_code or "").strip(),
     )
 
 
