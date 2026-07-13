@@ -181,6 +181,41 @@ All documentation lives at **[hermes-agent.nousresearch.com/docs](https://hermes
 | [CLI Reference](https://hermes-agent.nousresearch.com/docs/reference/cli-commands)                  | All commands and flags                                     |
 | [Environment Variables](https://hermes-agent.nousresearch.com/docs/reference/environment-variables) | Complete env var reference                                 |
 
+### COO Dispatch Operator (in-repo)
+
+Operator runbooks for staged gateway mock dispatch, pilot, recovery, and dashboard
+live in [`docs/operator/`](docs/operator/README.md). Read-only investigation
+commands; production execution remains disabled by policy.
+
+| Document | What's Covered |
+| -------- | -------------- |
+| [Operator index](docs/operator/README.md) | Documentation map and safety policy |
+| [Dispatch Runbook](docs/operator/Dispatch_Runbook.md) | Ticket → execution → audit lifecycle |
+| [Gateway Runbook](docs/operator/Gateway_Runbook.md) | Gateway state, pilot, correlation, dashboard |
+| [Recovery Runbook](docs/operator/Recovery_Runbook.md) | Consume recovery and repair flow |
+| [Pilot Runbook](docs/operator/Pilot_Runbook.md) | History, regression, trend, fleet |
+| [Production Sign-off](docs/operator/Production_Signoff.md) | Why production stays blocked |
+| [Operator Checklist](docs/operator/Operator_Checklist.md) | Daily / weekly / incident checks |
+| [CLI Reference](docs/operator/CLI_Command_Reference.md) | Full `hermes coo dispatch` tree |
+| [Architecture Overview](docs/operator/Architecture_Overview.md) | Approval → dashboard flow |
+
+---
+
+## COO Operations Quick Reference
+
+Hermes COO dispatch provides a gated path from CEO approval through isolated mock
+gateway pilot. These surfaces are for **operator review**; they do not enable
+production pipeline execution.
+
+| Area | Start here |
+| ---- | ---------- |
+| **Operation** | [Dispatch Runbook](docs/operator/Dispatch_Runbook.md) |
+| **Gateway** | `hermes coo dispatch gateway dashboard` · [Gateway Runbook](docs/operator/Gateway_Runbook.md) |
+| **Pilot** | `hermes coo dispatch pilot regression` · [Pilot Runbook](docs/operator/Pilot_Runbook.md) |
+| **Recovery** | `hermes coo dispatch consume recovery` · [Recovery Runbook](docs/operator/Recovery_Runbook.md) |
+| **Dashboard** | `hermes coo dispatch gateway dashboard` |
+| **Documentation** | [docs/operator/](docs/operator/README.md) |
+
 ---
 
 ## Migrating from OpenClaw

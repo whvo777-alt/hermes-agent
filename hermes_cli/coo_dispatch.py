@@ -923,7 +923,23 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
 
 
 def build_coo_dispatch_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hermes coo dispatch")
+    parser = argparse.ArgumentParser(
+        prog="hermes coo dispatch",
+        description=(
+            "COO dispatch operator surface: read-only review, gated consume repair, "
+            "and isolated mock pilot. production_execution_allowed remains false."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  hermes coo dispatch gateway dashboard\n"
+            "  hermes coo dispatch gateway correlation show --gateway-request-id <id>\n"
+            "  hermes coo dispatch production sign-off\n"
+            "  hermes coo dispatch pilot regression\n"
+            "\n"
+            "Operator documentation: docs/operator/README.md"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     register_cli(parser)
     return parser
 
