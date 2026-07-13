@@ -75,11 +75,15 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
         {ACTIVATION_STATE_ARMED, ACTIVATION_STATE_REVOKED}
     ),
     ACTIVATION_STATE_ARMED: frozenset(
-        {ACTIVATION_STATE_ACTIVE, ACTIVATION_STATE_REVOKED}
+        {
+            ACTIVATION_STATE_ACTIVE,
+            ACTIVATION_STATE_REVOKED,
+            ACTIVATION_STATE_SUSPENDED,
+        }
     ),
     ACTIVATION_STATE_ACTIVE: frozenset({ACTIVATION_STATE_SUSPENDED}),
     ACTIVATION_STATE_SUSPENDED: frozenset(
-        {ACTIVATION_STATE_ACTIVE, ACTIVATION_STATE_REVOKED}
+        {ACTIVATION_STATE_REVOKED}
     ),
     ACTIVATION_STATE_REVOKED: frozenset(),
 }
@@ -175,6 +179,23 @@ class ActivationApprovalRecord:
 
 
 @dataclass(frozen=True)
+class ActivationControlEvent:
+    """Append-only activation control audit event."""
+
+    event_id: str
+    activation_request_id: str
+    event_type: str
+    from_state: str
+    to_state: str
+    actor_id: str
+    actor_role: str
+    reason_code: str
+    timestamp: str
+    tested_commit_sha: str
+    release_tag: str
+
+
+@dataclass(frozen=True)
 class ActivationRequest:
     """Production activation artifact (in-memory model; no store in Phase 14B)."""
 
@@ -200,6 +221,7 @@ class ActivationRequest:
     armed_at: str = ""
     disarmed_at: str = ""
     disarm_reason_code: str = ""
+    control_history: tuple[ActivationControlEvent, ...] = ()
 
 
 def _parse_iso8601(value: str, *, field_name: str) -> datetime:
@@ -591,12 +613,45 @@ def _validate_executor_fields(request: ActivationRequest) -> None:
             raise ProductionActivationStateError(
                 "armed_at is required when phrase_verified is true in active/suspended state"
             )
+        if disarmed_at or disarm_reason:
+            raise ProductionActivationStateError(
+                "disarm metadata must remain empty in active/suspended state"
+            )
         return
 
     if executor or request.phrase_verified or armed_at or disarmed_at or disarm_reason:
         raise ProductionActivationStateError(
             "executor and arm metadata are only valid for armed/revoked states"
         )
+
+
+def _validate_control_history(
+    history: Sequence[ActivationControlEvent],
+) -> None:
+    seen_event_ids: set[str] = set()
+    previous_ts: datetime | None = None
+    for index, event in enumerate(history):
+        event_id = _validate_uuid(event.event_id, field_name=f"control_history[{index}].event_id")
+        if event_id in seen_event_ids:
+            raise ProductionActivationStateError(
+                "duplicate control_history event_id detected"
+            )
+        seen_event_ids.add(event_id)
+        if not (event.event_type or "").strip():
+            raise ProductionActivationStateError("control event_type is required")
+        if not (event.from_state or "").strip() or not (event.to_state or "").strip():
+            raise ProductionActivationStateError("control from_state and to_state are required")
+        _validate_operator_id(event.actor_id, field_name=f"control_history[{index}].actor_id")
+        if not (event.actor_role or "").strip():
+            raise ProductionActivationStateError("control actor_role is required")
+        if not (event.reason_code or "").strip():
+            raise ProductionActivationStateError("control reason_code is required")
+        ts = _parse_iso8601(event.timestamp, field_name="control.timestamp")
+        if previous_ts is not None and ts < previous_ts:
+            raise ProductionActivationStateError(
+                "control_history timestamps must be monotonic (append-only)"
+            )
+        previous_ts = ts
 
 
 def _validate_approver_list(request: ActivationRequest) -> None:
@@ -747,6 +802,7 @@ def validate_activation_request(request: ActivationRequest) -> ActivationRequest
             )
         _validate_state_history(request.state_history, expected_state=state)
         _validate_approval_history(request, request.approval_history)
+        _validate_control_history(request.control_history)
         _validate_approver_list(request)
         _validate_ttl_fields(request)
         return ActivationRequest(
@@ -772,6 +828,7 @@ def validate_activation_request(request: ActivationRequest) -> ActivationRequest
             armed_at="",
             disarmed_at="",
             disarm_reason_code="",
+            control_history=request.control_history,
         )
 
     tested_commit_sha = _validate_commit_sha(
@@ -789,6 +846,7 @@ def validate_activation_request(request: ActivationRequest) -> ActivationRequest
 
     _validate_state_history(request.state_history, expected_state=state)
     _validate_approval_history(request, request.approval_history)
+    _validate_control_history(request.control_history)
     _validate_approver_list(request)
     _validate_executor_fields(request)
     _validate_ttl_fields(request)
@@ -816,6 +874,7 @@ def validate_activation_request(request: ActivationRequest) -> ActivationRequest
         armed_at=(request.armed_at or "").strip(),
         disarmed_at=(request.disarmed_at or "").strip(),
         disarm_reason_code=(request.disarm_reason_code or "").strip(),
+        control_history=request.control_history,
     )
 
 

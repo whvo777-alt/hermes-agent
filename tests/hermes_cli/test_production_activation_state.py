@@ -179,15 +179,17 @@ class TestActivationTransitions(unittest.TestCase):
         validate_activation_transition(ACTIVATION_STATE_APPROVED, ACTIVATION_STATE_REVOKED)
         validate_activation_transition(ACTIVATION_STATE_ARMED, ACTIVATION_STATE_ACTIVE)
         validate_activation_transition(ACTIVATION_STATE_ARMED, ACTIVATION_STATE_REVOKED)
-        validate_activation_transition(ACTIVATION_STATE_ACTIVE, ACTIVATION_STATE_SUSPENDED)
-        validate_activation_transition(ACTIVATION_STATE_SUSPENDED, ACTIVATION_STATE_ACTIVE)
+        validate_activation_transition(ACTIVATION_STATE_ARMED, ACTIVATION_STATE_SUSPENDED)
         validate_activation_transition(ACTIVATION_STATE_SUSPENDED, ACTIVATION_STATE_REVOKED)
+        validate_activation_transition(ACTIVATION_STATE_ACTIVE, ACTIVATION_STATE_SUSPENDED)
 
     def test_unknown_transition_rejected(self) -> None:
         with self.assertRaises(ProductionActivationStateError):
             validate_activation_transition(ACTIVATION_STATE_PROPOSED, ACTIVATION_STATE_ARMED)
         with self.assertRaises(ProductionActivationStateError):
             validate_activation_transition(ACTIVATION_STATE_REVOKED, ACTIVATION_STATE_ACTIVE)
+        with self.assertRaises(ProductionActivationStateError):
+            validate_activation_transition(ACTIVATION_STATE_SUSPENDED, ACTIVATION_STATE_ACTIVE)
 
     def test_invalid_state_names_rejected(self) -> None:
         with self.assertRaises(ProductionActivationStateError):

@@ -16,6 +16,7 @@ from hermes_constants import get_hermes_home
 from agent.coo.production_activation_state import (
     ACTIVATION_STATE_PROPOSED,
     ActivationApprovalRecord,
+    ActivationControlEvent,
     ActivationRequest,
     ActivationScope,
     ActivationStateTransition,
@@ -143,6 +144,22 @@ def _approval_from_dict(payload: Mapping[str, Any]) -> ActivationApprovalRecord:
     )
 
 
+def _control_from_dict(payload: Mapping[str, Any]) -> ActivationControlEvent:
+    return ActivationControlEvent(
+        event_id=str(payload.get("event_id", "")),
+        activation_request_id=str(payload.get("activation_request_id", "")),
+        event_type=str(payload.get("event_type", "")),
+        from_state=str(payload.get("from_state", "")),
+        to_state=str(payload.get("to_state", "")),
+        actor_id=str(payload.get("actor_id", "")),
+        actor_role=str(payload.get("actor_role", "")),
+        reason_code=str(payload.get("reason_code", "")),
+        timestamp=str(payload.get("timestamp", "")),
+        tested_commit_sha=str(payload.get("tested_commit_sha", "")),
+        release_tag=str(payload.get("release_tag", "")),
+    )
+
+
 def activation_request_to_dict(request: ActivationRequest) -> dict[str, Any]:
     validated = validate_activation_request(request)
     scope = validated.activation_scope
@@ -193,6 +210,22 @@ def activation_request_to_dict(request: ActivationRequest) -> dict[str, Any]:
         "armed_at": validated.armed_at,
         "disarmed_at": validated.disarmed_at,
         "disarm_reason_code": validated.disarm_reason_code,
+        "control_history": [
+            {
+                "event_id": item.event_id,
+                "activation_request_id": item.activation_request_id,
+                "event_type": item.event_type,
+                "from_state": item.from_state,
+                "to_state": item.to_state,
+                "actor_id": item.actor_id,
+                "actor_role": item.actor_role,
+                "reason_code": item.reason_code,
+                "timestamp": item.timestamp,
+                "tested_commit_sha": item.tested_commit_sha,
+                "release_tag": item.release_tag,
+            }
+            for item in validated.control_history
+        ],
         "production_execution_allowed": False,
     }
     _validate_safe_record_payload(payload)
@@ -217,6 +250,10 @@ def activation_request_from_dict(payload: Mapping[str, Any]) -> ActivationReques
     approved_by = payload.get("approved_by", [])
     if not isinstance(approved_by, list):
         raise ProductionActivationStoreError("approved_by must be a list.")
+
+    control_payload = payload.get("control_history", [])
+    if not isinstance(control_payload, list):
+        raise ProductionActivationStoreError("control_history must be a list.")
 
     request = ActivationRequest(
         activation_request_id=str(payload.get("activation_request_id", "")),
@@ -249,6 +286,11 @@ def activation_request_from_dict(payload: Mapping[str, Any]) -> ActivationReques
         armed_at=str(payload.get("armed_at", "")),
         disarmed_at=str(payload.get("disarmed_at", "")),
         disarm_reason_code=str(payload.get("disarm_reason_code", "")),
+        control_history=tuple(
+            _control_from_dict(item)
+            for item in control_payload
+            if isinstance(item, Mapping)
+        ),
     )
     return validate_activation_request(request)
 

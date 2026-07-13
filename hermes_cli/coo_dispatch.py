@@ -694,6 +694,77 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_activation_disarm
     )
 
+    production_activation_gate_parser = production_activation_subparsers.add_parser(
+        "gate",
+        help=read_only("Evaluate active gate readiness for an armed activation"),
+    )
+    production_activation_gate_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to evaluate",
+    )
+    production_activation_gate_parser.set_defaults(
+        handler=_cmd_production_activation_gate
+    )
+
+    production_activation_suspend_parser = production_activation_subparsers.add_parser(
+        "suspend",
+        help="Suspend an armed activation via kill switch",
+    )
+    production_activation_suspend_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to suspend",
+    )
+    production_activation_suspend_parser.add_argument(
+        "--actor-id",
+        required=True,
+        help="Operator performing the suspend",
+    )
+    production_activation_suspend_parser.add_argument(
+        "--actor-role",
+        required=True,
+        choices=("operator", "incident_commander"),
+        help="Actor role for suspend",
+    )
+    production_activation_suspend_parser.add_argument(
+        "--reason-code",
+        required=True,
+        help="Suspend reason code",
+    )
+    production_activation_suspend_parser.set_defaults(
+        handler=_cmd_production_activation_suspend
+    )
+
+    production_activation_revoke_parser = production_activation_subparsers.add_parser(
+        "revoke",
+        help="Revoke a suspended activation via kill switch",
+    )
+    production_activation_revoke_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id to revoke",
+    )
+    production_activation_revoke_parser.add_argument(
+        "--actor-id",
+        required=True,
+        help="Operator performing the revoke",
+    )
+    production_activation_revoke_parser.add_argument(
+        "--actor-role",
+        required=True,
+        choices=("operator", "incident_commander"),
+        help="Actor role for revoke",
+    )
+    production_activation_revoke_parser.add_argument(
+        "--reason-code",
+        required=True,
+        help="Revoke reason code",
+    )
+    production_activation_revoke_parser.set_defaults(
+        handler=_cmd_production_activation_revoke
+    )
+
     pilot_parser = subparsers.add_parser(
         "pilot",
         help="Isolated operational dispatch pilot",
@@ -1857,6 +1928,66 @@ def _cmd_production_activation_disarm(args: argparse.Namespace) -> int:
             actor_role=actor_role,
         )
     except ProductionActivationArmError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_gate(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_active_gate import (
+        ProductionActivationActiveGateError,
+        run_activation_gate,
+    )
+
+    try:
+        output, exit_code = run_activation_gate(
+            activation_request_id=args.activation_request_id,
+        )
+    except ProductionActivationActiveGateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_suspend(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_kill_switch import (
+        ProductionActivationKillSwitchError,
+        run_activation_suspend,
+    )
+
+    try:
+        output, exit_code = run_activation_suspend(
+            activation_request_id=args.activation_request_id,
+            actor_id=args.actor_id,
+            actor_role=args.actor_role,
+            reason_code=args.reason_code,
+        )
+    except ProductionActivationKillSwitchError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_activation_revoke(args: argparse.Namespace) -> int:
+    from agent.coo.production_activation_kill_switch import (
+        ProductionActivationKillSwitchError,
+        run_activation_revoke,
+    )
+
+    try:
+        output, exit_code = run_activation_revoke(
+            activation_request_id=args.activation_request_id,
+            actor_id=args.actor_id,
+            actor_role=args.actor_role,
+            reason_code=args.reason_code,
+        )
+    except ProductionActivationKillSwitchError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
