@@ -2352,6 +2352,7 @@ def consume_runtime_boundary(
     *,
     boundary_id: str,
     consumed_by: str,
+    governed_invoke_id: str = "",
     store_dir: Path | None = None,
     consume_store_dir: Path | None = None,
     now: datetime | None = None,
@@ -2399,11 +2400,18 @@ def consume_runtime_boundary(
 
     payload = {
         "version": 1,
+        "artifact_type": "runtime_boundary_consume",
         "boundary_id": normalized_boundary_id,
         "activation_request_id": activation_request_id,
+        "cutover_contract_id": record.cutover_contract_id,
+        "ticket_id": record.ticket_id,
+        "confirmation_id": record.confirmation_id,
+        "permission_id": record.permission_id,
+        "session_id": record.session_id,
         "consumed": True,
         "consumed_at": _utc_now_iso(now),
         "consumed_by": normalized_consumed_by,
+        "governed_invoke_id": (governed_invoke_id or "").strip(),
     }
     path = _boundary_consume_path(normalized_boundary_id, store_dir=consume_store_dir)
     try:

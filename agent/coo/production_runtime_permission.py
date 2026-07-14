@@ -1562,6 +1562,7 @@ def consume_production_runtime_permission(
     *,
     permission_id: str,
     consumed_by: str,
+    governed_invoke_id: str = "",
     store_dir: Path | None = None,
     consume_store_dir: Path | None = None,
     now: datetime | None = None,
@@ -1611,11 +1612,16 @@ def consume_production_runtime_permission(
 
     payload = {
         "version": 1,
+        "artifact_type": "runtime_permission_consume",
         "permission_id": normalized_permission_id,
         "activation_request_id": activation_request_id,
+        "cutover_contract_id": record.cutover_contract_id,
+        "ticket_id": record.ticket_id,
+        "confirmation_id": record.confirmation_id,
         "consumed": True,
         "consumed_at": _utc_now_iso(now),
         "consumed_by": normalized_consumed_by,
+        "governed_invoke_id": (governed_invoke_id or "").strip(),
     }
     path = _permission_consume_path(normalized_permission_id, store_dir=consume_store_dir)
     try:

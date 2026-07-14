@@ -345,10 +345,34 @@ def evaluate_governed_runtime_invoke(
     runtime_start_record = load_runtime_start_record(
         activation_request_id, store_dir=runtime_start_store_dir
     )
+
+    # Resolve already_invoked before evaluating runtime_start "not ready" /
+    # "already consumed" markers below: once this activation's governed
+    # invoke has already completed successfully, the very consumption it
+    # performed (permission/boundary/invocation/authorization) is expected
+    # to make evaluate_production_runtime_start() and the re-verification
+    # block below report additional markers — those are confirmation of
+    # success, not new problems, and must not be surfaced as blocking
+    # alongside (or worse, instead of) BLOCK_ALREADY_INVOKED.
+    already_invoked = False
+    existing_invoke = load_governed_runtime_invoke_record(
+        activation_request_id, store_dir=invoke_store_dir
+    )
+    if existing_invoke is not None and existing_invoke.governed_runtime_invoked:
+        already_invoked = True
+
     runtime_start_valid = False
     current = _utc_now(now)
     if runtime_start_record is None:
         blocking.append(BLOCK_RUNTIME_START_MISSING)
+    elif already_invoked:
+        runtime_start_valid = True
+        if authorization_id and runtime_start_record.authorization_id != authorization_id.strip():
+            blocking.append(BLOCK_RUNTIME_START_SCOPE_MISMATCH)
+        if executor_id and runtime_start_record.executor_id != executor_id.strip():
+            blocking.append(BLOCK_EXECUTOR_MISMATCH)
+        if operator_id and runtime_start_record.operator_id != operator_id.strip():
+            blocking.append(BLOCK_OPERATOR_MISMATCH)
     else:
         # A runtime-start contract must already exist (RUNTIME_START_STARTED)
         # for Phase 15I to proceed — RUNTIME_START_READY means "not yet
@@ -383,19 +407,17 @@ def evaluate_governed_runtime_invoke(
         if operator_id and runtime_start_record.operator_id != operator_id.strip():
             blocking.append(BLOCK_OPERATOR_MISMATCH)
 
-    already_invoked = False
-    existing_invoke = load_governed_runtime_invoke_record(
-        activation_request_id, store_dir=invoke_store_dir
-    )
-    if existing_invoke is not None and existing_invoke.governed_runtime_invoked:
-        already_invoked = True
+    if already_invoked:
         blocking.append(BLOCK_ALREADY_INVOKED)
 
     # Independent re-verification: even though runtime_start already checks
     # boundary/invocation consumption, and permission/authorization
     # consumption was historically unchecked upstream, re-verify all four
-    # directly against their own consume stores as defense in depth.
-    if runtime_start_record is not None:
+    # directly against their own consume stores as defense in depth. Skipped
+    # once already_invoked is known True — at that point every one of these
+    # would fire (this invoke consumed them all) and add no new information
+    # beyond BLOCK_ALREADY_INVOKED.
+    if runtime_start_record is not None and not already_invoked:
         try:
             permission_record = load_runtime_permission_record(
                 activation_request_id, store_dir=permission_store_dir
@@ -696,6 +718,7 @@ def reserve_and_consume_governed_runtime_invoke(
             activation_request_id,
             permission_id=permission_record.permission_id,
             consumed_by=normalized_invoked_by,
+            governed_invoke_id=invoke_id,
             store_dir=permission_store_dir,
             consume_store_dir=permission_consume_store_dir,
             now=now,
@@ -706,6 +729,7 @@ def reserve_and_consume_governed_runtime_invoke(
             activation_request_id,
             boundary_id=boundary_record.boundary_id,
             consumed_by=normalized_invoked_by,
+            governed_invoke_id=invoke_id,
             store_dir=boundary_store_dir,
             consume_store_dir=boundary_consume_store_dir,
             now=now,
@@ -716,6 +740,7 @@ def reserve_and_consume_governed_runtime_invoke(
             activation_request_id,
             runtime_invocation_id=invocation_record.runtime_invocation_id,
             consumed_by=normalized_invoked_by,
+            governed_invoke_id=invoke_id,
             store_dir=invocation_store_dir,
             consume_store_dir=invocation_consume_store_dir,
             now=now,
@@ -726,6 +751,7 @@ def reserve_and_consume_governed_runtime_invoke(
             activation_request_id,
             authorization_id=authorization_record.authorization_id,
             consumed_by=normalized_invoked_by,
+            governed_invoke_id=invoke_id,
             store_dir=authorization_store_dir,
             consume_store_dir=authorization_consume_store_dir,
             now=now,
