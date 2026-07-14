@@ -102,8 +102,32 @@ Shows `signoff_ready`, `cutover_ready`, and `dashboard_health` together.
 | `BLOCKED` dashboard | See [Gateway_Runbook.md](Gateway_Runbook.md) |
 | Attestation pass, execution denied | Expected — attestation ≠ execution permission |
 
+## Relationship to Phase 14/15 governance chain
+
+Everything above this section describes the **legacy** (Phase 13D)
+`production readiness` / `sign-off` / `cutover-check` commands, which
+evaluate isolated pilot-fleet readiness only.
+
+A separate, newer, append-only chain — `production activation ...` (Phase
+14) and `production governed-cutover ...` (Phase 15A–15H) — governs
+proposal → approval → arm → dry-run → active → execution-gate → isolated
+mirror live pilot → final sign-off → governed cutover contract → controlled
+window → runtime permission → session → boundary → invocation reservation →
+execution authorization → runtime start. Neither namespace sets
+`production_execution_allowed=true`, and the two namespaces do not conflict
+or overlap in their CLI surface. See
+[Architecture_Overview.md](Architecture_Overview.md#phase-14-production-activation-governance)
+for the full flow and [V1_Scope_Freeze.md](V1_Scope_Freeze.md) for exactly
+what is and is not included.
+
+Phase 15I (`governed_runtime_invoke`, bookkeeping) and Phase 15J
+(`governed_runtime_closure`, cross-chain validation) exist as Python APIs
+only — they are **not** reachable from this CLI in V1.
+
 ## Related documents
 
 - [Pilot_Runbook.md](Pilot_Runbook.md)
 - [Gateway_Runbook.md](Gateway_Runbook.md)
 - [Operator_Checklist.md](Operator_Checklist.md)
+- [Architecture_Overview.md](Architecture_Overview.md)
+- [V1_Scope_Freeze.md](V1_Scope_Freeze.md)

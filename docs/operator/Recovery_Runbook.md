@@ -116,3 +116,55 @@ When mutation is not yet authorized, stay read-only:
 - `operator runbook --ticket-id <ticket-id> --confirmation-id <confirmation-id>`
 - `gateway dashboard --ticket-id <ticket-id>`
 - `gateway correlation diff` for drift between two gateway requests
+
+<!-- anchor: phase-15-consume-records -->
+## Phase 15 consume records
+
+**This is a different mechanism from everything above.** The recovery flow
+described earlier in this document is about the Phase 8–13 dispatch
+**bundle/confirmation** consume transaction. Phase 15's permission / runtime
+boundary / runtime invocation reservation / execution authorization
+artifacts each have their own, separate, write-once **consume record** —
+same English word, unrelated store, unrelated CLI surface
+(`production governed-cutover ...`, not `consume ...`).
+
+### What a Phase 15 consume record is
+
+Each of the four Phase 15 prerequisites is issued/reserved/authorized as an
+immutable artifact. "Consumed" is recorded as a **separate** append-only
+file referencing the original artifact's id — the original is never
+mutated. There is no CLI command to inspect these records directly in V1;
+governed runtime closure validation (Phase 15J, Python API only) is what
+cross-checks them.
+
+### Partial consume
+
+If only some of the four consume records exist for an activation (1-of-4,
+2-of-4, or 3-of-4), the chain is in a **partial consume** state. This is
+never auto-repaired. Operator action:
+
+1. Do **not** delete or hand-edit any existing consume record or any of the
+   four original Phase 15 artifacts.
+2. Escalate for manual inspection (`inspect_partial_governed_consume` is the
+   internal recommended-action code surfaced by governed runtime closure
+   evaluation).
+3. Do not attempt to re-run the governed invoke step to "finish" a partial
+   chain — Phase 15I/15J have no CLI-exposed retry path in V1 by design.
+
+### Replay detection
+
+If a consume record's recorded governed-invoke correlation id does not match
+the activation's single governed invoke record, this is **replay** — a sign
+that consumption happened out of the expected one-shot sequence. Treat as a
+hard stop: no closure artifact should be produced, and the situation requires
+manual investigation, not automatic resolution
+(`resolve_governed_runtime_replay`).
+
+### Append-only artifact deletion is always prohibited
+
+This applies to every artifact in both the Phase 8–13 dispatch chain and the
+Phase 14/15 governance chain: bundles, confirmations, activation proposals,
+cutover contracts, window events, permission/session/boundary/invocation/
+authorization/runtime-start records, consume records, and closure records.
+Never delete or overwrite any of them to "clear" a bad state — the audit
+trail is the point.

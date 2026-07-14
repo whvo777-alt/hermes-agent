@@ -70,8 +70,31 @@ unless explicitly marked as gated mutation.
 - [ ] Confirm `production_root_hard_deny=true`
 - [ ] Document why each blocked check is intentional
 
+<!-- anchor: governed-cutover-review -->
+## Governed cutover chain review (read-only, Phase 14/15)
+
+- [ ] `production activation status` — confirm expected lifecycle state
+- [ ] `production governed-cutover status` — confirm contract present/valid
+- [ ] `production governed-cutover window status` — **`WINDOW_OPEN` is not
+  execution permission**; it only means the maintenance window is open
+- [ ] `production governed-cutover permission status` /
+  `... session status` / `... runtime-boundary status` /
+  `... runtime-invocation status` / `... execution-authorization status` /
+  `... runtime-start status` — walk the chain in order, confirm no
+  unexpected `consumed`/`revoked` state
+- [ ] Confirm `runtime_started=true` (if present) is read as "contract
+  exists", never as "subprocess ran"
+- [ ] If window is still `WINDOW_OPEN` after the operation is complete:
+  close it manually — `production governed-cutover window close` (V1 does
+  **not** auto-close windows)
+- [ ] Session close and invocation-completion lifecycle are **out of V1
+  scope** — do not expect an automated transition; see
+  [V1_Scope_Freeze.md](V1_Scope_Freeze.md)
+
 ## Documentation
 
 - [ ] [Dispatch_Runbook.md](Dispatch_Runbook.md) — lifecycle reference
 - [ ] [CLI_Command_Reference.md](CLI_Command_Reference.md) — command lookup
 - [ ] [Architecture_Overview.md](Architecture_Overview.md) — onboarding
+- [ ] [V1_Scope_Freeze.md](V1_Scope_Freeze.md) — scope boundaries
+- [ ] [Recovery_Runbook.md](Recovery_Runbook.md#phase-15-consume-records) — Phase 15 partial-consume/replay guidance

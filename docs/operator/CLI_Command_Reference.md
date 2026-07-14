@@ -23,7 +23,7 @@ repository roots are hard-denied. Prefer read-only commands for investigation.
 | `consume` | Consume transaction status, recovery, repair |
 | `operator runbook` | Read-only operator runbook for consume pair |
 | `repository attest` | Read-only repository attestation |
-| `production` | Production readiness, sign-off, cutover |
+| `production` | Legacy readiness/sign-off/cutover-check, plus Phase 14 `activation` and Phase 15 `governed-cutover` governance chains |
 | `pilot` | Isolated operational pilot |
 | `enablement check` | Runner enablement assessment |
 | `gateway` | Gateway status, pilot, audit, correlation, dashboard |
@@ -121,11 +121,128 @@ hermes coo dispatch repository attest --repository-root <absolute-path>
 
 ## `production`
 
+`production` has two generations of commands. **Legacy** (`readiness` /
+`sign-off` / `cutover-check` / `final-signoff*`, Phase 13D) evaluates isolated
+pilot-fleet readiness. **Governed** (`activation`, `governed-cutover`, Phase
+14A–15H) is the append-only production activation governance chain. Both
+namespaces coexist without conflict; neither sets
+`production_execution_allowed=true`.
+
+### Legacy (Phase 13D)
+
 ```
 hermes coo dispatch production readiness
 hermes coo dispatch production sign-off
 hermes coo dispatch production cutover-check [--ticket-id <ticket-id>] [--limit <N>]
+hermes coo dispatch production final-signoff-status
+hermes coo dispatch production final-signoff
 ```
+
+### `production activation` (Phase 14 — Production Activation Governance)
+
+Read-only unless noted. Append-only artifacts throughout; no subprocess, no
+Repository2 access at any step.
+
+```
+hermes coo dispatch production activation propose ...          # append-only proposal artifact
+hermes coo dispatch production activation approve ...          # one release-approver approval
+hermes coo dispatch production activation security-review ...  # security reviewer approval
+hermes coo dispatch production activation status ...
+hermes coo dispatch production activation arm ...               # arm with executor confirmation + TTL
+hermes coo dispatch production activation disarm ...             # disarm/cancel armed activation
+hermes coo dispatch production activation gate ...                # active-gate readiness (read-only)
+hermes coo dispatch production activation suspend ...              # kill switch: suspend armed activation
+hermes coo dispatch production activation revoke ...                 # kill switch: revoke suspended activation
+hermes coo dispatch production activation dry-run ...                 # dry-run contract (read-only)
+hermes coo dispatch production activation activate ...                 # armed -> active transition (no execution)
+hermes coo dispatch production activation active-status ...
+hermes coo dispatch production activation execution-gate ...            # pre-execution gate (read-only)
+hermes coo dispatch production activation live-pilot ...                 # isolated mirror live pilot preflight/reserve
+hermes coo dispatch production activation live-pilot-finalize ...
+hermes coo dispatch production activation live-pilot-status ...
+hermes coo dispatch production activation live-pilot-signoff ...          # operational sign-off record
+hermes coo dispatch production activation rollback-check ...
+hermes coo dispatch production activation rollback-plan ...
+```
+
+`live-pilot` is the only path in the entire CLI that can run a **bounded
+subprocess** — and only against an isolated `/tmp` mirror of the pipeline
+root, never the real Repository2 checkout, and only inside an ephemeral
+execution permit. See
+[Architecture_Overview.md](Architecture_Overview.md#phase-14-production-activation-governance)
+for the full state sequence and the `isolated_mirror_runtime_invoked` /
+`original_repository2_execution_attempted` distinction.
+
+### `production governed-cutover` (Phase 15A–15H — Governed Production Chain)
+
+Distinct from legacy `production cutover-check`. Every subcommand below is
+read-only evaluation (`status`/`check`/`show`/`history`) except the single
+state-advancing verb per stage (`prepare`/`open`/`close`/`emergency-close`/
+`issue`/`start`/`reserve`/`authorize`). No step in this chain sets
+`production_execution_allowed=true` or touches Repository2.
+
+```
+hermes coo dispatch production governed-cutover status
+hermes coo dispatch production governed-cutover check
+hermes coo dispatch production governed-cutover prepare ...   # append-only cutover contract
+hermes coo dispatch production governed-cutover show
+
+hermes coo dispatch production governed-cutover window status
+hermes coo dispatch production governed-cutover window history
+hermes coo dispatch production governed-cutover window open ...
+hermes coo dispatch production governed-cutover window close ...
+hermes coo dispatch production governed-cutover window emergency-close ...
+
+hermes coo dispatch production governed-cutover permission status
+hermes coo dispatch production governed-cutover permission check
+hermes coo dispatch production governed-cutover permission issue ...
+hermes coo dispatch production governed-cutover permission show
+hermes coo dispatch production governed-cutover permission history
+
+hermes coo dispatch production governed-cutover session status
+hermes coo dispatch production governed-cutover session check
+hermes coo dispatch production governed-cutover session start ...
+hermes coo dispatch production governed-cutover session show
+hermes coo dispatch production governed-cutover session history
+
+hermes coo dispatch production governed-cutover runtime-boundary status
+hermes coo dispatch production governed-cutover runtime-boundary check
+hermes coo dispatch production governed-cutover runtime-boundary prepare ...
+hermes coo dispatch production governed-cutover runtime-boundary show
+hermes coo dispatch production governed-cutover runtime-boundary history
+
+hermes coo dispatch production governed-cutover runtime-invocation status
+hermes coo dispatch production governed-cutover runtime-invocation check
+hermes coo dispatch production governed-cutover runtime-invocation reserve ...
+hermes coo dispatch production governed-cutover runtime-invocation show
+hermes coo dispatch production governed-cutover runtime-invocation history
+
+hermes coo dispatch production governed-cutover execution-authorization status
+hermes coo dispatch production governed-cutover execution-authorization check
+hermes coo dispatch production governed-cutover execution-authorization authorize ...
+hermes coo dispatch production governed-cutover execution-authorization show
+hermes coo dispatch production governed-cutover execution-authorization history
+
+hermes coo dispatch production governed-cutover runtime-start status
+hermes coo dispatch production governed-cutover runtime-start check
+hermes coo dispatch production governed-cutover runtime-start start ...
+hermes coo dispatch production governed-cutover runtime-start show
+hermes coo dispatch production governed-cutover runtime-start history
+```
+
+`runtime-start start` sets `runtime_started=true` on its own new contract
+record only — it does **not** invoke any runtime and does **not** consume the
+underlying permission or authorization. See
+[Architecture_Overview.md](Architecture_Overview.md#phase-15-governed-production-chain)
+for what each stage actually asserts.
+
+### Internal-only (no CLI — Python API only)
+
+Phase 15I (`agent/coo/production_governed_runtime_invoke.py`) and Phase 15J
+(`agent/coo/production_governed_runtime_closure.py`) are **not** exposed
+anywhere in this CLI tree. There is no `invoke` or `closure` subcommand under
+`production governed-cutover` or elsewhere. Both remain Python-API-only for
+V1. See [V1_Scope_Freeze.md](V1_Scope_Freeze.md).
 
 ## `pilot`
 
@@ -203,3 +320,6 @@ hermes coo dispatch gateway dashboard --help
 - [Gateway_Runbook.md](Gateway_Runbook.md)
 - [Recovery_Runbook.md](Recovery_Runbook.md)
 - [Pilot_Runbook.md](Pilot_Runbook.md)
+- [Architecture_Overview.md](Architecture_Overview.md) — Phase 14/15 governance flow
+- [V1_Scope_Freeze.md](V1_Scope_Freeze.md) — what is and is not in V1
+- [V1_Release_Candidate_Validation.md](V1_Release_Candidate_Validation.md)

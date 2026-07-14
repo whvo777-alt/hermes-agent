@@ -15,8 +15,11 @@ They do not enable production execution.
 | [Production_Signoff.md](Production_Signoff.md) | Why production remains blocked and sign-off gates |
 | [Operator_Checklist.md](Operator_Checklist.md) | Daily, weekly, release, and incident checklists |
 | [CLI_Command_Reference.md](CLI_Command_Reference.md) | Full `hermes coo dispatch` command tree |
-| [Architecture_Overview.md](Architecture_Overview.md) | High-level flow from approval to dashboard |
+| [Architecture_Overview.md](Architecture_Overview.md) | High-level flow from approval to dashboard, plus Phase 14/15 production activation governance |
 | [Recommended_Action_Mapping.md](Recommended_Action_Mapping.md) | `recommended_action` → runbook_ref mapping |
+| [V1_Scope_Freeze.md](V1_Scope_Freeze.md) | What is and is not in V1 scope |
+| [V1_Release_Candidate_Validation.md](V1_Release_Candidate_Validation.md) | V1 RC validation result and known warnings |
+| [V1_Release_Notes.md](V1_Release_Notes.md) | V1 release summary |
 
 ## Operator guidance CLI
 
