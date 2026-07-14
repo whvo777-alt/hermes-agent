@@ -761,6 +761,105 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_controlled_window_emergency_close
     )
 
+    governed_cutover_permission_parser = governed_cutover_subparsers.add_parser(
+        "permission",
+        help=read_only(
+            "Production runtime permission contract (Phase 15C; no runtime)"
+        ),
+        description=read_only(
+            "Issue append-only one-shot runtime permission artifacts for an "
+            "open controlled window. Does not invoke runtime or start cutover."
+        ),
+    )
+    permission_subparsers = governed_cutover_permission_parser.add_subparsers(
+        dest="coo_dispatch_production_governed_cutover_permission_command",
+        required=True,
+    )
+    permission_status_parser = permission_subparsers.add_parser(
+        "status",
+        help=read_only("Read-only runtime permission status"),
+    )
+    permission_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for runtime permission status",
+    )
+    permission_status_parser.set_defaults(
+        handler=_cmd_production_runtime_permission_status
+    )
+    permission_check_parser = permission_subparsers.add_parser(
+        "check",
+        help=read_only("Read-only runtime permission readiness check"),
+    )
+    permission_check_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for runtime permission check",
+    )
+    permission_check_parser.add_argument(
+        "--executor-id",
+        required=True,
+        help="Proposed one-shot executor id (not printed)",
+    )
+    permission_check_parser.set_defaults(
+        handler=_cmd_production_runtime_permission_check
+    )
+    permission_issue_parser = permission_subparsers.add_parser(
+        "issue",
+        help=read_only(
+            "Append-only issue of a one-shot runtime permission "
+            "(no runtime invocation)"
+        ),
+    )
+    permission_issue_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for permission issue",
+    )
+    permission_issue_parser.add_argument(
+        "--executor-id",
+        required=True,
+        help="One-shot executor id (not printed)",
+    )
+    permission_issue_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Issuing operator id (not printed)",
+    )
+    permission_issue_parser.add_argument(
+        "--ttl-seconds",
+        required=True,
+        type=int,
+        help="Permission TTL in seconds (60-900, within window remainder)",
+    )
+    permission_issue_parser.set_defaults(
+        handler=_cmd_production_runtime_permission_issue
+    )
+    permission_show_parser = permission_subparsers.add_parser(
+        "show",
+        help=read_only("Read-only runtime permission lookup"),
+    )
+    permission_show_parser.add_argument(
+        "--permission-id",
+        required=True,
+        help="Opaque runtime permission id",
+    )
+    permission_show_parser.set_defaults(
+        handler=_cmd_production_runtime_permission_show
+    )
+    permission_history_parser = permission_subparsers.add_parser(
+        "history",
+        help=read_only("Read-only runtime permission event history"),
+    )
+    permission_history_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for permission history",
+    )
+    permission_history_parser.set_defaults(
+        handler=_cmd_production_runtime_permission_history
+    )
+
     production_activation_parser = production_subparsers.add_parser(
         "activation",
         help=read_only("Production activation proposal commands"),
@@ -2923,6 +3022,106 @@ def _cmd_production_controlled_window_emergency_close(
             merged_config=load_config(),
         )
     except ProductionControlledWindowError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_permission_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_permission import (
+        ProductionRuntimePermissionError,
+        run_production_runtime_permission_status,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_permission_status(
+            activation_request_id=args.activation_request_id,
+            merged_config=load_config(),
+        )
+    except ProductionRuntimePermissionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_permission_check(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_permission import (
+        ProductionRuntimePermissionError,
+        run_production_runtime_permission_check,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_permission_check(
+            activation_request_id=args.activation_request_id,
+            executor_id=args.executor_id,
+            merged_config=load_config(),
+        )
+    except ProductionRuntimePermissionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_permission_issue(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_permission import (
+        ProductionRuntimePermissionError,
+        run_production_runtime_permission_issue,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_permission_issue(
+            activation_request_id=args.activation_request_id,
+            executor_id=args.executor_id,
+            operator_id=args.operator_id,
+            ttl_seconds=args.ttl_seconds,
+            merged_config=load_config(),
+        )
+    except ProductionRuntimePermissionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_permission_show(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_permission import (
+        ProductionRuntimePermissionError,
+        run_production_runtime_permission_show,
+    )
+
+    try:
+        output, exit_code = run_production_runtime_permission_show(
+            permission_id=args.permission_id,
+        )
+    except ProductionRuntimePermissionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_permission_history(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_permission import (
+        ProductionRuntimePermissionError,
+        run_production_runtime_permission_history,
+    )
+
+    try:
+        output, exit_code = run_production_runtime_permission_history(
+            activation_request_id=args.activation_request_id,
+        )
+    except ProductionRuntimePermissionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

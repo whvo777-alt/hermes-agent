@@ -503,6 +503,7 @@ class TestProductionControlledWindow(TestProductionGovernedCutover):
             preflight_history_dir=self.preflight_history_dir,
             repo_root=self.repo_root,
             merged_config={},
+            now=self._now,
         )
         self.assertTrue(digest.controlled_window_open)
         self.assertEqual(digest.controlled_window_state, WINDOW_OPEN)

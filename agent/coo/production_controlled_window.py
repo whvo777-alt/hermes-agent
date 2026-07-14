@@ -1399,6 +1399,7 @@ def resolve_latest_controlled_window_dashboard_digest(
                         "validation_store_dir",
                         "preflight_history_dir",
                         "repo_root",
+                        "now",
                     }
                 },
             )

@@ -204,6 +204,15 @@ class CooDispatchGatewayOperatorDashboardSummary:
     controlled_window_blocking_count: int = 0
     controlled_window_warning_count: int = 0
     controlled_window_recommended_action: str = ""
+    runtime_permission_state: str = ""
+    runtime_permission_ready: bool = False
+    runtime_permission_present: bool = False
+    runtime_permission_expired: bool = False
+    runtime_permission_id: str = ""
+    runtime_permission_expires_at: str = ""
+    runtime_permission_blocking_count: int = 0
+    runtime_permission_warning_count: int = 0
+    runtime_permission_recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -708,6 +717,9 @@ def build_operator_dashboard_summary(
     from agent.coo.production_controlled_window import (
         resolve_latest_controlled_window_dashboard_digest,
     )
+    from agent.coo.production_runtime_permission import (
+        resolve_latest_runtime_permission_dashboard_digest,
+    )
 
     live_pilot = resolve_latest_live_pilot_dashboard_digest(merged_config=merged_config)
     rollback = resolve_latest_rollback_dashboard_digest(merged_config=merged_config)
@@ -718,6 +730,9 @@ def build_operator_dashboard_summary(
         merged_config=merged_config
     )
     controlled_window = resolve_latest_controlled_window_dashboard_digest(
+        merged_config=merged_config
+    )
+    runtime_permission = resolve_latest_runtime_permission_dashboard_digest(
         merged_config=merged_config
     )
 
@@ -787,6 +802,17 @@ def build_operator_dashboard_summary(
         controlled_window_blocking_count=controlled_window.controlled_window_blocking_count,
         controlled_window_warning_count=controlled_window.controlled_window_warning_count,
         controlled_window_recommended_action=controlled_window.controlled_window_recommended_action,
+        runtime_permission_state=runtime_permission.runtime_permission_state,
+        runtime_permission_ready=runtime_permission.runtime_permission_ready,
+        runtime_permission_present=runtime_permission.runtime_permission_present,
+        runtime_permission_expired=runtime_permission.runtime_permission_expired,
+        runtime_permission_id=runtime_permission.runtime_permission_id,
+        runtime_permission_expires_at=runtime_permission.runtime_permission_expires_at,
+        runtime_permission_blocking_count=runtime_permission.runtime_permission_blocking_count,
+        runtime_permission_warning_count=runtime_permission.runtime_permission_warning_count,
+        runtime_permission_recommended_action=(
+            runtime_permission.runtime_permission_recommended_action
+        ),
     )
 
 
@@ -1040,6 +1066,21 @@ def format_operator_dashboard_summary(
             f"{summary.controlled_window_warning_count}",
             "controlled_window_recommended_action: "
             f"{summary.controlled_window_recommended_action or _NONE_LABEL}",
+            f"runtime_permission_state: {summary.runtime_permission_state or _NONE_LABEL}",
+            f"runtime_permission_ready: {str(summary.runtime_permission_ready).lower()}",
+            "runtime_permission_present: "
+            f"{str(summary.runtime_permission_present).lower()}",
+            "runtime_permission_expired: "
+            f"{str(summary.runtime_permission_expired).lower()}",
+            f"runtime_permission_id: {summary.runtime_permission_id or _NONE_LABEL}",
+            "runtime_permission_expires_at: "
+            f"{summary.runtime_permission_expires_at or _NONE_LABEL}",
+            "runtime_permission_blocking_count: "
+            f"{summary.runtime_permission_blocking_count}",
+            "runtime_permission_warning_count: "
+            f"{summary.runtime_permission_warning_count}",
+            "runtime_permission_recommended_action: "
+            f"{summary.runtime_permission_recommended_action or _NONE_LABEL}",
         ]
     )
     output = "\n".join(lines)
