@@ -1083,6 +1083,132 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_runtime_boundary_history
     )
 
+    governed_cutover_runtime_invocation_parser = governed_cutover_subparsers.add_parser(
+        "runtime-invocation",
+        help=read_only(
+            "Governed runtime invocation contract (Phase 15F; no runtime)"
+        ),
+        description=read_only(
+            "Reserve an append-only governed runtime invocation record on "
+            "top of a reserved runtime boundary. Does not invoke runtime, "
+            "start cutover, verify the execution phrase, or consume "
+            "permission."
+        ),
+    )
+    invocation_subparsers = governed_cutover_runtime_invocation_parser.add_subparsers(
+        dest="coo_dispatch_production_governed_cutover_runtime_invocation_command",
+        required=True,
+    )
+    invocation_status_parser = invocation_subparsers.add_parser(
+        "status",
+        help=read_only("Read-only governed runtime invocation status"),
+    )
+    invocation_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for invocation status",
+    )
+    invocation_status_parser.set_defaults(
+        handler=_cmd_production_runtime_invocation_status
+    )
+    invocation_check_parser = invocation_subparsers.add_parser(
+        "check",
+        help=read_only("Read-only governed runtime invocation readiness check"),
+    )
+    invocation_check_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for invocation check",
+    )
+    invocation_check_parser.add_argument(
+        "--boundary-id",
+        required=True,
+        help="Reserved runtime boundary id",
+    )
+    invocation_check_parser.add_argument(
+        "--session-id",
+        required=True,
+        help="Started governed runtime session id",
+    )
+    invocation_check_parser.add_argument(
+        "--permission-id",
+        required=True,
+        help="Issued runtime permission id",
+    )
+    invocation_check_parser.set_defaults(
+        handler=_cmd_production_runtime_invocation_check
+    )
+    invocation_reserve_parser = invocation_subparsers.add_parser(
+        "reserve",
+        help=read_only(
+            "Append-only reserve of a governed runtime invocation "
+            "(no runtime invocation)"
+        ),
+    )
+    invocation_reserve_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for invocation reserve",
+    )
+    invocation_reserve_parser.add_argument(
+        "--boundary-id",
+        required=True,
+        help="Reserved runtime boundary id",
+    )
+    invocation_reserve_parser.add_argument(
+        "--session-id",
+        required=True,
+        help="Started governed runtime session id",
+    )
+    invocation_reserve_parser.add_argument(
+        "--permission-id",
+        required=True,
+        help="Issued runtime permission id",
+    )
+    invocation_reserve_parser.add_argument(
+        "--executor-id",
+        required=True,
+        help="Invocation executor id (must match permission/session/boundary; not printed)",
+    )
+    invocation_reserve_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Invocation reserve operator id (not printed)",
+    )
+    invocation_reserve_parser.add_argument(
+        "--ttl-seconds",
+        required=True,
+        type=int,
+        help="Invocation TTL in seconds (10-60, within boundary/session/permission/window)",
+    )
+    invocation_reserve_parser.set_defaults(
+        handler=_cmd_production_runtime_invocation_reserve
+    )
+    invocation_show_parser = invocation_subparsers.add_parser(
+        "show",
+        help=read_only("Read-only governed runtime invocation lookup"),
+    )
+    invocation_show_parser.add_argument(
+        "--runtime-invocation-id",
+        required=True,
+        help="Opaque runtime invocation id",
+    )
+    invocation_show_parser.set_defaults(
+        handler=_cmd_production_runtime_invocation_show
+    )
+    invocation_history_parser = invocation_subparsers.add_parser(
+        "history",
+        help=read_only("Read-only governed runtime invocation event history"),
+    )
+    invocation_history_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for invocation history",
+    )
+    invocation_history_parser.set_defaults(
+        handler=_cmd_production_runtime_invocation_history
+    )
+
     production_activation_parser = production_subparsers.add_parser(
         "activation",
         help=read_only("Production activation proposal commands"),
@@ -3550,6 +3676,111 @@ def _cmd_production_runtime_boundary_history(args: argparse.Namespace) -> int:
             activation_request_id=args.activation_request_id,
         )
     except RuntimeBoundaryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_invocation_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_invocation import (
+        ProductionRuntimeInvocationError,
+        run_production_runtime_invocation_status,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_invocation_status(
+            activation_request_id=args.activation_request_id,
+            merged_config=load_config(),
+        )
+    except ProductionRuntimeInvocationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_invocation_check(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_invocation import (
+        ProductionRuntimeInvocationError,
+        run_production_runtime_invocation_check,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_invocation_check(
+            activation_request_id=args.activation_request_id,
+            boundary_id=args.boundary_id,
+            session_id=args.session_id,
+            permission_id=args.permission_id,
+            merged_config=load_config(),
+        )
+    except ProductionRuntimeInvocationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_invocation_reserve(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_invocation import (
+        ProductionRuntimeInvocationError,
+        run_production_runtime_invocation_reserve,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_invocation_reserve(
+            activation_request_id=args.activation_request_id,
+            boundary_id=args.boundary_id,
+            session_id=args.session_id,
+            permission_id=args.permission_id,
+            executor_id=args.executor_id,
+            operator_id=args.operator_id,
+            ttl_seconds=args.ttl_seconds,
+            merged_config=load_config(),
+        )
+    except ProductionRuntimeInvocationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_invocation_show(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_invocation import (
+        ProductionRuntimeInvocationError,
+        run_production_runtime_invocation_show,
+    )
+
+    try:
+        output, exit_code = run_production_runtime_invocation_show(
+            runtime_invocation_id=args.runtime_invocation_id,
+        )
+    except ProductionRuntimeInvocationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_invocation_history(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_invocation import (
+        ProductionRuntimeInvocationError,
+        run_production_runtime_invocation_history,
+    )
+
+    try:
+        output, exit_code = run_production_runtime_invocation_history(
+            activation_request_id=args.activation_request_id,
+        )
+    except ProductionRuntimeInvocationError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

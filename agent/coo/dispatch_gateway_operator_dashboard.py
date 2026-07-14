@@ -232,6 +232,16 @@ class CooDispatchGatewayOperatorDashboardSummary:
     runtime_boundary_blocking_count: int = 0
     runtime_boundary_warning_count: int = 0
     runtime_boundary_recommended_action: str = ""
+    governed_runtime_invocation_state: str = ""
+    governed_runtime_invocation_ready: bool = False
+    governed_runtime_invocation_present: bool = False
+    governed_runtime_invocation_expired: bool = False
+    governed_runtime_invocation_id: str = ""
+    governed_runtime_invocation_expires_at: str = ""
+    governed_runtime_invocation_phrase_verified: bool = False
+    governed_runtime_invocation_blocking_count: int = 0
+    governed_runtime_invocation_warning_count: int = 0
+    governed_runtime_invocation_recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -745,6 +755,9 @@ def build_operator_dashboard_summary(
     from agent.coo.production_runtime_boundary import (
         resolve_latest_runtime_boundary_dashboard_digest,
     )
+    from agent.coo.production_runtime_invocation import (
+        resolve_latest_governed_runtime_invocation_dashboard_digest,
+    )
 
     live_pilot = resolve_latest_live_pilot_dashboard_digest(merged_config=merged_config)
     rollback = resolve_latest_rollback_dashboard_digest(merged_config=merged_config)
@@ -765,6 +778,11 @@ def build_operator_dashboard_summary(
     )
     runtime_boundary = resolve_latest_runtime_boundary_dashboard_digest(
         merged_config=merged_config
+    )
+    governed_runtime_invocation = (
+        resolve_latest_governed_runtime_invocation_dashboard_digest(
+            merged_config=merged_config
+        )
     )
 
     return CooDispatchGatewayOperatorDashboardSummary(
@@ -898,6 +916,36 @@ def build_operator_dashboard_summary(
         ),
         runtime_boundary_recommended_action=(
             runtime_boundary.runtime_boundary_recommended_action
+        ),
+        governed_runtime_invocation_state=(
+            governed_runtime_invocation.governed_runtime_invocation_state
+        ),
+        governed_runtime_invocation_ready=(
+            governed_runtime_invocation.governed_runtime_invocation_ready
+        ),
+        governed_runtime_invocation_present=(
+            governed_runtime_invocation.governed_runtime_invocation_present
+        ),
+        governed_runtime_invocation_expired=(
+            governed_runtime_invocation.governed_runtime_invocation_expired
+        ),
+        governed_runtime_invocation_id=(
+            governed_runtime_invocation.governed_runtime_invocation_id
+        ),
+        governed_runtime_invocation_expires_at=(
+            governed_runtime_invocation.governed_runtime_invocation_expires_at
+        ),
+        governed_runtime_invocation_phrase_verified=(
+            governed_runtime_invocation.governed_runtime_invocation_phrase_verified
+        ),
+        governed_runtime_invocation_blocking_count=(
+            governed_runtime_invocation.governed_runtime_invocation_blocking_count
+        ),
+        governed_runtime_invocation_warning_count=(
+            governed_runtime_invocation.governed_runtime_invocation_warning_count
+        ),
+        governed_runtime_invocation_recommended_action=(
+            governed_runtime_invocation.governed_runtime_invocation_recommended_action
         ),
     )
 
@@ -1205,6 +1253,26 @@ def format_operator_dashboard_summary(
             f"{summary.runtime_boundary_warning_count}",
             "runtime_boundary_recommended_action: "
             f"{summary.runtime_boundary_recommended_action or _NONE_LABEL}",
+            "governed_runtime_invocation_state: "
+            f"{summary.governed_runtime_invocation_state or _NONE_LABEL}",
+            "governed_runtime_invocation_ready: "
+            f"{str(summary.governed_runtime_invocation_ready).lower()}",
+            "governed_runtime_invocation_present: "
+            f"{str(summary.governed_runtime_invocation_present).lower()}",
+            "governed_runtime_invocation_expired: "
+            f"{str(summary.governed_runtime_invocation_expired).lower()}",
+            "governed_runtime_invocation_id: "
+            f"{summary.governed_runtime_invocation_id or _NONE_LABEL}",
+            "governed_runtime_invocation_expires_at: "
+            f"{summary.governed_runtime_invocation_expires_at or _NONE_LABEL}",
+            "governed_runtime_invocation_phrase_verified: "
+            f"{str(summary.governed_runtime_invocation_phrase_verified).lower()}",
+            "governed_runtime_invocation_blocking_count: "
+            f"{summary.governed_runtime_invocation_blocking_count}",
+            "governed_runtime_invocation_warning_count: "
+            f"{summary.governed_runtime_invocation_warning_count}",
+            "governed_runtime_invocation_recommended_action: "
+            f"{summary.governed_runtime_invocation_recommended_action or _NONE_LABEL}",
         ]
     )
     output = "\n".join(lines)

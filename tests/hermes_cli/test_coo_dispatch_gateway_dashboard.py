@@ -66,7 +66,7 @@ _FORBIDDEN_OUTPUT_TOKENS = (
     "pipeline_root",
     "unlock",
     "token",
-    "phrase",
+    "confirmation_phrase",
     "argv",
     "cwd",
     "env",
