@@ -653,6 +653,114 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_governed_cutover_show
     )
 
+    governed_cutover_window_parser = governed_cutover_subparsers.add_parser(
+        "window",
+        help=read_only(
+            "Controlled production window lifecycle (Phase 15B; no cutover/execution)"
+        ),
+        description=read_only(
+            "Open/close/emergency-close append-only window events bound to an "
+            "immutable governed cutover contract. Does not start cutover or "
+            "create execution permits."
+        ),
+    )
+    window_subparsers = governed_cutover_window_parser.add_subparsers(
+        dest="coo_dispatch_production_governed_cutover_window_command",
+        required=True,
+    )
+    window_status_parser = window_subparsers.add_parser(
+        "status",
+        help=read_only("Read-only controlled window status"),
+    )
+    window_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for controlled window status",
+    )
+    window_status_parser.set_defaults(
+        handler=_cmd_production_controlled_window_status
+    )
+    window_history_parser = window_subparsers.add_parser(
+        "history",
+        help=read_only("Read-only controlled window lifecycle history"),
+    )
+    window_history_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for controlled window history",
+    )
+    window_history_parser.set_defaults(
+        handler=_cmd_production_controlled_window_history
+    )
+    window_open_parser = window_subparsers.add_parser(
+        "open",
+        help=read_only(
+            "Append-only open of a prepared controlled window "
+            "(no cutover/execution)"
+        ),
+    )
+    window_open_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id with prepared governed cutover contract",
+    )
+    window_open_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Primary window operator id (not printed in safe output)",
+    )
+    window_open_parser.set_defaults(handler=_cmd_production_controlled_window_open)
+    window_close_parser = window_subparsers.add_parser(
+        "close",
+        help=read_only("Append-only normal close of an open controlled window"),
+    )
+    window_close_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for controlled window close",
+    )
+    window_close_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Operator id performing normal close (not printed)",
+    )
+    window_close_parser.add_argument(
+        "--reason-code",
+        required=True,
+        help="Fixed close reason code",
+    )
+    window_close_parser.set_defaults(handler=_cmd_production_controlled_window_close)
+    window_emergency_parser = window_subparsers.add_parser(
+        "emergency-close",
+        help=read_only(
+            "Append-only emergency close of an open controlled window"
+        ),
+    )
+    window_emergency_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for emergency close",
+    )
+    window_emergency_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Operator or incident commander id (not printed)",
+    )
+    window_emergency_parser.add_argument(
+        "--actor-role",
+        required=True,
+        choices=("operator", "incident_commander"),
+        help="Emergency close actor role",
+    )
+    window_emergency_parser.add_argument(
+        "--reason-code",
+        required=True,
+        help="Fixed emergency reason code",
+    )
+    window_emergency_parser.set_defaults(
+        handler=_cmd_production_controlled_window_emergency_close
+    )
+
     production_activation_parser = production_subparsers.add_parser(
         "activation",
         help=read_only("Production activation proposal commands"),
@@ -2709,6 +2817,112 @@ def _cmd_production_governed_cutover_show(args: argparse.Namespace) -> int:
             cutover_contract_id=args.cutover_contract_id,
         )
     except ProductionGovernedCutoverError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_controlled_window_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_controlled_window import (
+        ProductionControlledWindowError,
+        run_production_controlled_window_status,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_controlled_window_status(
+            activation_request_id=args.activation_request_id,
+            merged_config=load_config(),
+        )
+    except ProductionControlledWindowError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_controlled_window_history(args: argparse.Namespace) -> int:
+    from agent.coo.production_controlled_window import (
+        ProductionControlledWindowError,
+        run_production_controlled_window_history,
+    )
+
+    try:
+        output, exit_code = run_production_controlled_window_history(
+            activation_request_id=args.activation_request_id,
+        )
+    except ProductionControlledWindowError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_controlled_window_open(args: argparse.Namespace) -> int:
+    from agent.coo.production_controlled_window import (
+        ProductionControlledWindowError,
+        run_production_controlled_window_open,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_controlled_window_open(
+            activation_request_id=args.activation_request_id,
+            operator_id=args.operator_id,
+            merged_config=load_config(),
+        )
+    except ProductionControlledWindowError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_controlled_window_close(args: argparse.Namespace) -> int:
+    from agent.coo.production_controlled_window import (
+        ProductionControlledWindowError,
+        run_production_controlled_window_close,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_controlled_window_close(
+            activation_request_id=args.activation_request_id,
+            operator_id=args.operator_id,
+            reason_code=args.reason_code,
+            merged_config=load_config(),
+        )
+    except ProductionControlledWindowError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_controlled_window_emergency_close(
+    args: argparse.Namespace,
+) -> int:
+    from agent.coo.production_controlled_window import (
+        ProductionControlledWindowError,
+        run_production_controlled_window_emergency_close,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_controlled_window_emergency_close(
+            activation_request_id=args.activation_request_id,
+            operator_id=args.operator_id,
+            actor_role=args.actor_role,
+            reason_code=args.reason_code,
+            merged_config=load_config(),
+        )
+    except ProductionControlledWindowError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

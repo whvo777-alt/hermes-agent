@@ -196,6 +196,14 @@ class CooDispatchGatewayOperatorDashboardSummary:
     governed_cutover_blocking_count: int = 0
     governed_cutover_warning_count: int = 0
     governed_cutover_recommended_action: str = ""
+    controlled_window_state: str = ""
+    controlled_window_open: bool = False
+    controlled_window_expired: bool = False
+    controlled_window_contract_id: str = ""
+    controlled_window_event_count: int = 0
+    controlled_window_blocking_count: int = 0
+    controlled_window_warning_count: int = 0
+    controlled_window_recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -697,6 +705,9 @@ def build_operator_dashboard_summary(
     from agent.coo.production_governed_cutover import (
         resolve_latest_governed_cutover_dashboard_digest,
     )
+    from agent.coo.production_controlled_window import (
+        resolve_latest_controlled_window_dashboard_digest,
+    )
 
     live_pilot = resolve_latest_live_pilot_dashboard_digest(merged_config=merged_config)
     rollback = resolve_latest_rollback_dashboard_digest(merged_config=merged_config)
@@ -704,6 +715,9 @@ def build_operator_dashboard_summary(
         merged_config=merged_config
     )
     governed_cutover = resolve_latest_governed_cutover_dashboard_digest(
+        merged_config=merged_config
+    )
+    controlled_window = resolve_latest_controlled_window_dashboard_digest(
         merged_config=merged_config
     )
 
@@ -765,6 +779,14 @@ def build_operator_dashboard_summary(
         governed_cutover_blocking_count=governed_cutover.governed_cutover_blocking_count,
         governed_cutover_warning_count=governed_cutover.governed_cutover_warning_count,
         governed_cutover_recommended_action=governed_cutover.governed_cutover_recommended_action,
+        controlled_window_state=controlled_window.controlled_window_state,
+        controlled_window_open=controlled_window.controlled_window_open,
+        controlled_window_expired=controlled_window.controlled_window_expired,
+        controlled_window_contract_id=controlled_window.controlled_window_contract_id,
+        controlled_window_event_count=controlled_window.controlled_window_event_count,
+        controlled_window_blocking_count=controlled_window.controlled_window_blocking_count,
+        controlled_window_warning_count=controlled_window.controlled_window_warning_count,
+        controlled_window_recommended_action=controlled_window.controlled_window_recommended_action,
     )
 
 
@@ -1005,6 +1027,19 @@ def format_operator_dashboard_summary(
             f"governed_cutover_warning_count: {summary.governed_cutover_warning_count}",
             "governed_cutover_recommended_action: "
             f"{summary.governed_cutover_recommended_action or _NONE_LABEL}",
+            f"controlled_window_state: {summary.controlled_window_state or _NONE_LABEL}",
+            f"controlled_window_open: {str(summary.controlled_window_open).lower()}",
+            "controlled_window_expired: "
+            f"{str(summary.controlled_window_expired).lower()}",
+            "controlled_window_contract_id: "
+            f"{summary.controlled_window_contract_id or _NONE_LABEL}",
+            f"controlled_window_event_count: {summary.controlled_window_event_count}",
+            "controlled_window_blocking_count: "
+            f"{summary.controlled_window_blocking_count}",
+            "controlled_window_warning_count: "
+            f"{summary.controlled_window_warning_count}",
+            "controlled_window_recommended_action: "
+            f"{summary.controlled_window_recommended_action or _NONE_LABEL}",
         ]
     )
     output = "\n".join(lines)
