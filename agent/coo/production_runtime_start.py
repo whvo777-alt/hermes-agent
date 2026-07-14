@@ -132,12 +132,14 @@ from agent.coo.production_runtime_boundary import (
     RuntimeBoundaryError,
     _check_runtime_factory_available,
     _check_runtime_invoker_disabled,
+    load_runtime_boundary_consume_record,
     load_runtime_boundary_record,
 )
 from agent.coo.production_runtime_invocation import (
     INVOCATION_EXPIRED,
     INVOCATION_RESERVED,
     ProductionRuntimeInvocationError,
+    load_runtime_invocation_consume_record,
     load_runtime_invocation_record,
 )
 from agent.coo.production_runtime_permission import (
@@ -238,10 +240,14 @@ BLOCK_RUNTIME_BOUNDARY_RUNTIME_INVOKED = "runtime_boundary_runtime_invoked"
 BLOCK_RUNTIME_BOUNDARY_CUTOVER_STARTED = "runtime_boundary_cutover_started"
 BLOCK_RUNTIME_BOUNDARY_EXECUTOR_MISMATCH = "runtime_boundary_executor_mismatch"
 BLOCK_RUNTIME_BOUNDARY_SCOPE_MISMATCH = "runtime_boundary_scope_mismatch"
+BLOCK_RUNTIME_BOUNDARY_CONSUMED = "runtime_boundary_consumed"
+BLOCK_RUNTIME_BOUNDARY_REVOKED = "runtime_boundary_revoked"
 BLOCK_RUNTIME_INVOCATION_MISSING = "runtime_invocation_missing"
 BLOCK_RUNTIME_INVOCATION_INVALID = "runtime_invocation_invalid"
 BLOCK_RUNTIME_INVOCATION_EXPIRED = "runtime_invocation_expired"
 BLOCK_RUNTIME_INVOCATION_EXECUTOR_MISMATCH = "runtime_invocation_executor_mismatch"
+BLOCK_RUNTIME_INVOCATION_CONSUMED = "runtime_invocation_consumed"
+BLOCK_RUNTIME_INVOCATION_REVOKED = "runtime_invocation_revoked"
 BLOCK_EXECUTION_AUTHORIZATION_MISSING = "execution_authorization_missing"
 BLOCK_EXECUTION_AUTHORIZATION_INVALID = "execution_authorization_invalid"
 BLOCK_EXECUTION_AUTHORIZATION_EXPIRED = "execution_authorization_expired"
@@ -1409,7 +1415,9 @@ def evaluate_production_runtime_start(
     runtime_start_store_dir: Path | None = None,
     authorization_store_dir: Path | None = None,
     invocation_store_dir: Path | None = None,
+    invocation_consume_store_dir: Path | None = None,
     boundary_store_dir: Path | None = None,
+    boundary_consume_store_dir: Path | None = None,
     session_store_dir: Path | None = None,
     permission_store_dir: Path | None = None,
     store_dir: Path | None = None,
@@ -1919,6 +1927,23 @@ def evaluate_production_runtime_start(
         if boundary_record.cutover_started:
             blocking.append(BLOCK_RUNTIME_BOUNDARY_CUTOVER_STARTED)
             boundary_valid = False
+        if boundary_record.revoked:
+            blocking.append(BLOCK_RUNTIME_BOUNDARY_REVOKED)
+            boundary_valid = False
+        try:
+            boundary_already_consumed = (
+                load_runtime_boundary_consume_record(
+                    boundary_record.boundary_id,
+                    store_dir=boundary_consume_store_dir,
+                )
+                is not None
+            )
+        except RuntimeBoundaryError:
+            blocking.append(BLOCK_RUNTIME_START_STORE_CORRUPTED)
+            boundary_already_consumed = True
+        if boundary_already_consumed:
+            blocking.append(BLOCK_RUNTIME_BOUNDARY_CONSUMED)
+            boundary_valid = False
         if executor_id and boundary_record.executor_id != executor_id.strip():
             blocking.append(BLOCK_RUNTIME_BOUNDARY_EXECUTOR_MISMATCH)
         if (
@@ -1970,6 +1995,23 @@ def evaluate_production_runtime_start(
             blocking.append(BLOCK_RUNTIME_INVOCATION_EXPIRED)
         else:
             invocation_valid = True
+        if invocation_record.revoked:
+            blocking.append(BLOCK_RUNTIME_INVOCATION_REVOKED)
+            invocation_valid = False
+        try:
+            invocation_already_consumed = (
+                load_runtime_invocation_consume_record(
+                    invocation_record.runtime_invocation_id,
+                    store_dir=invocation_consume_store_dir,
+                )
+                is not None
+            )
+        except ProductionRuntimeInvocationError:
+            blocking.append(BLOCK_RUNTIME_START_STORE_CORRUPTED)
+            invocation_already_consumed = True
+        if invocation_already_consumed:
+            blocking.append(BLOCK_RUNTIME_INVOCATION_CONSUMED)
+            invocation_valid = False
         if executor_id and invocation_record.executor_id != executor_id.strip():
             blocking.append(BLOCK_RUNTIME_INVOCATION_EXECUTOR_MISMATCH)
         if (
@@ -2505,7 +2547,9 @@ def start_production_runtime_start(
     runtime_start_store_dir: Path | None = None,
     authorization_store_dir: Path | None = None,
     invocation_store_dir: Path | None = None,
+    invocation_consume_store_dir: Path | None = None,
     boundary_store_dir: Path | None = None,
+    boundary_consume_store_dir: Path | None = None,
     session_store_dir: Path | None = None,
     permission_store_dir: Path | None = None,
     store_dir: Path | None = None,
@@ -2556,7 +2600,9 @@ def start_production_runtime_start(
             runtime_start_store_dir=runtime_start_store_dir,
             authorization_store_dir=authorization_store_dir,
             invocation_store_dir=invocation_store_dir,
+            invocation_consume_store_dir=invocation_consume_store_dir,
             boundary_store_dir=boundary_store_dir,
+            boundary_consume_store_dir=boundary_consume_store_dir,
             session_store_dir=session_store_dir,
             permission_store_dir=permission_store_dir,
             store_dir=store_dir,

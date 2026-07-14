@@ -2530,6 +2530,106 @@ def enter_governed_runtime_invocation_context(
     )
 
 
+_INVOCATION_CONSUME_STORE_DIR = "production-runtime-invocation-consume"
+
+
+def default_runtime_invocation_consume_store_dir() -> Path:
+    return get_hermes_home() / "coo" / _INVOCATION_CONSUME_STORE_DIR
+
+
+def _invocation_consume_path(
+    runtime_invocation_id: str,
+    *,
+    store_dir: Path | None = None,
+) -> Path:
+    normalized = (runtime_invocation_id or "").strip()
+    if not normalized:
+        raise ProductionRuntimeInvocationError("runtime_invocation_id is required")
+    base = store_dir or default_runtime_invocation_consume_store_dir()
+    return base / f"{normalized}.json"
+
+
+def load_runtime_invocation_consume_record(
+    runtime_invocation_id: str,
+    *,
+    store_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """Return the consume record for runtime_invocation_id, or None if unconsumed."""
+    from agent.coo.production_runtime_consume_store import read_consume_record
+
+    path = _invocation_consume_path(runtime_invocation_id, store_dir=store_dir)
+    try:
+        return read_consume_record(path)
+    except ValueError as exc:
+        raise ProductionRuntimeInvocationError(str(exc)) from exc
+
+
+def consume_runtime_invocation(
+    activation_request_id: str,
+    *,
+    runtime_invocation_id: str,
+    consumed_by: str,
+    store_dir: Path | None = None,
+    consume_store_dir: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """One-shot consume transition for a reserved runtime invocation.
+
+    Never mutates the original write-once invocation bundle. Consumption is
+    recorded as a separate one-shot artifact, mirroring
+    ``consume_production_runtime_permission``.
+    """
+    normalized_invocation_id = (runtime_invocation_id or "").strip()
+    normalized_consumed_by = (consumed_by or "").strip()
+    if not normalized_invocation_id:
+        raise ProductionRuntimeInvocationError("runtime_invocation_id is required")
+    if not normalized_consumed_by:
+        raise ProductionRuntimeInvocationError("consumed_by is required")
+
+    record = load_runtime_invocation_record(activation_request_id, store_dir=store_dir)
+    if record is None:
+        raise ProductionRuntimeInvocationError("invocation_missing")
+    if record.runtime_invocation_id != normalized_invocation_id:
+        raise ProductionRuntimeInvocationError("runtime_invocation_id_mismatch")
+    if record.invocation_status != INVOCATION_RESERVED:
+        raise ProductionRuntimeInvocationError("invocation_not_reserved")
+    if record.revoked:
+        raise ProductionRuntimeInvocationError("invocation_revoked")
+
+    current = _utc_now(now)
+    expires_dt = _parse_iso(record.expires_at)
+    if expires_dt is not None and current >= expires_dt:
+        raise ProductionRuntimeInvocationError("invocation_expired")
+
+    if (
+        load_runtime_invocation_consume_record(
+            normalized_invocation_id, store_dir=consume_store_dir
+        )
+        is not None
+    ):
+        raise ProductionRuntimeInvocationError("invocation_already_consumed")
+
+    from agent.coo.production_runtime_consume_store import (
+        OneShotConsumeWriteConflict,
+        write_once_consume_record,
+    )
+
+    payload = {
+        "version": 1,
+        "runtime_invocation_id": normalized_invocation_id,
+        "activation_request_id": activation_request_id,
+        "consumed": True,
+        "consumed_at": _utc_now_iso(now),
+        "consumed_by": normalized_consumed_by,
+    }
+    path = _invocation_consume_path(normalized_invocation_id, store_dir=consume_store_dir)
+    try:
+        write_once_consume_record(path, payload)
+    except OneShotConsumeWriteConflict as exc:
+        raise ProductionRuntimeInvocationError("invocation_already_consumed") from exc
+    return payload
+
+
 def build_production_runtime_invocation_release_summary(
     summary: ProductionRuntimeInvocationSummary,
 ) -> ProductionRuntimeInvocationReleaseSummary:

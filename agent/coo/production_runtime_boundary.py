@@ -2313,6 +2313,106 @@ def enter_governed_runtime_boundary_context(
     )
 
 
+_BOUNDARY_CONSUME_STORE_DIR = "production-runtime-boundary-consume"
+
+
+def default_runtime_boundary_consume_store_dir() -> Path:
+    return get_hermes_home() / "coo" / _BOUNDARY_CONSUME_STORE_DIR
+
+
+def _boundary_consume_path(
+    boundary_id: str,
+    *,
+    store_dir: Path | None = None,
+) -> Path:
+    normalized = (boundary_id or "").strip()
+    if not normalized:
+        raise RuntimeBoundaryError("boundary_id is required")
+    base = store_dir or default_runtime_boundary_consume_store_dir()
+    return base / f"{normalized}.json"
+
+
+def load_runtime_boundary_consume_record(
+    boundary_id: str,
+    *,
+    store_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """Return the consume record for boundary_id, or None if unconsumed."""
+    from agent.coo.production_runtime_consume_store import read_consume_record
+
+    path = _boundary_consume_path(boundary_id, store_dir=store_dir)
+    try:
+        return read_consume_record(path)
+    except ValueError as exc:
+        raise RuntimeBoundaryError(str(exc)) from exc
+
+
+def consume_runtime_boundary(
+    activation_request_id: str,
+    *,
+    boundary_id: str,
+    consumed_by: str,
+    store_dir: Path | None = None,
+    consume_store_dir: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """One-shot consume transition for a reserved runtime boundary.
+
+    Never mutates the original write-once boundary bundle. Consumption is
+    recorded as a separate one-shot artifact, mirroring
+    ``consume_production_runtime_permission``.
+    """
+    normalized_boundary_id = (boundary_id or "").strip()
+    normalized_consumed_by = (consumed_by or "").strip()
+    if not normalized_boundary_id:
+        raise RuntimeBoundaryError("boundary_id is required")
+    if not normalized_consumed_by:
+        raise RuntimeBoundaryError("consumed_by is required")
+
+    record = load_runtime_boundary_record(activation_request_id, store_dir=store_dir)
+    if record is None:
+        raise RuntimeBoundaryError("boundary_missing")
+    if record.boundary_id != normalized_boundary_id:
+        raise RuntimeBoundaryError("boundary_id_mismatch")
+    if record.boundary_status != BOUNDARY_RESERVED:
+        raise RuntimeBoundaryError("boundary_not_reserved")
+    if record.revoked:
+        raise RuntimeBoundaryError("boundary_revoked")
+
+    current = _utc_now(now)
+    expires_dt = _parse_iso(record.expires_at)
+    if expires_dt is not None and current >= expires_dt:
+        raise RuntimeBoundaryError("boundary_expired")
+
+    if (
+        load_runtime_boundary_consume_record(
+            normalized_boundary_id, store_dir=consume_store_dir
+        )
+        is not None
+    ):
+        raise RuntimeBoundaryError("boundary_already_consumed")
+
+    from agent.coo.production_runtime_consume_store import (
+        OneShotConsumeWriteConflict,
+        write_once_consume_record,
+    )
+
+    payload = {
+        "version": 1,
+        "boundary_id": normalized_boundary_id,
+        "activation_request_id": activation_request_id,
+        "consumed": True,
+        "consumed_at": _utc_now_iso(now),
+        "consumed_by": normalized_consumed_by,
+    }
+    path = _boundary_consume_path(normalized_boundary_id, store_dir=consume_store_dir)
+    try:
+        write_once_consume_record(path, payload)
+    except OneShotConsumeWriteConflict as exc:
+        raise RuntimeBoundaryError("boundary_already_consumed") from exc
+    return payload
+
+
 def build_production_runtime_boundary_release_summary(
     summary: RuntimeBoundarySummary,
 ) -> RuntimeBoundaryReleaseSummary:

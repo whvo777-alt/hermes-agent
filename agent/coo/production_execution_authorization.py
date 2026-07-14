@@ -2838,6 +2838,112 @@ def enter_execution_authorization_context(
     )
 
 
+_AUTHORIZATION_CONSUME_STORE_DIR = "production-execution-authorization-consume"
+
+
+def default_execution_authorization_consume_store_dir() -> Path:
+    return get_hermes_home() / "coo" / _AUTHORIZATION_CONSUME_STORE_DIR
+
+
+def _authorization_consume_path(
+    authorization_id: str,
+    *,
+    store_dir: Path | None = None,
+) -> Path:
+    normalized = (authorization_id or "").strip()
+    if not normalized:
+        raise ProductionExecutionAuthorizationError("authorization_id is required")
+    base = store_dir or default_execution_authorization_consume_store_dir()
+    return base / f"{normalized}.json"
+
+
+def load_execution_authorization_consume_record(
+    authorization_id: str,
+    *,
+    store_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """Return the consume record for authorization_id, or None if unconsumed."""
+    from agent.coo.production_runtime_consume_store import read_consume_record
+
+    path = _authorization_consume_path(authorization_id, store_dir=store_dir)
+    try:
+        return read_consume_record(path)
+    except ValueError as exc:
+        raise ProductionExecutionAuthorizationError(str(exc)) from exc
+
+
+def consume_execution_authorization(
+    activation_request_id: str,
+    *,
+    authorization_id: str,
+    consumed_by: str,
+    store_dir: Path | None = None,
+    consume_store_dir: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """One-shot consume transition for an issued execution authorization.
+
+    Never mutates the original write-once authorization bundle. Consumption
+    is recorded as a separate one-shot artifact, mirroring
+    ``consume_production_runtime_permission``.
+    """
+    normalized_authorization_id = (authorization_id or "").strip()
+    normalized_consumed_by = (consumed_by or "").strip()
+    if not normalized_authorization_id:
+        raise ProductionExecutionAuthorizationError("authorization_id is required")
+    if not normalized_consumed_by:
+        raise ProductionExecutionAuthorizationError("consumed_by is required")
+
+    record = load_execution_authorization_record(
+        activation_request_id, store_dir=store_dir
+    )
+    if record is None:
+        raise ProductionExecutionAuthorizationError("authorization_missing")
+    if record.authorization_id != normalized_authorization_id:
+        raise ProductionExecutionAuthorizationError("authorization_id_mismatch")
+    if record.authorization_status != AUTHORIZATION_ISSUED:
+        raise ProductionExecutionAuthorizationError("authorization_not_issued")
+    if record.revoked:
+        raise ProductionExecutionAuthorizationError("authorization_revoked")
+
+    current = _utc_now(now)
+    expires_dt = _parse_iso(record.expires_at)
+    if expires_dt is not None and current >= expires_dt:
+        raise ProductionExecutionAuthorizationError("authorization_expired")
+
+    if (
+        load_execution_authorization_consume_record(
+            normalized_authorization_id, store_dir=consume_store_dir
+        )
+        is not None
+    ):
+        raise ProductionExecutionAuthorizationError("authorization_already_consumed")
+
+    from agent.coo.production_runtime_consume_store import (
+        OneShotConsumeWriteConflict,
+        write_once_consume_record,
+    )
+
+    payload = {
+        "version": 1,
+        "authorization_id": normalized_authorization_id,
+        "activation_request_id": activation_request_id,
+        "consumed": True,
+        "consumed_at": _utc_now_iso(now),
+        "consumed_by": normalized_consumed_by,
+    }
+    path = _authorization_consume_path(
+        normalized_authorization_id, store_dir=consume_store_dir
+    )
+    try:
+        write_once_consume_record(path, payload)
+    except OneShotConsumeWriteConflict as exc:
+        raise ProductionExecutionAuthorizationError(
+            "authorization_already_consumed"
+        ) from exc
+    return payload
+
+
 def build_production_execution_authorization_release_summary(
     summary: ProductionExecutionAuthorizationSummary,
 ) -> ProductionExecutionAuthorizationReleaseSummary:

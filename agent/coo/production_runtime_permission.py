@@ -1523,6 +1523,108 @@ def issue_production_runtime_permission(
     )
 
 
+_PERMISSION_CONSUME_STORE_DIR = "production-runtime-permission-consume"
+
+
+def default_runtime_permission_consume_store_dir() -> Path:
+    return get_hermes_home() / "coo" / _PERMISSION_CONSUME_STORE_DIR
+
+
+def _permission_consume_path(
+    permission_id: str,
+    *,
+    store_dir: Path | None = None,
+) -> Path:
+    normalized = (permission_id or "").strip()
+    if not normalized:
+        raise ProductionRuntimePermissionError("permission_id is required")
+    base = store_dir or default_runtime_permission_consume_store_dir()
+    return base / f"{normalized}.json"
+
+
+def load_runtime_permission_consume_record(
+    permission_id: str,
+    *,
+    store_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """Return the consume record for permission_id, or None if unconsumed."""
+    from agent.coo.production_runtime_consume_store import read_consume_record
+
+    path = _permission_consume_path(permission_id, store_dir=store_dir)
+    try:
+        return read_consume_record(path)
+    except ValueError as exc:
+        raise ProductionRuntimePermissionError(str(exc)) from exc
+
+
+def consume_production_runtime_permission(
+    activation_request_id: str,
+    *,
+    permission_id: str,
+    consumed_by: str,
+    store_dir: Path | None = None,
+    consume_store_dir: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """One-shot consume transition for an issued runtime permission.
+
+    Never mutates the original write-once permission bundle. Consumption is
+    recorded as a separate one-shot artifact whose existence is the sole
+    source of truth for "has this permission been consumed" — enforced by
+    the underlying O_CREAT|O_EXCL write, which is race-safe under
+    concurrent callers.
+    """
+    normalized_permission_id = (permission_id or "").strip()
+    normalized_consumed_by = (consumed_by or "").strip()
+    if not normalized_permission_id:
+        raise ProductionRuntimePermissionError("permission_id is required")
+    if not normalized_consumed_by:
+        raise ProductionRuntimePermissionError("consumed_by is required")
+
+    record = load_runtime_permission_record(activation_request_id, store_dir=store_dir)
+    if record is None:
+        raise ProductionRuntimePermissionError("permission_missing")
+    if record.permission_id != normalized_permission_id:
+        raise ProductionRuntimePermissionError("permission_id_mismatch")
+    if record.permission_status != PERMISSION_ISSUED:
+        raise ProductionRuntimePermissionError("permission_not_issued")
+    if record.revoked:
+        raise ProductionRuntimePermissionError("permission_revoked")
+
+    current = _utc_now(now)
+    expires_dt = _parse_iso(record.expires_at)
+    if expires_dt is not None and current >= expires_dt:
+        raise ProductionRuntimePermissionError("permission_expired")
+
+    if (
+        load_runtime_permission_consume_record(
+            normalized_permission_id, store_dir=consume_store_dir
+        )
+        is not None
+    ):
+        raise ProductionRuntimePermissionError("permission_already_consumed")
+
+    from agent.coo.production_runtime_consume_store import (
+        OneShotConsumeWriteConflict,
+        write_once_consume_record,
+    )
+
+    payload = {
+        "version": 1,
+        "permission_id": normalized_permission_id,
+        "activation_request_id": activation_request_id,
+        "consumed": True,
+        "consumed_at": _utc_now_iso(now),
+        "consumed_by": normalized_consumed_by,
+    }
+    path = _permission_consume_path(normalized_permission_id, store_dir=consume_store_dir)
+    try:
+        write_once_consume_record(path, payload)
+    except OneShotConsumeWriteConflict as exc:
+        raise ProductionRuntimePermissionError("permission_already_consumed") from exc
+    return payload
+
+
 def build_production_runtime_permission_release_summary(
     summary: ProductionRuntimePermissionSummary,
 ) -> ProductionRuntimePermissionReleaseSummary:
