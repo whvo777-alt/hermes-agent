@@ -609,6 +609,7 @@ class TestProductionGovernedCutover(TestProductionFinalSignoff):
             preflight_history_dir=self.preflight_history_dir,
             repo_root=self.repo_root,
             merged_config={},
+            now=self._now,
         )
         self.assertTrue(digest.governed_cutover_contract_present)
         self.assertTrue(digest.governed_cutover_ready)

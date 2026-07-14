@@ -860,6 +860,115 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_runtime_permission_history
     )
 
+    governed_cutover_session_parser = governed_cutover_subparsers.add_parser(
+        "session",
+        help=read_only(
+            "Governed runtime session contract (Phase 15D; no runtime)"
+        ),
+        description=read_only(
+            "Start an append-only governed runtime session bound to an issued "
+            "one-shot permission. Does not invoke runtime or consume permission."
+        ),
+    )
+    session_subparsers = governed_cutover_session_parser.add_subparsers(
+        dest="coo_dispatch_production_governed_cutover_session_command",
+        required=True,
+    )
+    session_status_parser = session_subparsers.add_parser(
+        "status",
+        help=read_only("Read-only governed runtime session status"),
+    )
+    session_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for session status",
+    )
+    session_status_parser.set_defaults(
+        handler=_cmd_production_governed_runtime_session_status
+    )
+    session_check_parser = session_subparsers.add_parser(
+        "check",
+        help=read_only("Read-only governed runtime session readiness check"),
+    )
+    session_check_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for session check",
+    )
+    session_check_parser.add_argument(
+        "--permission-id",
+        required=True,
+        help="Issued runtime permission id",
+    )
+    session_check_parser.add_argument(
+        "--executor-id",
+        required=True,
+        help="Proposed session executor id (not printed)",
+    )
+    session_check_parser.set_defaults(
+        handler=_cmd_production_governed_runtime_session_check
+    )
+    session_start_parser = session_subparsers.add_parser(
+        "start",
+        help=read_only(
+            "Append-only start of a governed runtime session "
+            "(no runtime invocation)"
+        ),
+    )
+    session_start_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for session start",
+    )
+    session_start_parser.add_argument(
+        "--permission-id",
+        required=True,
+        help="Issued runtime permission id",
+    )
+    session_start_parser.add_argument(
+        "--executor-id",
+        required=True,
+        help="Session executor id (must match permission; not printed)",
+    )
+    session_start_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Session start operator id (not printed)",
+    )
+    session_start_parser.add_argument(
+        "--ttl-seconds",
+        required=True,
+        type=int,
+        help="Session TTL in seconds (30-300, within permission/window remainder)",
+    )
+    session_start_parser.set_defaults(
+        handler=_cmd_production_governed_runtime_session_start
+    )
+    session_show_parser = session_subparsers.add_parser(
+        "show",
+        help=read_only("Read-only governed runtime session lookup"),
+    )
+    session_show_parser.add_argument(
+        "--session-id",
+        required=True,
+        help="Opaque governed runtime session id",
+    )
+    session_show_parser.set_defaults(
+        handler=_cmd_production_governed_runtime_session_show
+    )
+    session_history_parser = session_subparsers.add_parser(
+        "history",
+        help=read_only("Read-only governed runtime session event history"),
+    )
+    session_history_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for session history",
+    )
+    session_history_parser.set_defaults(
+        handler=_cmd_production_governed_runtime_session_history
+    )
+
     production_activation_parser = production_subparsers.add_parser(
         "activation",
         help=read_only("Production activation proposal commands"),
@@ -3122,6 +3231,108 @@ def _cmd_production_runtime_permission_history(args: argparse.Namespace) -> int:
             activation_request_id=args.activation_request_id,
         )
     except ProductionRuntimePermissionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_governed_runtime_session_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_governed_runtime_session import (
+        ProductionGovernedRuntimeSessionError,
+        run_production_governed_runtime_session_status,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_governed_runtime_session_status(
+            activation_request_id=args.activation_request_id,
+            merged_config=load_config(),
+        )
+    except ProductionGovernedRuntimeSessionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_governed_runtime_session_check(args: argparse.Namespace) -> int:
+    from agent.coo.production_governed_runtime_session import (
+        ProductionGovernedRuntimeSessionError,
+        run_production_governed_runtime_session_check,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_governed_runtime_session_check(
+            activation_request_id=args.activation_request_id,
+            permission_id=args.permission_id,
+            executor_id=args.executor_id,
+            merged_config=load_config(),
+        )
+    except ProductionGovernedRuntimeSessionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_governed_runtime_session_start(args: argparse.Namespace) -> int:
+    from agent.coo.production_governed_runtime_session import (
+        ProductionGovernedRuntimeSessionError,
+        run_production_governed_runtime_session_start,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_governed_runtime_session_start(
+            activation_request_id=args.activation_request_id,
+            permission_id=args.permission_id,
+            executor_id=args.executor_id,
+            operator_id=args.operator_id,
+            ttl_seconds=args.ttl_seconds,
+            merged_config=load_config(),
+        )
+    except ProductionGovernedRuntimeSessionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_governed_runtime_session_show(args: argparse.Namespace) -> int:
+    from agent.coo.production_governed_runtime_session import (
+        ProductionGovernedRuntimeSessionError,
+        run_production_governed_runtime_session_show,
+    )
+
+    try:
+        output, exit_code = run_production_governed_runtime_session_show(
+            session_id=args.session_id,
+        )
+    except ProductionGovernedRuntimeSessionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_governed_runtime_session_history(args: argparse.Namespace) -> int:
+    from agent.coo.production_governed_runtime_session import (
+        ProductionGovernedRuntimeSessionError,
+        run_production_governed_runtime_session_history,
+    )
+
+    try:
+        output, exit_code = run_production_governed_runtime_session_history(
+            activation_request_id=args.activation_request_id,
+        )
+    except ProductionGovernedRuntimeSessionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

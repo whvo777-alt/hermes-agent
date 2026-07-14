@@ -1463,6 +1463,7 @@ def resolve_latest_governed_cutover_dashboard_digest(
     preflight_history_dir: Path | None = None,
     repo_root: Path | None = None,
     merged_config: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
 ) -> ProductionGovernedCutoverDashboardDigest:
     base = (e2e_history_dir or default_e2e_history_dir()).resolve()
     if not base.is_dir():
@@ -1517,6 +1518,7 @@ def resolve_latest_governed_cutover_dashboard_digest(
                 governed_cutover_store_dir=governed_cutover_store_dir,
                 repo_root=repo_root,
                 merged_config=merged_config,
+                now=now,
             )
         except ProductionGovernedCutoverError:
             continue

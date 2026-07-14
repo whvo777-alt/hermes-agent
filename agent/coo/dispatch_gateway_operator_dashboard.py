@@ -213,6 +213,15 @@ class CooDispatchGatewayOperatorDashboardSummary:
     runtime_permission_blocking_count: int = 0
     runtime_permission_warning_count: int = 0
     runtime_permission_recommended_action: str = ""
+    governed_runtime_session_state: str = ""
+    governed_runtime_session_ready: bool = False
+    governed_runtime_session_present: bool = False
+    governed_runtime_session_expired: bool = False
+    governed_runtime_session_id: str = ""
+    governed_runtime_session_expires_at: str = ""
+    governed_runtime_session_blocking_count: int = 0
+    governed_runtime_session_warning_count: int = 0
+    governed_runtime_session_recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -720,6 +729,9 @@ def build_operator_dashboard_summary(
     from agent.coo.production_runtime_permission import (
         resolve_latest_runtime_permission_dashboard_digest,
     )
+    from agent.coo.production_governed_runtime_session import (
+        resolve_latest_governed_runtime_session_dashboard_digest,
+    )
 
     live_pilot = resolve_latest_live_pilot_dashboard_digest(merged_config=merged_config)
     rollback = resolve_latest_rollback_dashboard_digest(merged_config=merged_config)
@@ -733,6 +745,9 @@ def build_operator_dashboard_summary(
         merged_config=merged_config
     )
     runtime_permission = resolve_latest_runtime_permission_dashboard_digest(
+        merged_config=merged_config
+    )
+    governed_runtime_session = resolve_latest_governed_runtime_session_dashboard_digest(
         merged_config=merged_config
     )
 
@@ -812,6 +827,31 @@ def build_operator_dashboard_summary(
         runtime_permission_warning_count=runtime_permission.runtime_permission_warning_count,
         runtime_permission_recommended_action=(
             runtime_permission.runtime_permission_recommended_action
+        ),
+        governed_runtime_session_state=(
+            governed_runtime_session.governed_runtime_session_state
+        ),
+        governed_runtime_session_ready=(
+            governed_runtime_session.governed_runtime_session_ready
+        ),
+        governed_runtime_session_present=(
+            governed_runtime_session.governed_runtime_session_present
+        ),
+        governed_runtime_session_expired=(
+            governed_runtime_session.governed_runtime_session_expired
+        ),
+        governed_runtime_session_id=governed_runtime_session.governed_runtime_session_id,
+        governed_runtime_session_expires_at=(
+            governed_runtime_session.governed_runtime_session_expires_at
+        ),
+        governed_runtime_session_blocking_count=(
+            governed_runtime_session.governed_runtime_session_blocking_count
+        ),
+        governed_runtime_session_warning_count=(
+            governed_runtime_session.governed_runtime_session_warning_count
+        ),
+        governed_runtime_session_recommended_action=(
+            governed_runtime_session.governed_runtime_session_recommended_action
         ),
     )
 
@@ -1081,6 +1121,24 @@ def format_operator_dashboard_summary(
             f"{summary.runtime_permission_warning_count}",
             "runtime_permission_recommended_action: "
             f"{summary.runtime_permission_recommended_action or _NONE_LABEL}",
+            "governed_runtime_session_state: "
+            f"{summary.governed_runtime_session_state or _NONE_LABEL}",
+            "governed_runtime_session_ready: "
+            f"{str(summary.governed_runtime_session_ready).lower()}",
+            "governed_runtime_session_present: "
+            f"{str(summary.governed_runtime_session_present).lower()}",
+            "governed_runtime_session_expired: "
+            f"{str(summary.governed_runtime_session_expired).lower()}",
+            "governed_runtime_session_id: "
+            f"{summary.governed_runtime_session_id or _NONE_LABEL}",
+            "governed_runtime_session_expires_at: "
+            f"{summary.governed_runtime_session_expires_at or _NONE_LABEL}",
+            "governed_runtime_session_blocking_count: "
+            f"{summary.governed_runtime_session_blocking_count}",
+            "governed_runtime_session_warning_count: "
+            f"{summary.governed_runtime_session_warning_count}",
+            "governed_runtime_session_recommended_action: "
+            f"{summary.governed_runtime_session_recommended_action or _NONE_LABEL}",
         ]
     )
     output = "\n".join(lines)
