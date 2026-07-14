@@ -969,6 +969,120 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_governed_runtime_session_history
     )
 
+    governed_cutover_runtime_boundary_parser = governed_cutover_subparsers.add_parser(
+        "runtime-boundary",
+        help=read_only(
+            "Runtime boundary contract (Phase 15E; no runtime)"
+        ),
+        description=read_only(
+            "Prepare an append-only runtime boundary for a started "
+            "session. Does not invoke runtime, start cutover, or consume permission."
+        ),
+    )
+    boundary_subparsers = governed_cutover_runtime_boundary_parser.add_subparsers(
+        dest="coo_dispatch_production_governed_cutover_runtime_boundary_command",
+        required=True,
+    )
+    boundary_status_parser = boundary_subparsers.add_parser(
+        "status",
+        help=read_only("Read-only runtime boundary status"),
+    )
+    boundary_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for boundary status",
+    )
+    boundary_status_parser.set_defaults(
+        handler=_cmd_production_runtime_boundary_status
+    )
+    boundary_check_parser = boundary_subparsers.add_parser(
+        "check",
+        help=read_only("Read-only runtime boundary readiness check"),
+    )
+    boundary_check_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for boundary check",
+    )
+    boundary_check_parser.add_argument(
+        "--session-id",
+        required=True,
+        help="Started governed runtime session id",
+    )
+    boundary_check_parser.add_argument(
+        "--permission-id",
+        required=True,
+        help="Issued runtime permission id",
+    )
+    boundary_check_parser.set_defaults(
+        handler=_cmd_production_runtime_boundary_check
+    )
+    boundary_prepare_parser = boundary_subparsers.add_parser(
+        "prepare",
+        help=read_only(
+            "Append-only prepare of a runtime boundary "
+            "(no runtime invocation)"
+        ),
+    )
+    boundary_prepare_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for boundary reserve",
+    )
+    boundary_prepare_parser.add_argument(
+        "--session-id",
+        required=True,
+        help="Started governed runtime session id",
+    )
+    boundary_prepare_parser.add_argument(
+        "--permission-id",
+        required=True,
+        help="Issued runtime permission id",
+    )
+    boundary_prepare_parser.add_argument(
+        "--executor-id",
+        required=True,
+        help="Boundary executor id (must match permission/session; not printed)",
+    )
+    boundary_prepare_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Boundary prepare operator id (not printed)",
+    )
+    boundary_prepare_parser.add_argument(
+        "--ttl-seconds",
+        required=True,
+        type=int,
+        help="Boundary TTL in seconds (15-120, within session/permission/window)",
+    )
+    boundary_prepare_parser.set_defaults(
+        handler=_cmd_production_runtime_boundary_prepare
+    )
+    boundary_show_parser = boundary_subparsers.add_parser(
+        "show",
+        help=read_only("Read-only runtime boundary lookup"),
+    )
+    boundary_show_parser.add_argument(
+        "--boundary-id",
+        required=True,
+        help="Opaque runtime boundary id",
+    )
+    boundary_show_parser.set_defaults(
+        handler=_cmd_production_runtime_boundary_show
+    )
+    boundary_history_parser = boundary_subparsers.add_parser(
+        "history",
+        help=read_only("Read-only runtime boundary event history"),
+    )
+    boundary_history_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for boundary history",
+    )
+    boundary_history_parser.set_defaults(
+        handler=_cmd_production_runtime_boundary_history
+    )
+
     production_activation_parser = production_subparsers.add_parser(
         "activation",
         help=read_only("Production activation proposal commands"),
@@ -3333,6 +3447,109 @@ def _cmd_production_governed_runtime_session_history(args: argparse.Namespace) -
             activation_request_id=args.activation_request_id,
         )
     except ProductionGovernedRuntimeSessionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_boundary_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_boundary import (
+        RuntimeBoundaryError,
+        run_production_runtime_boundary_status,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_boundary_status(
+            activation_request_id=args.activation_request_id,
+            merged_config=load_config(),
+        )
+    except RuntimeBoundaryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_boundary_check(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_boundary import (
+        RuntimeBoundaryError,
+        run_production_runtime_boundary_check,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_boundary_check(
+            activation_request_id=args.activation_request_id,
+            session_id=args.session_id,
+            permission_id=args.permission_id,
+            merged_config=load_config(),
+        )
+    except RuntimeBoundaryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_boundary_prepare(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_boundary import (
+        RuntimeBoundaryError,
+        run_production_runtime_boundary_prepare,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_boundary_prepare(
+            activation_request_id=args.activation_request_id,
+            session_id=args.session_id,
+            permission_id=args.permission_id,
+            executor_id=args.executor_id,
+            operator_id=args.operator_id,
+            ttl_seconds=args.ttl_seconds,
+            merged_config=load_config(),
+        )
+    except RuntimeBoundaryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_boundary_show(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_boundary import (
+        RuntimeBoundaryError,
+        run_production_runtime_boundary_show,
+    )
+
+    try:
+        output, exit_code = run_production_runtime_boundary_show(
+            boundary_id=args.boundary_id,
+        )
+    except RuntimeBoundaryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_boundary_history(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_boundary import (
+        RuntimeBoundaryError,
+        run_production_runtime_boundary_history,
+    )
+
+    try:
+        output, exit_code = run_production_runtime_boundary_history(
+            activation_request_id=args.activation_request_id,
+        )
+    except RuntimeBoundaryError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

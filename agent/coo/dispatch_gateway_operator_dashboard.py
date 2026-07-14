@@ -222,6 +222,16 @@ class CooDispatchGatewayOperatorDashboardSummary:
     governed_runtime_session_blocking_count: int = 0
     governed_runtime_session_warning_count: int = 0
     governed_runtime_session_recommended_action: str = ""
+    runtime_boundary_state: str = ""
+    runtime_boundary_ready: bool = False
+    runtime_boundary_present: bool = False
+    runtime_boundary_expired: bool = False
+    runtime_boundary_id: str = ""
+    runtime_boundary_invocation_id: str = ""
+    runtime_boundary_expires_at: str = ""
+    runtime_boundary_blocking_count: int = 0
+    runtime_boundary_warning_count: int = 0
+    runtime_boundary_recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -732,6 +742,9 @@ def build_operator_dashboard_summary(
     from agent.coo.production_governed_runtime_session import (
         resolve_latest_governed_runtime_session_dashboard_digest,
     )
+    from agent.coo.production_runtime_boundary import (
+        resolve_latest_runtime_boundary_dashboard_digest,
+    )
 
     live_pilot = resolve_latest_live_pilot_dashboard_digest(merged_config=merged_config)
     rollback = resolve_latest_rollback_dashboard_digest(merged_config=merged_config)
@@ -748,6 +761,9 @@ def build_operator_dashboard_summary(
         merged_config=merged_config
     )
     governed_runtime_session = resolve_latest_governed_runtime_session_dashboard_digest(
+        merged_config=merged_config
+    )
+    runtime_boundary = resolve_latest_runtime_boundary_dashboard_digest(
         merged_config=merged_config
     )
 
@@ -852,6 +868,36 @@ def build_operator_dashboard_summary(
         ),
         governed_runtime_session_recommended_action=(
             governed_runtime_session.governed_runtime_session_recommended_action
+        ),
+        runtime_boundary_state=(
+            runtime_boundary.runtime_boundary_state
+        ),
+        runtime_boundary_ready=(
+            runtime_boundary.runtime_boundary_ready
+        ),
+        runtime_boundary_present=(
+            runtime_boundary.runtime_boundary_present
+        ),
+        runtime_boundary_expired=(
+            runtime_boundary.runtime_boundary_expired
+        ),
+        runtime_boundary_id=(
+            runtime_boundary.runtime_boundary_id
+        ),
+        runtime_boundary_invocation_id=(
+            runtime_boundary.runtime_boundary_invocation_id
+        ),
+        runtime_boundary_expires_at=(
+            runtime_boundary.runtime_boundary_expires_at
+        ),
+        runtime_boundary_blocking_count=(
+            runtime_boundary.runtime_boundary_blocking_count
+        ),
+        runtime_boundary_warning_count=(
+            runtime_boundary.runtime_boundary_warning_count
+        ),
+        runtime_boundary_recommended_action=(
+            runtime_boundary.runtime_boundary_recommended_action
         ),
     )
 
@@ -1139,6 +1185,26 @@ def format_operator_dashboard_summary(
             f"{summary.governed_runtime_session_warning_count}",
             "governed_runtime_session_recommended_action: "
             f"{summary.governed_runtime_session_recommended_action or _NONE_LABEL}",
+            "runtime_boundary_state: "
+            f"{summary.runtime_boundary_state or _NONE_LABEL}",
+            "runtime_boundary_ready: "
+            f"{str(summary.runtime_boundary_ready).lower()}",
+            "runtime_boundary_present: "
+            f"{str(summary.runtime_boundary_present).lower()}",
+            "runtime_boundary_expired: "
+            f"{str(summary.runtime_boundary_expired).lower()}",
+            "runtime_boundary_id: "
+            f"{summary.runtime_boundary_id or _NONE_LABEL}",
+            "runtime_boundary_invocation_id: "
+            f"{summary.runtime_boundary_invocation_id or _NONE_LABEL}",
+            "runtime_boundary_expires_at: "
+            f"{summary.runtime_boundary_expires_at or _NONE_LABEL}",
+            "runtime_boundary_blocking_count: "
+            f"{summary.runtime_boundary_blocking_count}",
+            "runtime_boundary_warning_count: "
+            f"{summary.runtime_boundary_warning_count}",
+            "runtime_boundary_recommended_action: "
+            f"{summary.runtime_boundary_recommended_action or _NONE_LABEL}",
         ]
     )
     output = "\n".join(lines)
