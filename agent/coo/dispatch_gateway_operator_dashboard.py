@@ -242,6 +242,26 @@ class CooDispatchGatewayOperatorDashboardSummary:
     governed_runtime_invocation_blocking_count: int = 0
     governed_runtime_invocation_warning_count: int = 0
     governed_runtime_invocation_recommended_action: str = ""
+    execution_authorization_state: str = ""
+    execution_authorization_ready: bool = False
+    execution_authorization_present: bool = False
+    execution_authorization_expired: bool = False
+    execution_authorization_id: str = ""
+    execution_authorization_expires_at: str = ""
+    execution_authorization_phrase_verified: bool = False
+    execution_authorization_blocking_count: int = 0
+    execution_authorization_warning_count: int = 0
+    execution_authorization_recommended_action: str = ""
+    governed_runtime_start_state: str = ""
+    governed_runtime_start_ready: bool = False
+    governed_runtime_start_present: bool = False
+    governed_runtime_start_expired: bool = False
+    governed_runtime_start_id: str = ""
+    governed_runtime_start_expires_at: str = ""
+    governed_runtime_start_started: bool = False
+    governed_runtime_start_blocking_count: int = 0
+    governed_runtime_start_warning_count: int = 0
+    governed_runtime_start_recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -758,6 +778,12 @@ def build_operator_dashboard_summary(
     from agent.coo.production_runtime_invocation import (
         resolve_latest_governed_runtime_invocation_dashboard_digest,
     )
+    from agent.coo.production_execution_authorization import (
+        resolve_latest_execution_authorization_dashboard_digest,
+    )
+    from agent.coo.production_runtime_start import (
+        resolve_latest_governed_runtime_start_dashboard_digest,
+    )
 
     live_pilot = resolve_latest_live_pilot_dashboard_digest(merged_config=merged_config)
     rollback = resolve_latest_rollback_dashboard_digest(merged_config=merged_config)
@@ -783,6 +809,12 @@ def build_operator_dashboard_summary(
         resolve_latest_governed_runtime_invocation_dashboard_digest(
             merged_config=merged_config
         )
+    )
+    execution_authorization = resolve_latest_execution_authorization_dashboard_digest(
+        merged_config=merged_config
+    )
+    governed_runtime_start = resolve_latest_governed_runtime_start_dashboard_digest(
+        merged_config=merged_config
     )
 
     return CooDispatchGatewayOperatorDashboardSummary(
@@ -946,6 +978,66 @@ def build_operator_dashboard_summary(
         ),
         governed_runtime_invocation_recommended_action=(
             governed_runtime_invocation.governed_runtime_invocation_recommended_action
+        ),
+        execution_authorization_state=(
+            execution_authorization.execution_authorization_state
+        ),
+        execution_authorization_ready=(
+            execution_authorization.execution_authorization_ready
+        ),
+        execution_authorization_present=(
+            execution_authorization.execution_authorization_present
+        ),
+        execution_authorization_expired=(
+            execution_authorization.execution_authorization_expired
+        ),
+        execution_authorization_id=(
+            execution_authorization.execution_authorization_id
+        ),
+        execution_authorization_expires_at=(
+            execution_authorization.execution_authorization_expires_at
+        ),
+        execution_authorization_phrase_verified=(
+            execution_authorization.execution_authorization_phrase_verified
+        ),
+        execution_authorization_blocking_count=(
+            execution_authorization.execution_authorization_blocking_count
+        ),
+        execution_authorization_warning_count=(
+            execution_authorization.execution_authorization_warning_count
+        ),
+        execution_authorization_recommended_action=(
+            execution_authorization.execution_authorization_recommended_action
+        ),
+        governed_runtime_start_state=(
+            governed_runtime_start.governed_runtime_start_state
+        ),
+        governed_runtime_start_ready=(
+            governed_runtime_start.governed_runtime_start_ready
+        ),
+        governed_runtime_start_present=(
+            governed_runtime_start.governed_runtime_start_present
+        ),
+        governed_runtime_start_expired=(
+            governed_runtime_start.governed_runtime_start_expired
+        ),
+        governed_runtime_start_id=(
+            governed_runtime_start.governed_runtime_start_id
+        ),
+        governed_runtime_start_expires_at=(
+            governed_runtime_start.governed_runtime_start_expires_at
+        ),
+        governed_runtime_start_started=(
+            governed_runtime_start.governed_runtime_start_started
+        ),
+        governed_runtime_start_blocking_count=(
+            governed_runtime_start.governed_runtime_start_blocking_count
+        ),
+        governed_runtime_start_warning_count=(
+            governed_runtime_start.governed_runtime_start_warning_count
+        ),
+        governed_runtime_start_recommended_action=(
+            governed_runtime_start.governed_runtime_start_recommended_action
         ),
     )
 
@@ -1273,6 +1365,46 @@ def format_operator_dashboard_summary(
             f"{summary.governed_runtime_invocation_warning_count}",
             "governed_runtime_invocation_recommended_action: "
             f"{summary.governed_runtime_invocation_recommended_action or _NONE_LABEL}",
+            "execution_authorization_state: "
+            f"{summary.execution_authorization_state or _NONE_LABEL}",
+            "execution_authorization_ready: "
+            f"{str(summary.execution_authorization_ready).lower()}",
+            "execution_authorization_present: "
+            f"{str(summary.execution_authorization_present).lower()}",
+            "execution_authorization_expired: "
+            f"{str(summary.execution_authorization_expired).lower()}",
+            "execution_authorization_id: "
+            f"{summary.execution_authorization_id or _NONE_LABEL}",
+            "execution_authorization_expires_at: "
+            f"{summary.execution_authorization_expires_at or _NONE_LABEL}",
+            "execution_authorization_phrase_verified: "
+            f"{str(summary.execution_authorization_phrase_verified).lower()}",
+            "execution_authorization_blocking_count: "
+            f"{summary.execution_authorization_blocking_count}",
+            "execution_authorization_warning_count: "
+            f"{summary.execution_authorization_warning_count}",
+            "execution_authorization_recommended_action: "
+            f"{summary.execution_authorization_recommended_action or _NONE_LABEL}",
+            "governed_runtime_start_state: "
+            f"{summary.governed_runtime_start_state or _NONE_LABEL}",
+            "governed_runtime_start_ready: "
+            f"{str(summary.governed_runtime_start_ready).lower()}",
+            "governed_runtime_start_present: "
+            f"{str(summary.governed_runtime_start_present).lower()}",
+            "governed_runtime_start_expired: "
+            f"{str(summary.governed_runtime_start_expired).lower()}",
+            "governed_runtime_start_id: "
+            f"{summary.governed_runtime_start_id or _NONE_LABEL}",
+            "governed_runtime_start_expires_at: "
+            f"{summary.governed_runtime_start_expires_at or _NONE_LABEL}",
+            "governed_runtime_start_started: "
+            f"{str(summary.governed_runtime_start_started).lower()}",
+            "governed_runtime_start_blocking_count: "
+            f"{summary.governed_runtime_start_blocking_count}",
+            "governed_runtime_start_warning_count: "
+            f"{summary.governed_runtime_start_warning_count}",
+            "governed_runtime_start_recommended_action: "
+            f"{summary.governed_runtime_start_recommended_action or _NONE_LABEL}",
         ]
     )
     output = "\n".join(lines)

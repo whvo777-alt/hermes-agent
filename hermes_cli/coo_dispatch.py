@@ -1209,6 +1209,259 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
         handler=_cmd_production_runtime_invocation_history
     )
 
+    governed_cutover_execution_authorization_parser = (
+        governed_cutover_subparsers.add_parser(
+            "execution-authorization",
+            help=read_only(
+                "Execution authorization contract (Phase 15G; no runtime)"
+            ),
+            description=read_only(
+                "Issue an append-only, one-shot execution authorization on top "
+                "of a reserved governed runtime invocation. Does not invoke "
+                "runtime, start cutover, or consume the underlying permission "
+                "— those remain exclusively Phase 15H's concern. The operator "
+                'confirmation phrase (must be exactly "CONFIRM-REPOSITORY2-'
+                'EXECUTION") is validated by exact, case-sensitive match at '
+                "authorize time only and is never stored or echoed back."
+            ),
+        )
+    )
+    execution_authorization_subparsers = (
+        governed_cutover_execution_authorization_parser.add_subparsers(
+            dest=(
+                "coo_dispatch_production_governed_cutover_execution_authorization_command"
+            ),
+            required=True,
+        )
+    )
+    execution_authorization_status_parser = execution_authorization_subparsers.add_parser(
+        "status",
+        help=read_only("Read-only execution authorization status"),
+    )
+    execution_authorization_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for execution authorization status",
+    )
+    execution_authorization_status_parser.set_defaults(
+        handler=_cmd_production_execution_authorization_status
+    )
+    execution_authorization_check_parser = execution_authorization_subparsers.add_parser(
+        "check",
+        help=read_only("Read-only execution authorization readiness check"),
+    )
+    execution_authorization_check_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for execution authorization check",
+    )
+    execution_authorization_check_parser.add_argument(
+        "--runtime-invocation-id",
+        required=True,
+        help="Reserved governed runtime invocation id",
+    )
+    execution_authorization_check_parser.set_defaults(
+        handler=_cmd_production_execution_authorization_check
+    )
+    execution_authorization_authorize_parser = execution_authorization_subparsers.add_parser(
+        "authorize",
+        help=read_only(
+            "Append-only issue of a one-shot execution authorization "
+            "(no runtime invocation)"
+        ),
+    )
+    execution_authorization_authorize_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for execution authorization authorize",
+    )
+    execution_authorization_authorize_parser.add_argument(
+        "--runtime-invocation-id",
+        required=True,
+        help="Reserved governed runtime invocation id",
+    )
+    execution_authorization_authorize_parser.add_argument(
+        "--executor-id",
+        required=True,
+        help=(
+            "Execution authorization executor id (must match permission/"
+            "session/boundary/invocation executor; not printed)"
+        ),
+    )
+    execution_authorization_authorize_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Execution authorization operator id (not printed)",
+    )
+    execution_authorization_authorize_parser.add_argument(
+        "--signer-id",
+        required=True,
+        help="Execution authorization signer id (not printed)",
+    )
+    execution_authorization_authorize_parser.add_argument(
+        "--ttl-seconds",
+        required=True,
+        type=int,
+        help=(
+            "Authorization TTL in seconds (5-30, within invocation/boundary/"
+            "session/permission/window)"
+        ),
+    )
+    execution_authorization_authorize_parser.add_argument(
+        "--phrase",
+        required=True,
+        help=(
+            'Operator-typed execution phrase (must be exactly "CONFIRM-'
+            'REPOSITORY2-EXECUTION"; exact match, case-sensitive, no '
+            "surrounding whitespace)"
+        ),
+    )
+    execution_authorization_authorize_parser.set_defaults(
+        handler=_cmd_production_execution_authorization_authorize
+    )
+    execution_authorization_show_parser = execution_authorization_subparsers.add_parser(
+        "show",
+        help=read_only("Read-only execution authorization lookup"),
+    )
+    execution_authorization_show_parser.add_argument(
+        "--authorization-id",
+        required=True,
+        help="Opaque execution authorization id",
+    )
+    execution_authorization_show_parser.set_defaults(
+        handler=_cmd_production_execution_authorization_show
+    )
+    execution_authorization_history_parser = execution_authorization_subparsers.add_parser(
+        "history",
+        help=read_only("Read-only execution authorization event history"),
+    )
+    execution_authorization_history_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for execution authorization history",
+    )
+    execution_authorization_history_parser.set_defaults(
+        handler=_cmd_production_execution_authorization_history
+    )
+
+    governed_cutover_runtime_start_parser = governed_cutover_subparsers.add_parser(
+        "runtime-start",
+        help=read_only(
+            "Governed runtime start contract (Phase 15H; no runtime invocation)"
+        ),
+        description=read_only(
+            "Create an append-only governed runtime start contract on top of an "
+            "issued execution authorization. Does not invoke runtime, start "
+            "cutover, or consume permission/authorization — those remain "
+            "exclusively later phases' concern. `runtime_started=true` on the "
+            "new contract only; `runtime_invoked` stays false."
+        ),
+    )
+    runtime_start_subparsers = governed_cutover_runtime_start_parser.add_subparsers(
+        dest="coo_dispatch_production_governed_cutover_runtime_start_command",
+        required=True,
+    )
+    runtime_start_status_parser = runtime_start_subparsers.add_parser(
+        "status",
+        help=read_only("Read-only governed runtime start status"),
+    )
+    runtime_start_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for governed runtime start status",
+    )
+    runtime_start_status_parser.set_defaults(
+        handler=_cmd_production_runtime_start_status
+    )
+    runtime_start_check_parser = runtime_start_subparsers.add_parser(
+        "check",
+        help=read_only("Read-only governed runtime start readiness check"),
+    )
+    runtime_start_check_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for governed runtime start check",
+    )
+    runtime_start_check_parser.add_argument(
+        "--authorization-id",
+        required=True,
+        help="Issued execution authorization id",
+    )
+    runtime_start_check_parser.set_defaults(
+        handler=_cmd_production_runtime_start_check
+    )
+    runtime_start_start_parser = runtime_start_subparsers.add_parser(
+        "start",
+        help=read_only(
+            "Append-only creation of a governed runtime start contract "
+            "(no runtime invocation)"
+        ),
+    )
+    runtime_start_start_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for governed runtime start",
+    )
+    runtime_start_start_parser.add_argument(
+        "--authorization-id",
+        required=True,
+        help="Issued execution authorization id",
+    )
+    runtime_start_start_parser.add_argument(
+        "--executor-id",
+        required=True,
+        help=(
+            "Runtime start executor id (must match authorization/invocation "
+            "chain; not printed)"
+        ),
+    )
+    runtime_start_start_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Runtime start operator id (not printed)",
+    )
+    runtime_start_start_parser.add_argument(
+        "--supervisor-id",
+        required=True,
+        help="Runtime start supervisor id (not printed)",
+    )
+    runtime_start_start_parser.add_argument(
+        "--ttl-seconds",
+        required=True,
+        type=int,
+        help=(
+            "Runtime start TTL in seconds (5-30, within authorization/"
+            "invocation/boundary/session/permission/window)"
+        ),
+    )
+    runtime_start_start_parser.set_defaults(
+        handler=_cmd_production_runtime_start_start
+    )
+    runtime_start_show_parser = runtime_start_subparsers.add_parser(
+        "show",
+        help=read_only("Read-only governed runtime start lookup"),
+    )
+    runtime_start_show_parser.add_argument(
+        "--runtime-start-id",
+        required=True,
+        help="Opaque governed runtime start id",
+    )
+    runtime_start_show_parser.set_defaults(
+        handler=_cmd_production_runtime_start_show
+    )
+    runtime_start_history_parser = runtime_start_subparsers.add_parser(
+        "history",
+        help=read_only("Read-only governed runtime start event history"),
+    )
+    runtime_start_history_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for governed runtime start history",
+    )
+    runtime_start_history_parser.set_defaults(
+        handler=_cmd_production_runtime_start_history
+    )
+
     production_activation_parser = production_subparsers.add_parser(
         "activation",
         help=read_only("Production activation proposal commands"),
@@ -3781,6 +4034,211 @@ def _cmd_production_runtime_invocation_history(args: argparse.Namespace) -> int:
             activation_request_id=args.activation_request_id,
         )
     except ProductionRuntimeInvocationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_execution_authorization_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_execution_authorization import (
+        ProductionExecutionAuthorizationError,
+        run_production_execution_authorization_status,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_execution_authorization_status(
+            activation_request_id=args.activation_request_id,
+            merged_config=load_config(),
+        )
+    except ProductionExecutionAuthorizationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_execution_authorization_check(args: argparse.Namespace) -> int:
+    from agent.coo.production_execution_authorization import (
+        ProductionExecutionAuthorizationError,
+        run_production_execution_authorization_check,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_execution_authorization_check(
+            activation_request_id=args.activation_request_id,
+            runtime_invocation_id=args.runtime_invocation_id,
+            merged_config=load_config(),
+        )
+    except ProductionExecutionAuthorizationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_execution_authorization_authorize(args: argparse.Namespace) -> int:
+    from agent.coo.production_execution_authorization import (
+        ProductionExecutionAuthorizationError,
+        run_production_execution_authorization_authorize,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_execution_authorization_authorize(
+            activation_request_id=args.activation_request_id,
+            runtime_invocation_id=args.runtime_invocation_id,
+            executor_id=args.executor_id,
+            operator_id=args.operator_id,
+            signer_id=args.signer_id,
+            ttl_seconds=args.ttl_seconds,
+            phrase=args.phrase,
+            merged_config=load_config(),
+        )
+    except ProductionExecutionAuthorizationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_execution_authorization_show(args: argparse.Namespace) -> int:
+    from agent.coo.production_execution_authorization import (
+        ProductionExecutionAuthorizationError,
+        run_production_execution_authorization_show,
+    )
+
+    try:
+        output, exit_code = run_production_execution_authorization_show(
+            authorization_id=args.authorization_id,
+        )
+    except ProductionExecutionAuthorizationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_execution_authorization_history(args: argparse.Namespace) -> int:
+    from agent.coo.production_execution_authorization import (
+        ProductionExecutionAuthorizationError,
+        run_production_execution_authorization_history,
+    )
+
+    try:
+        output, exit_code = run_production_execution_authorization_history(
+            activation_request_id=args.activation_request_id,
+        )
+    except ProductionExecutionAuthorizationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_start_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_start import (
+        ProductionRuntimeStartError,
+        run_production_runtime_start_status,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_start_status(
+            activation_request_id=args.activation_request_id,
+            merged_config=load_config(),
+        )
+    except ProductionRuntimeStartError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_start_check(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_start import (
+        ProductionRuntimeStartError,
+        run_production_runtime_start_check,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_start_check(
+            activation_request_id=args.activation_request_id,
+            authorization_id=args.authorization_id,
+            merged_config=load_config(),
+        )
+    except ProductionRuntimeStartError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_start_start(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_start import (
+        ProductionRuntimeStartError,
+        run_production_runtime_start_start,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_runtime_start_start(
+            activation_request_id=args.activation_request_id,
+            authorization_id=args.authorization_id,
+            executor_id=args.executor_id,
+            operator_id=args.operator_id,
+            supervisor_id=args.supervisor_id,
+            ttl_seconds=args.ttl_seconds,
+            merged_config=load_config(),
+        )
+    except ProductionRuntimeStartError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_start_show(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_start import (
+        ProductionRuntimeStartError,
+        run_production_runtime_start_show,
+    )
+
+    try:
+        output, exit_code = run_production_runtime_start_show(
+            runtime_start_id=args.runtime_start_id,
+        )
+    except ProductionRuntimeStartError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_runtime_start_history(args: argparse.Namespace) -> int:
+    from agent.coo.production_runtime_start import (
+        ProductionRuntimeStartError,
+        run_production_runtime_start_history,
+    )
+
+    try:
+        output, exit_code = run_production_runtime_start_history(
+            activation_request_id=args.activation_request_id,
+        )
+    except ProductionRuntimeStartError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
