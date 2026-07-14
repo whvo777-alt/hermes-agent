@@ -556,6 +556,103 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     )
     production_final_signoff_parser.set_defaults(handler=_cmd_production_final_signoff)
 
+    production_governed_cutover_parser = production_subparsers.add_parser(
+        "governed-cutover",
+        help=read_only(
+            "Governed production cutover contract (Phase 15A; no execution)"
+        ),
+        description=read_only(
+            "Evaluate and prepare append-only governed cutover contracts. "
+            "Does not open a maintenance window or enable production execution. "
+            "Distinct from legacy production cutover-check (Phase 13D)."
+        ),
+    )
+    governed_cutover_subparsers = production_governed_cutover_parser.add_subparsers(
+        dest="coo_dispatch_production_governed_cutover_command",
+        required=True,
+    )
+    governed_cutover_status_parser = governed_cutover_subparsers.add_parser(
+        "status",
+        help=read_only("Read-only governed cutover status summary"),
+    )
+    governed_cutover_status_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for governed cutover status",
+    )
+    governed_cutover_status_parser.add_argument(
+        "--reservation-id",
+        required=True,
+        help="Reservation id correlated with final sign-off",
+    )
+    governed_cutover_status_parser.set_defaults(
+        handler=_cmd_production_governed_cutover_status
+    )
+    governed_cutover_check_parser = governed_cutover_subparsers.add_parser(
+        "check",
+        help=read_only("Read-only governed cutover checklist"),
+    )
+    governed_cutover_check_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for governed cutover checklist",
+    )
+    governed_cutover_check_parser.add_argument(
+        "--reservation-id",
+        required=True,
+        help="Reservation id correlated with final sign-off",
+    )
+    governed_cutover_check_parser.set_defaults(
+        handler=_cmd_production_governed_cutover_check
+    )
+    governed_cutover_prepare_parser = governed_cutover_subparsers.add_parser(
+        "prepare",
+        help=read_only(
+            "Append-only governed cutover contract when ready "
+            "(does not open window or execute)"
+        ),
+    )
+    governed_cutover_prepare_parser.add_argument(
+        "--activation-request-id",
+        required=True,
+        help="Activation request id for cutover contract",
+    )
+    governed_cutover_prepare_parser.add_argument(
+        "--reservation-id",
+        required=True,
+        help="Reservation id correlated with final sign-off",
+    )
+    governed_cutover_prepare_parser.add_argument(
+        "--operator-id",
+        required=True,
+        help="Primary cutover operator id (not printed in safe output)",
+    )
+    governed_cutover_prepare_parser.add_argument(
+        "--window-start",
+        required=True,
+        help="Timezone-aware ISO8601 maintenance window start",
+    )
+    governed_cutover_prepare_parser.add_argument(
+        "--window-end",
+        required=True,
+        help="Timezone-aware ISO8601 maintenance window end",
+    )
+    governed_cutover_prepare_parser.set_defaults(
+        handler=_cmd_production_governed_cutover_prepare
+    )
+    governed_cutover_show_parser = governed_cutover_subparsers.add_parser(
+        "show",
+        help=read_only("Read-only governed cutover contract lookup"),
+    )
+    governed_cutover_show_parser.add_argument(
+        "--cutover-contract-id",
+        required=True,
+        help="Opaque cutover contract id",
+    )
+    governed_cutover_show_parser.set_defaults(
+        handler=_cmd_production_governed_cutover_show
+    )
+
     production_activation_parser = production_subparsers.add_parser(
         "activation",
         help=read_only("Production activation proposal commands"),
@@ -2528,6 +2625,90 @@ def _cmd_production_final_signoff_status(args: argparse.Namespace) -> int:
             merged_config=load_config(),
         )
     except ProductionFinalSignoffError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_governed_cutover_status(args: argparse.Namespace) -> int:
+    from agent.coo.production_governed_cutover import (
+        ProductionGovernedCutoverError,
+        run_production_governed_cutover_status,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_governed_cutover_status(
+            activation_request_id=args.activation_request_id,
+            reservation_id=args.reservation_id,
+            merged_config=load_config(),
+        )
+    except ProductionGovernedCutoverError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_governed_cutover_check(args: argparse.Namespace) -> int:
+    from agent.coo.production_governed_cutover import (
+        ProductionGovernedCutoverError,
+        run_production_governed_cutover_check,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_governed_cutover_check(
+            activation_request_id=args.activation_request_id,
+            reservation_id=args.reservation_id,
+            merged_config=load_config(),
+        )
+    except ProductionGovernedCutoverError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_governed_cutover_prepare(args: argparse.Namespace) -> int:
+    from agent.coo.production_governed_cutover import (
+        ProductionGovernedCutoverError,
+        run_production_governed_cutover_prepare,
+    )
+    from hermes_cli.config import load_config
+
+    try:
+        output, exit_code = run_production_governed_cutover_prepare(
+            activation_request_id=args.activation_request_id,
+            reservation_id=args.reservation_id,
+            operator_id=args.operator_id,
+            window_start=args.window_start,
+            window_end=args.window_end,
+            merged_config=load_config(),
+        )
+    except ProductionGovernedCutoverError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return exit_code
+
+
+def _cmd_production_governed_cutover_show(args: argparse.Namespace) -> int:
+    from agent.coo.production_governed_cutover import (
+        ProductionGovernedCutoverError,
+        run_production_governed_cutover_show,
+    )
+
+    try:
+        output, exit_code = run_production_governed_cutover_show(
+            cutover_contract_id=args.cutover_contract_id,
+        )
+    except ProductionGovernedCutoverError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

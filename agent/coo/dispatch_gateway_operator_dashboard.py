@@ -189,6 +189,13 @@ class CooDispatchGatewayOperatorDashboardSummary:
     production_final_blocking_count: int = 0
     production_final_warning_count: int = 0
     production_final_recommended_action: str = ""
+    governed_cutover_status: str = ""
+    governed_cutover_ready: bool = False
+    governed_cutover_contract_present: bool = False
+    governed_cutover_window_valid: bool = False
+    governed_cutover_blocking_count: int = 0
+    governed_cutover_warning_count: int = 0
+    governed_cutover_recommended_action: str = ""
 
 
 @dataclass(frozen=True)
@@ -687,10 +694,16 @@ def build_operator_dashboard_summary(
     from agent.coo.production_final_signoff import (
         resolve_latest_final_signoff_dashboard_digest,
     )
+    from agent.coo.production_governed_cutover import (
+        resolve_latest_governed_cutover_dashboard_digest,
+    )
 
     live_pilot = resolve_latest_live_pilot_dashboard_digest(merged_config=merged_config)
     rollback = resolve_latest_rollback_dashboard_digest(merged_config=merged_config)
     final_signoff = resolve_latest_final_signoff_dashboard_digest(
+        merged_config=merged_config
+    )
+    governed_cutover = resolve_latest_governed_cutover_dashboard_digest(
         merged_config=merged_config
     )
 
@@ -745,6 +758,13 @@ def build_operator_dashboard_summary(
         production_final_blocking_count=final_signoff.production_final_blocking_count,
         production_final_warning_count=final_signoff.production_final_warning_count,
         production_final_recommended_action=final_signoff.production_final_recommended_action,
+        governed_cutover_status=governed_cutover.governed_cutover_status,
+        governed_cutover_ready=governed_cutover.governed_cutover_ready,
+        governed_cutover_contract_present=governed_cutover.governed_cutover_contract_present,
+        governed_cutover_window_valid=governed_cutover.governed_cutover_window_valid,
+        governed_cutover_blocking_count=governed_cutover.governed_cutover_blocking_count,
+        governed_cutover_warning_count=governed_cutover.governed_cutover_warning_count,
+        governed_cutover_recommended_action=governed_cutover.governed_cutover_recommended_action,
     )
 
 
@@ -975,6 +995,16 @@ def format_operator_dashboard_summary(
             f"production_final_warning_count: {summary.production_final_warning_count}",
             "production_final_recommended_action: "
             f"{summary.production_final_recommended_action or _NONE_LABEL}",
+            f"governed_cutover_status: {summary.governed_cutover_status or _NONE_LABEL}",
+            f"governed_cutover_ready: {str(summary.governed_cutover_ready).lower()}",
+            "governed_cutover_contract_present: "
+            f"{str(summary.governed_cutover_contract_present).lower()}",
+            "governed_cutover_window_valid: "
+            f"{str(summary.governed_cutover_window_valid).lower()}",
+            f"governed_cutover_blocking_count: {summary.governed_cutover_blocking_count}",
+            f"governed_cutover_warning_count: {summary.governed_cutover_warning_count}",
+            "governed_cutover_recommended_action: "
+            f"{summary.governed_cutover_recommended_action or _NONE_LABEL}",
         ]
     )
     output = "\n".join(lines)
