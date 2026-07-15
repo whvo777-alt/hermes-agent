@@ -48,7 +48,15 @@ _SCHEMA_VERSION = 1
 
 SOURCE_TYPE_CHATGPT_SUBSCRIPTION = "chatgpt_subscription"
 
-_SUPPORTED_PLATFORMS = frozenset({"wordpress"})
+_SUPPORTED_PLATFORMS = frozenset({"wordpress", "blogspot", "tistory", "naver"})
+
+# V1 Launch Mode: one fixed category per platform during AdSense approval period.
+_LAUNCH_CATEGORY_MAP: dict[str, str] = {
+    "wordpress": "health",
+    "blogspot": "self-dev",
+    "tistory": "finance",
+    "naver": "it-tech",
+}
 
 # Mirrors the exact phrases confirmed (Phase 16F-6) to appear in
 # Repository2's planning-stage mock output. A handoff whose body contains
@@ -98,6 +106,7 @@ BLOCK_MISSING_DISCLAIMER = "missing_disclaimer"
 BLOCK_PLACEHOLDER_DETECTED = "placeholder_detected"
 BLOCK_PLANNING_PATTERN_DETECTED = "planning_pattern_detected"
 BLOCK_MISSING_REQUIRED_FIELD = "missing_required_field"
+BLOCK_PLATFORM_CATEGORY_MISMATCH = "category_mismatch"
 
 
 class ContentHandoffError(ValueError):
@@ -294,6 +303,10 @@ def validate_content_handoff(
     primary_platform = str(data.get("primary_platform", ""))
     if primary_platform not in _SUPPORTED_PLATFORMS or not target_platforms <= _SUPPORTED_PLATFORMS:
         blocking.append(BLOCK_UNSUPPORTED_PLATFORM)
+    else:
+        expected_category = _LAUNCH_CATEGORY_MAP.get(primary_platform)
+        if expected_category and str(data.get("category", "")) != expected_category:
+            blocking.append(BLOCK_PLATFORM_CATEGORY_MISMATCH)
 
     if len(body.strip()) < _MIN_BODY_LENGTH:
         blocking.append(BLOCK_BODY_TOO_SHORT)

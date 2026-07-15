@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent.coo.content_handoff import (
+    BLOCK_PLATFORM_CATEGORY_MISMATCH,
     ContentHandoffError,
     approve_content_handoff,
     create_content_handoff,
@@ -70,8 +71,10 @@ class TestContentHandoff(unittest.TestCase):
             channel_id="chan-1",
             topic_id="beginner-investment-notes",
             topic_title="투자 초보가 기록해야 할 기본 항목",
-            category="finance",
-            category_name="재테크/경제",
+            category="health",
+            category_name="건강/헬스",
+            primary_platform="wordpress",
+            target_platforms=("wordpress",),
             title="투자 초보가 기록해야 할 기본 항목",
             slug="beginner-investment-notes",
             meta_description="투자 초보를 위한 기본 점검 항목을 정리했습니다.",
@@ -177,9 +180,57 @@ class TestContentHandoff(unittest.TestCase):
     def test_unsupported_platform_blocked(self) -> None:
         with self.assertRaises(ContentHandoffError) as exc:
             create_content_handoff(
-                **self._good_kwargs(primary_platform="naver", target_platforms=("naver",))
+                **self._good_kwargs(primary_platform="youtube", target_platforms=("youtube",))
             )
         self.assertIn("unsupported_platform", str(exc.exception))
+
+    def test_platform_category_mismatch_blocked(self) -> None:
+        with self.assertRaises(ContentHandoffError) as exc:
+            create_content_handoff(
+                **self._good_kwargs(
+                    primary_platform="wordpress",
+                    target_platforms=("wordpress",),
+                    category="finance",
+                    category_name="재테크/경제",
+                )
+            )
+        self.assertIn(BLOCK_PLATFORM_CATEGORY_MISMATCH, str(exc.exception))
+
+    def test_blogspot_self_dev_succeeds(self) -> None:
+        handoff = create_content_handoff(
+            **self._good_kwargs(
+                primary_platform="blogspot",
+                target_platforms=("blogspot",),
+                category="self-dev",
+                category_name="자기계발",
+            )
+        )
+        self.assertEqual(handoff.primary_platform, "blogspot")
+        self.assertEqual(handoff.category, "self-dev")
+
+    def test_tistory_finance_succeeds(self) -> None:
+        handoff = create_content_handoff(
+            **self._good_kwargs(
+                primary_platform="tistory",
+                target_platforms=("tistory",),
+                category="finance",
+                category_name="재테크/경제",
+            )
+        )
+        self.assertEqual(handoff.primary_platform, "tistory")
+        self.assertEqual(handoff.category, "finance")
+
+    def test_naver_it_tech_succeeds(self) -> None:
+        handoff = create_content_handoff(
+            **self._good_kwargs(
+                primary_platform="naver",
+                target_platforms=("naver",),
+                category="it-tech",
+                category_name="IT/테크 리뷰",
+            )
+        )
+        self.assertEqual(handoff.primary_platform, "naver")
+        self.assertEqual(handoff.category, "it-tech")
 
     def test_missing_disclaimer_for_sensitive_category_blocked(self) -> None:
         with self.assertRaises(ContentHandoffError) as exc:
