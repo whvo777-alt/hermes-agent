@@ -1,11 +1,18 @@
 """COO orchestration tool — exposes Hermes COO planning to the agent loop.
 
-This tool plans and selects Execution Engine skills only. It never executes
-skills, mutates Repository 2 artifacts, auto-approves, or auto-publishes.
+For most intents this tool only plans/selects skills (no side effects).
+**Exception**: when intent is CREATE_AND_REPORT (e.g. "오늘 블로그 글 4개
+작성해서 보고해줘"), it runs Hermes' own content pipeline
+(agent/content/orchestrator.py — Research→Planning→Writing→Quality, real
+LLM calls, local file writes under Hermes' own data dir) for the 4
+launch-policy platforms and wraps the results in one CEO approval bundle.
+It never calls a platform publisher, never auto-approves, and never touches
+Repository 2 (multi-content-pipeline) in any way.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from agent.coo.approval_report import build_approval_report
@@ -15,9 +22,12 @@ from agent.coo.approval_session import (
     get_default_session_store,
     should_create_approval_session,
 )
-from agent.coo.models import COOOrchestrationResult, SkillInvocation, SkillInvocationStatus, WorkerAssignment
+from agent.coo.daily_blog_bundle import create_daily_blog_approval_bundle
+from agent.coo.models import COOOrchestrationResult, SkillInvocation, SkillInvocationStatus, TaskKind, WorkerAssignment
 from agent.coo.orchestrator import COOOrchestrator
 from tools.registry import registry, tool_error, tool_result
+
+logger = logging.getLogger(__name__)
 
 # Non-negotiable safeguards — enforced at the tool boundary regardless of policy output.
 _AUTO_APPLY = False
@@ -129,6 +139,39 @@ def _format_tool_response(
             store=store,
         )
         approval_session_payload = approval_session.to_dict()
+
+    # Content generation only runs for CREATE_AND_REPORT — every other intent
+    # (approve/publish, review, daily brief, verify) must never trigger LLM
+    # calls or file writes here. This is the ONE real side effect of this
+    # tool: it runs Hermes' own Research→Planning→Writing→Quality stages
+    # (agent/content/orchestrator.py) for the 4 launch-policy platforms.
+    # No publisher is ever called from this path — only after CEO approval.
+    daily_blog_bundle_payload: Optional[Dict[str, Any]] = None
+    if result.intent.task_kind is TaskKind.CREATE_AND_REPORT:
+        try:
+            from agent.content.orchestrator import generate_daily_bundle
+
+            drafts = generate_daily_bundle(run_date=result.plan.run_date)
+            effective_requester_id, effective_channel_id = _resolve_approval_session_identity(
+                requester_id,
+                channel_id,
+            )
+            bundle = create_daily_blog_approval_bundle(
+                drafts,
+                result,
+                run_date=result.plan.run_date,
+                requester_id=effective_requester_id,
+                channel_id=effective_channel_id,
+                session_store=store,
+            )
+            if bundle is not None:
+                daily_blog_bundle_payload = bundle.to_dict()
+        except Exception as exc:
+            # Best-effort only: the bundle is an additive report on top of the
+            # existing coo_orchestrate response — never fail the tool call for it.
+            logger.warning("daily_blog_bundle generation failed: %s", exc)
+            daily_blog_bundle_payload = None
+
     return {
         "intent": {
             "raw_text": result.intent.raw_text,
@@ -192,6 +235,7 @@ def _format_tool_response(
         "next_actions": result.next_actions,
         "approval_report_markdown": approval_report.to_markdown(),
         "approval_session": approval_session_payload,
+        "daily_blog_bundle": daily_blog_bundle_payload,
     }
 
 
@@ -228,15 +272,21 @@ def check_coo_requirements() -> bool:
 COO_ORCHESTRATE_SCHEMA = {
     "name": "coo_orchestrate",
     "description": (
-        "Hermes COO orchestration for the content Execution Engine (Repository 2). "
-        "Analyzes CEO intent, builds an execution plan, evaluates policy against "
-        "current pipeline state, and selects skills — **without executing them**.\n\n"
+        "Hermes COO orchestration. Analyzes CEO intent, builds an execution plan, "
+        "evaluates policy, and selects skills.\n\n"
+        "For CREATE_AND_REPORT intents (e.g. '오늘 블로그 글 4개 작성해서 보고해줘') "
+        "this ACTUALLY GENERATES content: runs Hermes' own Research/Planning/"
+        "Writing/Quality stages for wordpress/blogspot/tistory/naver (fixed launch "
+        "categories) and returns a `daily_blog_bundle` with one CEO approval item "
+        "per platform. This calls a real LLM provider (or CONTENT_LLM_PROVIDER=mock) "
+        "and writes local draft files — it is not a no-op for this intent.\n\n"
         "Safeguards (non-negotiable): auto_apply is always false, review_required "
-        "is always true. Never auto-approve, auto-publish, auto-apply strategy, "
-        "or auto-apply learning. Does not mutate Repository 2 files.\n\n"
+        "is always true. Never auto-approve or auto-publish — no platform publisher "
+        "is ever called from this tool. Never touches Repository 2 "
+        "(multi-content-pipeline) in any way.\n\n"
         "Use for CEO requests such as content creation/reporting, approval review, "
-        "or daily pipeline briefs. Read `formatted_report` / `ceo_message` in the "
-        "response before invoking any Execution Engine skill."
+        "or daily pipeline briefs. Read `daily_blog_bundle.report_markdown` / "
+        "`ceo_message` in the response before invoking any further skill."
     ),
     "parameters": {
         "type": "object",
