@@ -123,28 +123,15 @@ def _format_tool_response(
     ``approval_session`` — pending in-memory CEO approval session (Phase 5C).
     Both message fields are returned so Phase 5C Discord UX can choose which to display.
     """
-    approval_report = build_approval_report(result)
     store = session_store or get_default_session_store()
-    approval_session_payload: Optional[Dict[str, Any]] = None
-    if should_create_approval_session(approval_report):
-        effective_requester_id, effective_channel_id = _resolve_approval_session_identity(
-            requester_id,
-            channel_id,
-        )
-        approval_session = create_approval_session(
-            approval_report,
-            result,
-            requester_id=effective_requester_id,
-            channel_id=effective_channel_id,
-            store=store,
-        )
-        approval_session_payload = approval_session.to_dict()
 
     # Content generation only runs for CREATE_AND_REPORT — every other intent
     # (approve/publish, review, daily brief, verify) must never trigger LLM
     # calls or file writes here. This is the ONE real side effect of this
     # tool: it runs Hermes' own Research→Planning→Writing→Quality stages
-    # (agent/content/orchestrator.py) for the 4 launch-policy platforms.
+    # (agent/content/orchestrator.py) for the 4 launch-policy platforms —
+    # BEFORE any approval session is created, so approval is requested only
+    # once the 4 drafts (and their quality-gate results) already exist.
     # No publisher is ever called from this path — only after CEO approval.
     daily_blog_bundle_payload: Optional[Dict[str, Any]] = None
     if result.intent.task_kind is TaskKind.CREATE_AND_REPORT:
@@ -171,6 +158,30 @@ def _format_tool_response(
             # existing coo_orchestrate response — never fail the tool call for it.
             logger.warning("daily_blog_bundle generation failed: %s", exc)
             daily_blog_bundle_payload = None
+
+    # The per-platform daily_blog_bundle sessions ARE the CEO approval surface
+    # for CREATE_AND_REPORT — skip the separate, generic COO approval session
+    # so Discord never shows two competing approval cards for one request.
+    # Every other intent (and CREATE_AND_REPORT if bundle generation failed)
+    # keeps the existing single approval_session behavior unchanged.
+    approval_report = build_approval_report(result)
+    approval_session_payload: Optional[Dict[str, Any]] = None
+    skip_generic_session = (
+        result.intent.task_kind is TaskKind.CREATE_AND_REPORT and daily_blog_bundle_payload is not None
+    )
+    if not skip_generic_session and should_create_approval_session(approval_report):
+        effective_requester_id, effective_channel_id = _resolve_approval_session_identity(
+            requester_id,
+            channel_id,
+        )
+        approval_session = create_approval_session(
+            approval_report,
+            result,
+            requester_id=effective_requester_id,
+            channel_id=effective_channel_id,
+            store=store,
+        )
+        approval_session_payload = approval_session.to_dict()
 
     return {
         "intent": {

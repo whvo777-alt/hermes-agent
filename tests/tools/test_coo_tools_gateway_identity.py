@@ -202,11 +202,15 @@ class TestCooOrchestrateCeoMessageFallback(unittest.TestCase):
 
         payload = json.loads(raw)
         self.assertEqual(payload["intent"]["task_kind"], "create_and_report")
-        session = payload["approval_session"]
-        self.assertIsNotNone(session)
-        self.assertEqual(session["execution_ticket_id"], "")
-        self.assertFalse(session["execution_dispatched"])
-        self.assertFalse(session["publish_dispatched"])
+        # The per-platform daily_blog_bundle sessions are the approval
+        # surface for create_and_report — no separate generic COO approval
+        # session/card is created alongside them.
+        self.assertIsNone(payload["approval_session"])
+        bundle = payload["daily_blog_bundle"]
+        self.assertIsNotNone(bundle)
+        self.assertEqual(len(bundle["items"]), 4)
+        for item in bundle["items"]:
+            self.assertEqual(item["session"]["status"], "pending")
 
     def test_empty_ceo_message_without_context_still_errors(self) -> None:
         with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
