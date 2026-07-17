@@ -9513,6 +9513,30 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         if canonical == "retry":
             return await self._handle_retry_command(event)
+
+        # Hermes-native content routing must run before the generic agent loop
+        # claims the session and before any skill loader can select the legacy
+        # Repository2 content-pipeline-coo skill.  This is a routing-only
+        # bypass for the Discord natural-language daily blog request; it does
+        # not alter Research/Planning/Writing/Quality/Publisher code.
+        try:
+            from gateway.native_content_route import handle_native_content_request
+
+            _native_content_response = await handle_native_content_request(event, source)
+        except Exception as _native_content_exc:
+            logger.warning("Hermes Native Flow route failed: %s", _native_content_exc, exc_info=True)
+            if (
+                str(getattr(source.platform, "value", source.platform)) == "discord"
+                and not command
+                and "오늘" in str(event.text or "")
+                and "블로그" in str(event.text or "")
+                and "4" in str(event.text or "")
+                and "보고" in str(event.text or "")
+            ):
+                return f"Hermes Native Flow route failed before legacy fallback: {_native_content_exc}"
+            _native_content_response = None
+        if _native_content_response is not None:
+            return _native_content_response
         
         if canonical == "undo":
             async def _do_undo():
