@@ -140,7 +140,7 @@ class CategoryVisual:
     style_index: int = 0
     badge_kind: str = "checklist"
     layout: str = "card-right"  # card-right | band-left | split-diagonal
-    hero_mode: str = "card"  # card | photo
+    hero_mode: str = "card"  # card | photo (photo = full-bleed gradient mood art, not a real photo)
 
 
 def _style_index(seed: str) -> int:
@@ -327,7 +327,8 @@ def _photo_hero_svg(
     category_name: str,
     topic_title: str,
 ) -> str:
-    """Cinematic full-bleed hero — photo-like atmosphere, no platform stamp."""
+    """Cinematic full-bleed hero — an SVG gradient + accent shapes evoking a
+    photo-like mood (no actual photograph/raster image involved), no platform stamp."""
     title_svg = "\n  ".join(
         f'<text x="96" y="{250 + i * 64}" font-size="54" fill="#ffffff" '
         f'font-family="\'Noto Sans KR\', \'NanumGothic\', Arial, sans-serif" font-weight="800">'
@@ -570,7 +571,7 @@ def render_hero_png(
     draw = ImageDraw.Draw(img, "RGBA")
 
     if visual.hero_mode == "photo":
-        # Full-bleed cinematic gradient (photo-like), white title.
+        # Full-bleed cinematic gradient (mood art, not an actual photograph), white title.
         for y in range(height):
             t = y / max(height - 1, 1)
             row = tuple(round(a + (b - a) * t) for a, b in zip(main_rgb, accent_rgb))

@@ -147,7 +147,8 @@ def tip_bar_style(text: str, *, seed: str = "") -> str:
 
 
 def choose_hero_mode(*, topic_title: str = "", category_id: str = "", style_seed: str = "") -> str:
-    """Pick photo-like or card hero from topic situation + seed (roughly 50/50).
+    """Pick "photo" (full-bleed gradient mood art, not an actual photograph) or
+    "card" hero from topic situation + seed (roughly 50/50).
 
     Photo mode prefers experiential / body / travel-ish topics;
     card mode prefers checklists / criteria / comparison topics.
