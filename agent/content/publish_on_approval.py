@@ -367,6 +367,8 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
             publishable_content,
             focus_keyword=focus_keyword,
             category_id=item.category_id,
+            platform_id="wordpress",
+            seed=title,
             site_url=site_url,
             auth_header=auth_header,
             live=wp_live,
@@ -560,6 +562,11 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
     if platform_id == "blogspot":
         blogspot_title = extract_title(blog_content, item.topic_title)
         publishable = _blogspot_publishable_markdown(blog_content)
+        from agent.content.seo_enrich import append_external_links
+
+        publishable = append_external_links(
+            publishable, category_id=item.category_id, platform_id="blogspot", seed=blogspot_title,
+        )
         return create_blogspot_draft(
             markdown=publishable,
             title=blogspot_title,

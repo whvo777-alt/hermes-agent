@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import httpx
 
+from agent.content.visual_accents import _seed_int
+
 _TIMEOUT = 30.0
 
 # Trusted outbound references by category. Real institutional URLs only —
@@ -20,22 +22,36 @@ _EXTERNAL_LINKS: Dict[str, List[Tuple[str, str]]] = {
     "health": [
         ("식품의약품안전처", "https://www.mfds.go.kr/"),
         ("질병관리청", "https://www.kdca.go.kr/"),
+        ("국가건강정보포털", "https://health.kdca.go.kr/"),
+        ("한국건강증진개발원", "https://www.khealth.or.kr/"),
+        ("대한의학회", "https://www.kams.or.kr/"),
     ],
     "finance": [
         ("금융감독원", "https://www.fss.or.kr/"),
         ("기획재정부", "https://www.moef.go.kr/"),
+        ("한국소비자원", "https://www.kca.go.kr/"),
+        ("서민금융진흥원", "https://www.kinfa.or.kr/"),
+        ("한국조세재정연구원", "https://www.kipf.re.kr/kor/"),
     ],
     "it-tech": [
         ("한국지능정보사회진흥원", "https://www.nia.or.kr/"),
         ("개인정보보호위원회", "https://www.pipc.go.kr/"),
+        ("한국인터넷진흥원", "https://www.kisa.or.kr/"),
+        ("정보통신정책연구원", "https://www.kisdi.re.kr/"),
+        ("과학기술정보통신부", "https://www.msit.go.kr/"),
     ],
     "self-dev": [
         ("고용노동부", "https://www.moel.go.kr/"),
         ("한국직업능력연구원", "https://www.krivet.re.kr/"),
+        ("한국산업인력공단", "https://www.hrdkorea.or.kr/"),
+        ("국가평생교육진흥원", "https://www.nile.or.kr/"),
     ],
     "parenting": [
         ("질병관리청", "https://www.kdca.go.kr/"),
         ("여성가족부", "https://www.mogef.go.kr/"),
+        ("육아정책연구소", "https://www.kicce.re.kr/"),
+        ("아이사랑", "https://www.childcare.go.kr/"),
+        ("보건복지부", "https://www.mohw.go.kr/"),
     ],
     "travel": [
         ("대한민국 구석구석", "https://korean.visitkorea.or.kr/"),
@@ -45,6 +61,15 @@ _EXTERNAL_LINKS: Dict[str, List[Tuple[str, str]]] = {
 _DEFAULT_EXTERNAL = [
     ("대한민국 정부 포털", "https://www.gov.kr/"),
 ]
+
+_EXTERNAL_LINKS_TOPIC_LABEL: Dict[str, str] = {
+    "health": "건강·생활",
+    "finance": "재테크·경제",
+    "it-tech": "IT·기술",
+    "self-dev": "자기계발·경력",
+    "parenting": "육아·가족",
+}
+_DEFAULT_TOPIC_LABEL = "건강·생활"
 
 _KEYWORD_SYNONYMS: Dict[str, List[str]] = {
     "요가": ["수업", "동작", "스트레칭", "매트 운동", "운동"],
@@ -187,11 +212,31 @@ def _has_internal_link(markdown: str, site_url: str) -> bool:
     return bool(re.search(rf"\]\(https?://{re.escape(host)}", markdown or "", flags=re.I))
 
 
-def append_external_links(markdown: str, *, category_id: str) -> str:
+def _pick_external_links(
+    candidates: List[Tuple[str, str]], *, platform_id: str, category_id: str, seed: str,
+) -> List[Tuple[str, str]]:
+    """Deterministically pick 2 candidates from the category pool.
+
+    Seeded by (seed, platform_id, category_id) so re-rendering the same
+    document always reproduces the same pair, but different platforms
+    publishing the same category don't collide on the same two institutions.
+    """
+    if len(candidates) <= 2:
+        return list(candidates)
+    start = _seed_int(seed, platform_id, category_id) % len(candidates)
+    return [candidates[start], candidates[(start + 1) % len(candidates)]]
+
+
+def append_external_links(
+    markdown: str, *, category_id: str, platform_id: str = "", seed: str = "",
+) -> str:
     """Append a short DoFollow reference section if none exist yet."""
     if _has_external_link(markdown):
         return markdown
-    links = _EXTERNAL_LINKS.get(category_id, _DEFAULT_EXTERNAL)[:2]
+    candidates = _EXTERNAL_LINKS.get(category_id, _DEFAULT_EXTERNAL)
+    links = _pick_external_links(
+        candidates, platform_id=platform_id, category_id=category_id, seed=seed,
+    )
     if not links:
         return markdown
     if re.search(r"^##\s*(참고|출처|외부)", markdown or "", flags=re.M):
@@ -207,7 +252,10 @@ def append_external_links(markdown: str, *, category_id: str) -> str:
     lines = [
         "",
         "## 참고할 수 있는 공식 자료",
-        "아래 기관 자료는 일반 건강·생활 정보를 확인할 때 참고할 수 있습니다.",
+        (
+            f"아래 기관 자료는 일반 {_EXTERNAL_LINKS_TOPIC_LABEL.get(category_id, _DEFAULT_TOPIC_LABEL)} "
+            "정보를 확인할 때 참고할 수 있습니다."
+        ),
     ]
     lines.extend(f"- [{label}]({url})" for label, url in links)
     return markdown.rstrip() + "\n" + "\n".join(lines) + "\n"
@@ -303,6 +351,8 @@ def enrich_wordpress_markdown_for_seo(
     *,
     focus_keyword: str,
     category_id: str,
+    platform_id: str = "wordpress",
+    seed: str = "",
     site_url: str = "",
     auth_header: str = "",
     exclude_post_id: Optional[int] = None,
@@ -313,7 +363,9 @@ def enrich_wordpress_markdown_for_seo(
     content = thin_focus_keyword(original, focus_keyword)
     thinned = content != original
     before_links = content
-    content = append_external_links(content, category_id=category_id)
+    content = append_external_links(
+        content, category_id=category_id, platform_id=platform_id, seed=seed,
+    )
     external_added = content != before_links
 
     internal: List[Dict[str, str]] = []
