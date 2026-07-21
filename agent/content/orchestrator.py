@@ -7,14 +7,15 @@ file + one hero image per platform per day (not a JSON queue).
 
 Topic selection is deterministic (date-seeded pick from the category's
 keyword list) — no LLM call, per the token-saving principle (LLM is used
-only for Research/Planning/Writing/rewrite).
+only for Research/Planning/Writing/rewrite). Already-written topics and
+main keywords are hard-blocked (never repeated on the same platform).
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date as date_cls
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,7 +25,16 @@ from agent.content.config.launch_policy import get_launch_category
 from agent.content.config.platforms import Platform, find_platform
 from agent.content.images.hero_image import HeroImage, create_hero_image, insert_hero_image
 from agent.content.learning.feedback import get_recent_feedback
-from agent.content.memory.content_memory import add_content, build_memory_check, load_memory, save_memory
+from agent.content.memory.content_memory import (
+    _normalize_text,
+    add_content,
+    build_memory_check,
+    is_topic_blocked,
+    load_memory,
+    save_memory,
+    used_main_keywords,
+)
+from agent.content.memory.corpus_sync import sync_written_corpus
 from agent.content.planning.planning import run_planning
 from agent.content.quality.quality_gate import QualityGateResult, run_quality_gate
 from agent.content.research.research import run_research
@@ -33,19 +43,58 @@ from agent.content.writing.writer import write_blog_post
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+class DuplicateTopicError(RuntimeError):
+    """Raised when every category keyword is already used on this platform."""
+
+
 def _drafts_dir(date: str) -> Path:
     override = os.environ.get("HERMES_CONTENT_DRAFTS_DIR")
     base = Path(override) if override else _REPO_ROOT / "data" / "content_drafts"
     return base / date
 
 
-def _pick_daily_topic(category: Category, platform_id: str, run_date: str) -> Dict[str, Any]:
-    """Deterministic (no-LLM) topic pick — date-seeded rotation over category keywords."""
+def _pick_daily_topic(
+    category: Category,
+    platform_id: str,
+    run_date: str,
+    memory: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Deterministic topic pick that never repeats a used main keyword."""
+    keywords = list(category.keywords) or [category.name]
     seed = int(hashlib.sha256(f"{run_date}:{platform_id}:{category.id}".encode()).hexdigest(), 16)
-    keyword = category.keywords[seed % len(category.keywords)] if category.keywords else category.name
-    topic_title = f"{keyword} 확인할 때 알아야 할 기준"
-    topic_id = f"{run_date}-{platform_id}-{category.id}-{seed % 10000}"
-    return {"topic_id": topic_id, "topic_title": topic_title, "topic_keywords": [keyword]}
+    mem = memory if memory is not None else load_memory()
+    used = used_main_keywords(
+        mem, date=run_date, platform=platform_id, category=category.id
+    )
+
+    # Rotate from the date seed, then walk the full keyword list until free.
+    for offset in range(len(keywords)):
+        keyword = keywords[(seed + offset) % len(keywords)]
+        topic_title = f"{keyword} 확인할 때 알아야 할 기준"
+        topic_id = f"{run_date}-{platform_id}-{category.id}-{(seed + offset) % 10000}"
+        query = {
+            "date": run_date,
+            "platform": platform_id,
+            "category": category.id,
+            "topic": topic_title,
+            "title": topic_title,
+            "mainKeyword": keyword,
+            "slug": topic_id,
+        }
+        if _normalize_text(keyword) in used:
+            continue
+        if is_topic_blocked(mem, query):
+            continue
+        return {
+            "topic_id": topic_id,
+            "topic_title": topic_title,
+            "topic_keywords": [keyword],
+        }
+
+    raise DuplicateTopicError(
+        f"{platform_id}/{category.id}: 사용 가능한 새 주제가 없습니다. "
+        f"이미 쓴 키워드={sorted(used) or list(keywords)}"
+    )
 
 
 @dataclass
@@ -89,15 +138,26 @@ def generate_platform_draft(
     category = get_launch_category(platform_id)
     resolved_date = run_date or date_cls.today().isoformat()
 
-    topic = _pick_daily_topic(category, platform_id, resolved_date)
     if prior_feedback is None:
         prior_feedback = get_recent_feedback(platform_id=platform_id)
 
-    memory = load_memory()
+    # Absolute rule: merge local drafts + live WP posts before picking.
+    memory = sync_written_corpus(
+        platform_id=platform_id,
+        category_id=category.id,
+        category_keywords=category.keywords,
+    )
+    topic = _pick_daily_topic(category, platform_id, resolved_date, memory=memory)
+
     memory_check = build_memory_check(
         memory, date=resolved_date, topic_title=topic["topic_title"], topic_id=topic["topic_id"],
         topic_keywords=topic["topic_keywords"], category_id=category.id, platform_id=platform_id,
     )
+    if memory_check.get("blocked"):
+        raise DuplicateTopicError(
+            f"주제 중복 차단: {topic['topic_title']} "
+            f"(similar={memory_check.get('similarCount')})"
+        )
 
     research_content = run_research(
         platform_id=platform.id, platform_label=platform.label, category_id=category.id,
@@ -127,6 +187,7 @@ def generate_platform_draft(
         out_dir=platform_dir / "images", platform_id=platform.id, platform_label=platform.label,
         category_id=category.id, category_name=category.name, category_keywords=category.keywords,
         topic_title=topic["topic_title"], blog_content=blog_content,
+        style_seed=topic["topic_id"],
     )
     blog_content = insert_hero_image(platform_id=platform.id, blog_content=blog_content, image=image)
 
@@ -159,8 +220,23 @@ def generate_platform_draft(
     )
 
 
-def generate_daily_bundle(*, run_date: Optional[str] = None) -> List[ContentDraft]:
-    """Generate one draft per launch-policy platform (wordpress/blogspot/tistory/naver)."""
+def generate_daily_bundle(
+    *,
+    run_date: Optional[str] = None,
+    platforms: Optional[List[str]] = None,
+) -> List[ContentDraft]:
+    """Generate drafts for launch-policy platforms.
+
+    When ``platforms`` is omitted, all launch platforms are generated.
+    Pass a subset (e.g. ``["wordpress"]``) for sequential verification.
+    """
     from agent.content.config.launch_policy import LAUNCH_CATEGORY_MAP
 
-    return [generate_platform_draft(platform_id=platform_id, run_date=run_date) for platform_id in LAUNCH_CATEGORY_MAP]
+    selected = list(platforms) if platforms else list(LAUNCH_CATEGORY_MAP)
+    unknown = [platform_id for platform_id in selected if platform_id not in LAUNCH_CATEGORY_MAP]
+    if unknown:
+        raise ValueError(f"Unknown platform(s) for daily bundle: {', '.join(unknown)}")
+    return [
+        generate_platform_draft(platform_id=platform_id, run_date=run_date)
+        for platform_id in selected
+    ]

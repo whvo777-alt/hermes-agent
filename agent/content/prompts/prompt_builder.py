@@ -26,6 +26,8 @@ PROMPT_SIZE_GUARD = {"min_chars": 3000, "max_chars": 25000, "token_chars_approx"
 _COMMON_BLOCKS = {
     "identity": "common/identity.md",
     "quality": "common/quality.md",
+    "magazine_style": "common/magazine-style.md",
+    "no_duplicate": "common/no-duplicate.md",
     "eeat": "common/eeat.md",
     "fact_check": "common/fact-check.md",
     "anti_ai": "common/anti-ai.md",
@@ -49,8 +51,14 @@ _CATEGORY_BLOCKS = {
 _PLATFORM_RULE_HINTS = {
     "naver": "이미지 슬롯 5개, 태그 10개 이상, 댓글/이웃 CTA 포함",
     "tistory": "목차, H2/H3, 내부링크 후보, 대표 이미지 ALT, 정보 제공 목적 명시",
-    "blogspot": "URL 슬러그, 메타 디스크립션, FAQ, H2 구조",
-    "wordpress": "출처/참고 근거, 개인차 안내, 전문가 상담 권장 문구(민감 카테고리 시)",
+    "blogspot": (
+        "밀도 있는 실전 가이드 4000~6500자, H2 4~5개, 고친 예시 문장, "
+        "AI/양산블로그 톤 금지, 메타는 글 맨 아래"
+    ),
+    "wordpress": (
+        "밀도 있는 건강 정보 4000~6500자, H2 4~5개, 확인 기준·예외·주의, "
+        "AI/양산블로그 톤 금지, 약사 문체(자격 가장 금지), 메타는 글 맨 아래"
+    ),
 }
 
 
@@ -134,6 +142,8 @@ def build_system_prompt(*, platform_id: str, category_id: str, research_summary:
         _read_prompt_block(_PLATFORM_BLOCKS[platform_id]),
         _read_prompt_block(_CATEGORY_BLOCKS[category_id]),
         _read_prompt_block(_COMMON_BLOCKS["quality"]),
+        _read_prompt_block(_COMMON_BLOCKS["magazine_style"]),
+        _read_prompt_block(_COMMON_BLOCKS["no_duplicate"]),
         _read_prompt_block(_COMMON_BLOCKS["eeat"]),
         _read_prompt_block(_COMMON_BLOCKS["fact_check"]),
         _read_prompt_block(_COMMON_BLOCKS["anti_ai"]),

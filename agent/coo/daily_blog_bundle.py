@@ -25,6 +25,7 @@ Design constraints:
 from __future__ import annotations
 
 import uuid
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -46,28 +47,46 @@ class DailyBlogApprovalItem:
     """One platform's blog draft, paired with its own CEO approval session."""
 
     platform: str
+    platform_label: str
+    category_id: str
+    category_name: str
     topic_title: str
     quality_score: int
     quality_passed: bool
     quality_warnings: List[str]
+    human_review_items: List[str]
     blog_file: str
+    blog_summary: str
     blog_preview: str
+    preview_chunks: List[str]
     image_file: str
     image_alt: str
     session: CEOApprovalSession
+    revision_requested: bool = False
+    revision_note: str = ""
+    publish_result: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "platform": self.platform,
+            "platform_label": self.platform_label,
+            "category_id": self.category_id,
+            "category_name": self.category_name,
             "topic_title": self.topic_title,
             "quality_score": self.quality_score,
             "quality_passed": self.quality_passed,
             "quality_warnings": self.quality_warnings,
+            "human_review_items": list(self.human_review_items),
             "blog_file": self.blog_file,
+            "blog_summary": self.blog_summary,
             "blog_preview": self.blog_preview,
+            "preview_chunks": list(self.preview_chunks),
             "image_file": self.image_file,
             "image_alt": self.image_alt,
             "session": self.session.to_dict(),
+            "revision_requested": self.revision_requested,
+            "revision_note": self.revision_note,
+            "publish_result": self.publish_result,
         }
 
 
@@ -105,6 +124,16 @@ class DailyBlogApprovalBundleStore:
     def get(self, bundle_id: str) -> Optional[DailyBlogApprovalBundle]:
         return self._bundles.get(bundle_id)
 
+    def find_by_session(
+        self, session_id: str
+    ) -> Optional[tuple[DailyBlogApprovalBundle, DailyBlogApprovalItem]]:
+        """Find the existing bundle/item pair behind a Discord custom_id."""
+        for bundle in self._bundles.values():
+            for item in bundle.items:
+                if item.session.session_id == session_id:
+                    return bundle, item
+        return None
+
 
 _DEFAULT_BUNDLE_STORE = DailyBlogApprovalBundleStore()
 
@@ -113,9 +142,107 @@ def get_default_bundle_store() -> DailyBlogApprovalBundleStore:
     return _DEFAULT_BUNDLE_STORE
 
 
-def _preview(blog_content: str, max_chars: int = 400) -> str:
-    body = blog_content or ""
-    return body[:max_chars] + ("…" if len(body) > max_chars else "")
+def _strip_frontmatter(content: str) -> str:
+    return re.sub(r"^---[\s\S]*?---\s*", "", content or "").strip()
+
+
+def _safe_excerpt(text: str, max_chars: int) -> str:
+    """Shorten at a sentence/word boundary without breaking markdown lines."""
+    value = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(value) <= max_chars:
+        return value
+    prefix = value[: max_chars + 1]
+    sentence_ends = [prefix.rfind(mark) for mark in (". ", "다. ", "요. ", "? ", "! ")]
+    cut = max(sentence_ends)
+    if cut >= max_chars // 2:
+        return prefix[: cut + 1].strip()
+    word_cut = prefix.rfind(" ", 0, max_chars)
+    return (prefix[:word_cut] if word_cut >= max_chars // 2 else prefix[:max_chars]).rstrip() + "…"
+
+
+def _paragraphs(lines: List[str]) -> List[str]:
+    paragraphs: List[str] = []
+    buffer: List[str] = []
+
+    def flush() -> None:
+        value = " ".join(buffer).strip()
+        if value:
+            paragraphs.append(value)
+        buffer.clear()
+
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            flush()
+            continue
+        if line.startswith(("![", "> ")):
+            continue
+        if re.match(r"^[-*]\s+", line):
+            flush()
+            paragraphs.append(line)
+            continue
+        buffer.append(line)
+    flush()
+    return paragraphs
+
+
+def build_structured_preview(blog_content: str) -> tuple[str, str, List[str]]:
+    """Return summary/full preview/chunks sampled across the whole article.
+
+    The preview includes the title, introduction, representative H2 sections,
+    and a conclusion section when present. It never slices the raw file at an
+    arbitrary character offset.
+    """
+    body = _strip_frontmatter(blog_content)
+    lines = body.splitlines()
+    title = next(
+        (re.sub(r"^#\s+", "", line).strip() for line in lines if re.match(r"^#\s+", line)),
+        "제목 없음",
+    )
+
+    h2_indexes = [index for index, line in enumerate(lines) if re.match(r"^##\s+", line)]
+    intro_end = h2_indexes[0] if h2_indexes else len(lines)
+    intro_paragraphs = _paragraphs(
+        [line for line in lines[:intro_end] if not re.match(r"^#\s+", line)]
+    )
+    intro = next((p for p in intro_paragraphs if len(p) >= 40), "")
+    summary = _safe_excerpt(intro or title, 420)
+
+    sections: List[tuple[str, str]] = []
+    for offset, start in enumerate(h2_indexes):
+        end = h2_indexes[offset + 1] if offset + 1 < len(h2_indexes) else len(lines)
+        heading = re.sub(r"^##\s+", "", lines[start]).strip()
+        section_paragraphs = _paragraphs(lines[start + 1 : end])
+        detail = next((p for p in section_paragraphs if len(p) >= 30), "")
+        if detail:
+            sections.append((heading, _safe_excerpt(detail, 300)))
+
+    conclusion_pattern = re.compile(r"마무리|결론|정리|끝으로|체크리스트", re.I)
+    conclusion = next(
+        ((heading, detail) for heading, detail in reversed(sections) if conclusion_pattern.search(heading)),
+        sections[-1] if sections else None,
+    )
+    selected = sections[:3]
+    if conclusion and conclusion not in selected:
+        selected.append(conclusion)
+
+    parts = [f"# {title}", f"**도입부 핵심**\n{summary}"]
+    parts.extend(f"## {heading}\n{detail}" for heading, detail in selected)
+    preview = "\n\n".join(parts)
+
+    chunks: List[str] = []
+    current = ""
+    for part in parts:
+        candidate = f"{current}\n\n{part}".strip() if current else part
+        if len(candidate) <= 950:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+        current = part
+    if current:
+        chunks.append(current)
+    return summary, preview, chunks
 
 
 def _draft_section(draft: ContentDraft) -> CEOApprovalReportSection:
@@ -171,18 +298,29 @@ def create_daily_blog_approval_bundle(
     report = build_daily_blog_report(drafts, run_date)
     items: List[DailyBlogApprovalItem] = []
     for draft in drafts:
+        blog_summary, blog_preview, preview_chunks = build_structured_preview(
+            draft.blog_content
+        )
         session = create_approval_session(
             report, orchestration_result, requester_id=requester_id, channel_id=channel_id, store=session_store,
         )
         items.append(
             DailyBlogApprovalItem(
                 platform=draft.platform.id,
+                platform_label=draft.platform.label,
+                category_id=draft.category.id,
+                category_name=draft.category.name,
                 topic_title=draft.topic_title,
                 quality_score=draft.quality.score,
                 quality_passed=draft.quality.passed,
                 quality_warnings=list(draft.quality.warnings),
+                human_review_items=list(
+                    (draft.quality.metadata or {}).get("humanReviewNeeded") or []
+                ),
                 blog_file=draft.blog_file,
-                blog_preview=_preview(draft.blog_content),
+                blog_summary=blog_summary,
+                blog_preview=blog_preview,
+                preview_chunks=preview_chunks,
                 image_file=draft.image.file,
                 image_alt=draft.image.alt,
                 session=session,

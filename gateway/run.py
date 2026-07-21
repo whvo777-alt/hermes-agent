@@ -9522,18 +9522,42 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         try:
             from gateway.native_content_route import handle_native_content_request
 
-            _native_content_response = await handle_native_content_request(event, source)
+            _native_adapter = self.adapters.get(source.platform)
+            _native_approval_sender = None
+            if _native_adapter is not None and hasattr(
+                _native_adapter, "send_daily_blog_approval"
+            ):
+                _native_metadata = self._thread_metadata_for_source(source)
+
+                async def _send_native_approval_item(item_payload):
+                    return await _native_adapter.send_daily_blog_approval(
+                        str(source.chat_id),
+                        item_payload,
+                        metadata=_native_metadata,
+                    )
+
+                _native_approval_sender = _send_native_approval_item
+
+            _native_content_response = await handle_native_content_request(
+                event,
+                source,
+                approval_sender=_native_approval_sender,
+            )
         except Exception as _native_content_exc:
             logger.warning("Hermes Native Flow route failed: %s", _native_content_exc, exc_info=True)
-            if (
-                str(getattr(source.platform, "value", source.platform)) == "discord"
-                and not command
-                and "오늘" in str(event.text or "")
-                and "블로그" in str(event.text or "")
-                and "4" in str(event.text or "")
-                and "보고" in str(event.text or "")
-            ):
-                return f"Hermes Native Flow route failed before legacy fallback: {_native_content_exc}"
+            # Fail closed for any matched Native Flow phrase — never fall through
+            # to content-pipeline-coo / generic English COO approval cards.
+            try:
+                from gateway.native_content_route import is_native_content_request as _is_native
+
+                _matched_native = _is_native(event, source)
+            except Exception:
+                _matched_native = False
+            if _matched_native:
+                return (
+                    "Hermes Native Flow 실패로 원고 승인을 준비하지 못했습니다. "
+                    f"레거시 경로로 전환하지 않습니다. 원인: {_native_content_exc}"
+                )
             _native_content_response = None
         if _native_content_response is not None:
             return _native_content_response

@@ -18,6 +18,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 _RECENT_DAYS = 30
+# Same-platform main keyword / title collisions are never allowed again.
+_BLOCK_FOREVER_DAYS = 3650
+
+_BLOCKING_REASONS = frozenset(
+    {
+        "same_topic",
+        "same_title",
+        "same_slug",
+        "same_main_keyword",
+        "similar_title",
+        "topic_contains",
+    }
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_MEMORY_FILE = _REPO_ROOT / "data" / "content_memory.json"
@@ -54,8 +67,19 @@ def _days_between(a: str, b: str) -> float:
     return abs((right - left).days)
 
 
+_TITLE_STOPWORDS = frozenset(
+    {
+        "확인할", "알아야", "할때", "할", "때", "위한", "하는", "되는", "있는", "없는",
+        "정리", "기준", "방법", "가이드", "체크", "초보", "시작", "전", "후", "가지",
+        "단계", "안전", "체크리스트", "알아두면", "좋은", "꼭", "봐야", "할것",
+        "관련", "정보", "블로그", "글",
+    }
+)
+
+
 def _tokenize(value: Optional[str]) -> set:
-    return {t for t in _normalize_text(value).split(" ") if len(t) >= 2}
+    tokens = {t for t in _normalize_text(value).split(" ") if len(t) >= 2}
+    return {t for t in tokens if t not in _TITLE_STOPWORDS and not re.fullmatch(r"\d+", t)}
 
 
 def _token_overlap_score(a: Optional[str], b: Optional[str]) -> float:
@@ -124,14 +148,8 @@ def _dedupe_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _recent_items(memory: Dict[str, Any], date: str, days: int = _RECENT_DAYS) -> List[Dict[str, Any]]:
-    result = []
-    for item in memory.get("items") or []:
-        item_date = item.get("date")
-        if not item_date or item_date == date:
-            continue
-        if _days_between(item_date, date) <= days:
-            result.append(item)
-    return result
+    # Include same-date drafts so regenerating today cannot repeat this morning's topic.
+    return _items_in_window(memory, date=date, days=days, include_same_date=True)
 
 
 def _similarity_reasons(item: Dict[str, Any], query: Dict[str, Any]) -> Dict[str, Any]:
@@ -164,17 +182,33 @@ def _similarity_reasons(item: Dict[str, Any], query: Dict[str, Any]) -> Dict[str
 
 
 def _risk_from_reasons(reasons: List[str]) -> str:
-    if any(r in reasons for r in ("same_topic", "same_title", "same_slug")):
+    # Absolute rule: any topical collision is a hard block (high).
+    if any(r in _BLOCKING_REASONS for r in reasons):
         return "high"
-    if "same_main_keyword" in reasons or "similar_title" in reasons:
-        return "medium"
-    if "topic_contains" in reasons:
-        return "low"
     return "none"
 
 
 def _risk_rank(risk: str) -> int:
     return {"high": 3, "medium": 2, "low": 1, "none": 0}.get(risk, 0)
+
+
+def _items_in_window(
+    memory: Dict[str, Any],
+    *,
+    date: str,
+    days: int,
+    include_same_date: bool = True,
+) -> List[Dict[str, Any]]:
+    result = []
+    for item in memory.get("items") or []:
+        item_date = item.get("date")
+        if not item_date:
+            continue
+        if not include_same_date and item_date == date:
+            continue
+        if _days_between(item_date, date) <= days:
+            result.append(item)
+    return result
 
 
 def load_memory() -> Dict[str, Any]:
@@ -225,7 +259,15 @@ def find_recent_topics(
 
 
 def find_similar_topics(memory: Dict[str, Any], query: Dict[str, Any]) -> List[Dict[str, Any]]:
-    candidates = find_recent_topics(memory, date=query.get("date"), days=query.get("days", _RECENT_DAYS))
+    # Forever window for absolute no-repeat; still filter by platform when provided.
+    days = int(query.get("days") or _BLOCK_FOREVER_DAYS)
+    candidates = find_recent_topics(
+        memory,
+        date=query.get("date"),
+        days=days,
+        category=query.get("category"),
+        platform=query.get("platform"),
+    )
     matches = []
     for item in candidates:
         sim = _similarity_reasons(item, query)
@@ -244,6 +286,29 @@ def find_similar_topics(memory: Dict[str, Any], query: Dict[str, Any]) -> List[D
     return sorted(matches, key=lambda m: (-_risk_rank(m["risk"]), m["daysAgo"] if m["daysAgo"] is not None else 9999))
 
 
+def is_topic_blocked(memory: Dict[str, Any], query: Dict[str, Any]) -> bool:
+    """Hard gate — True means this topic must not be written again."""
+    return bool(find_similar_topics(memory, {**query, "days": _BLOCK_FOREVER_DAYS}))
+
+
+def used_main_keywords(
+    memory: Dict[str, Any],
+    *,
+    date: str,
+    platform: str,
+    category: Optional[str] = None,
+) -> set:
+    """Main keywords already used on this platform (never reuse)."""
+    used = set()
+    for item in find_recent_topics(
+        memory, date=date, days=_BLOCK_FOREVER_DAYS, category=category, platform=platform
+    ):
+        kw = _normalize_text(item.get("mainKeyword") or "")
+        if kw:
+            used.add(kw)
+    return used
+
+
 def build_memory_check(
     memory: Dict[str, Any], *, date: str, topic_title: str, topic_id: str,
     topic_keywords: List[str], category_id: str, platform_id: str,
@@ -253,16 +318,18 @@ def build_memory_check(
     query = {
         "date": date, "platform": platform_id, "category": category_id,
         "topic": topic_title, "title": topic_title, "mainKeyword": main_keyword,
-        "subKeywords": sub_keywords, "slug": topic_id, "days": _RECENT_DAYS,
+        "subKeywords": sub_keywords, "slug": topic_id, "days": _BLOCK_FOREVER_DAYS,
     }
     similar_topics = find_similar_topics(memory, query)[:10]
     same_keyword = any("same_main_keyword" in item["reasons"] for item in similar_topics)
     duplicate_risk = similar_topics[0]["risk"] if similar_topics else "none"
+    blocked = duplicate_risk == "high"
 
     return {
         "date": date, "platform": platform_id, "category": category_id,
         "topicId": topic_id, "topicTitle": topic_title, "mainKeyword": main_keyword,
-        "windowDays": _RECENT_DAYS, "sameKeyword": same_keyword,
-        "duplicateRisk": duplicate_risk, "similarCount": len(similar_topics),
+        "windowDays": _BLOCK_FOREVER_DAYS, "sameKeyword": same_keyword,
+        "duplicateRisk": duplicate_risk, "blocked": blocked,
+        "similarCount": len(similar_topics),
         "similarTopics": similar_topics,
     }

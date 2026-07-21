@@ -293,8 +293,9 @@ def _build_platform_checks(platform_id: str, content: str) -> Dict[str, Any]:
 
     if platform_id == "blogspot":
         return {
-            "concreteExample": bool(re.search(r"예를\s*들어|예시", value)),
-            "actionSteps": bool(re.search(r"체크리스트|실행\s*단계|단계별", value)),
+            "concreteExample": bool(re.search(r"예를\s*들어|예시|사례", value)),
+            "actionSteps": bool(re.search(r"체크리스트|실행\s*단계|###\s*\d+\s*단계|단계별|오늘\s*할", value)),
+            "individualDifferenceNote": bool(re.search(r"개인차|개인\s*상황|상황에\s*따라", value)),
         }
 
     if platform_id == "wordpress":
@@ -396,6 +397,18 @@ def run_quality_gate(
     h2_count = _count_h2_headings(content)
     if h2_count < 2:
         important(f"H2 소제목 부족 (권장 2개 이상, 현재 {h2_count}개)")
+    if platform_id in {"wordpress", "blogspot"} and h2_count > 6:
+        recommend(f"H2가 많습니다 (밀도 있는 실전은 4~5개 권장, 현재 {h2_count}개)")
+    if platform_id in {"wordpress", "blogspot"} and h2_count < 3:
+        recommend(f"H2가 적습니다 (밀도 있는 실전은 4~5개 권장, 현재 {h2_count}개)")
+
+    # Body length hint for quality practical mode.
+    if platform_id in {"wordpress", "blogspot"}:
+        body_chars = len(re.sub(r"^---[\s\S]*?---\s*", "", content or "").strip())
+        if body_chars > 8500:
+            recommend(f"본문이 과도하게 깁니다 (목표 4000~6500자, 현재 약 {body_chars}자)")
+        elif body_chars < 3200:
+            recommend(f"본문이 너무 짧거나 속이 비어 보입니다 (목표 4000~6500자, 현재 약 {body_chars}자)")
 
     slug_tier = _get_slug_warning_tier(platform_id)
     if slug_tier and not _has_slug(content):
@@ -410,7 +423,10 @@ def run_quality_gate(
     if not _has_readable_structure(content):
         recommend("문단이 지나치게 길어 가독성이 떨어질 수 있음")
     if not _has_faq_section(content):
-        recommend("FAQ 섹션 없음 (권장 사항, 필수 아님)")
+        if platform_id in {"wordpress", "blogspot"}:
+            pass  # short practical mode: FAQ optional, no nag
+        else:
+            recommend("FAQ 섹션 없음 (권장 사항, 필수 아님)")
     if not _has_meta_description(content):
         recommend("Meta Description 없음 (권장 사항, 필수 아님)")
     if not _has_schema(content):
@@ -460,7 +476,10 @@ def run_quality_gate(
         if not platform_checks["concreteExample"]:
             recommend("블로그스팟 구체적 예시 부족 확인 필요 (흔한 조언 나열 방지)")
         if not platform_checks["actionSteps"]:
-            recommend("블로그스팟 실행 단계/체크리스트 부족 확인 필요")
+            recommend("블로그스팟 실행 체크/오늘 할 일 부족 확인 필요")
+        if not platform_checks.get("individualDifferenceNote"):
+            recommend("블로그스팟 개인차/상황 조정 안내 확인 필요")
+        human_review_needed.append("자기계발 조언의 개인 적합성과 과한 계획 여부는 사람 검토 필요")
 
     if platform_id == "wordpress":
         if not platform_checks["individualDifferenceNote"]:

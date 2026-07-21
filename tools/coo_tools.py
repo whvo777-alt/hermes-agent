@@ -115,6 +115,7 @@ def _format_tool_response(
     session_store: Optional[CEOApprovalSessionStore] = None,
     requester_id: Optional[str] = None,
     channel_id: Optional[str] = None,
+    platforms: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Build the coo_orchestrate tool payload.
 
@@ -129,16 +130,20 @@ def _format_tool_response(
     # (approve/publish, review, daily brief, verify) must never trigger LLM
     # calls or file writes here. This is the ONE real side effect of this
     # tool: it runs Hermes' own Research→Planning→Writing→Quality stages
-    # (agent/content/orchestrator.py) for the 4 launch-policy platforms —
+    # (agent/content/orchestrator.py) for the selected launch-policy platforms —
     # BEFORE any approval session is created, so approval is requested only
-    # once the 4 drafts (and their quality-gate results) already exist.
+    # once the drafts (and their quality-gate results) already exist.
     # No publisher is ever called from this path — only after CEO approval.
     daily_blog_bundle_payload: Optional[Dict[str, Any]] = None
+    daily_blog_error: Optional[str] = None
     if result.intent.task_kind is TaskKind.CREATE_AND_REPORT:
         try:
             from agent.content.orchestrator import generate_daily_bundle
 
-            drafts = generate_daily_bundle(run_date=result.plan.run_date)
+            drafts = generate_daily_bundle(
+                run_date=result.plan.run_date,
+                platforms=platforms,
+            )
             effective_requester_id, effective_channel_id = _resolve_approval_session_identity(
                 requester_id,
                 channel_id,
@@ -153,22 +158,25 @@ def _format_tool_response(
             )
             if bundle is not None:
                 daily_blog_bundle_payload = bundle.to_dict()
+            else:
+                daily_blog_error = "플랫폼별 원고 승인 번들이 비어 있습니다."
         except Exception as exc:
-            # Best-effort only: the bundle is an additive report on top of the
-            # existing coo_orchestrate response — never fail the tool call for it.
+            # Fail closed: CREATE_AND_REPORT must not fall back to the generic
+            # English COO approval card when draft generation fails.
             logger.warning("daily_blog_bundle generation failed: %s", exc)
             daily_blog_bundle_payload = None
+            daily_blog_error = str(exc)
 
     # The per-platform daily_blog_bundle sessions ARE the CEO approval surface
     # for CREATE_AND_REPORT — skip the separate, generic COO approval session
     # so Discord never shows two competing approval cards for one request.
-    # Every other intent (and CREATE_AND_REPORT if bundle generation failed)
-    # keeps the existing single approval_session behavior unchanged.
+    # Other intents keep the existing single approval_session behavior.
     approval_report = build_approval_report(result)
     approval_session_payload: Optional[Dict[str, Any]] = None
-    skip_generic_session = (
-        result.intent.task_kind is TaskKind.CREATE_AND_REPORT and daily_blog_bundle_payload is not None
-    )
+    if result.intent.task_kind is TaskKind.CREATE_AND_REPORT:
+        skip_generic_session = True
+    else:
+        skip_generic_session = False
     if not skip_generic_session and should_create_approval_session(approval_report):
         effective_requester_id, effective_channel_id = _resolve_approval_session_identity(
             requester_id,
@@ -183,7 +191,7 @@ def _format_tool_response(
         )
         approval_session_payload = approval_session.to_dict()
 
-    return {
+    payload: Dict[str, Any] = {
         "intent": {
             "raw_text": result.intent.raw_text,
             "task_kind": result.intent.task_kind.value,
@@ -248,6 +256,12 @@ def _format_tool_response(
         "approval_session": approval_session_payload,
         "daily_blog_bundle": daily_blog_bundle_payload,
     }
+    if result.intent.task_kind is TaskKind.CREATE_AND_REPORT and daily_blog_bundle_payload is None:
+        payload["error"] = (
+            f"원고 생성 실패: {daily_blog_error or '플랫폼별 원고를 만들지 못했습니다.'}"
+        )
+        payload["approval_session"] = None
+    return payload
 
 
 def coo_orchestrate(
@@ -257,6 +271,7 @@ def coo_orchestrate(
     session_store: Optional[CEOApprovalSessionStore] = None,
     requester_id: Optional[str] = None,
     channel_id: Optional[str] = None,
+    platforms: Optional[List[str]] = None,
 ) -> str:
     """Analyze CEO intent and produce plan/policy/skill selection (no execution)."""
     resolved_message, error = _resolve_ceo_message(ceo_message)
@@ -271,6 +286,7 @@ def coo_orchestrate(
             session_store=session_store,
             requester_id=requester_id,
             channel_id=channel_id,
+            platforms=platforms,
         )
     )
 

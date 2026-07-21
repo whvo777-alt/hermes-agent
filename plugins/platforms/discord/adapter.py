@@ -5360,6 +5360,54 @@ class DiscordAdapter(BasePlatformAdapter):
             logger.warning("[%s] send_coo_approval failed: %s", self.name, e)
             return SendResult(success=False, error=str(e))
 
+    async def send_daily_blog_approval(
+        self,
+        chat_id: str,
+        item_payload: Dict[str, Any],
+        metadata: Optional[dict] = None,
+        store: Any = None,
+    ) -> SendResult:
+        """Send one Korean Native Flow draft card using its existing session."""
+        if not item_payload:
+            return SendResult(success=False, error="원고 승인 데이터가 없습니다.")
+        if not self._client or not DISCORD_AVAILABLE:
+            return SendResult(success=False, error="Discord에 연결되지 않았습니다.")
+
+        try:
+            from plugins.platforms.discord.coo_approval import (
+                prepare_daily_blog_approval_render_items,
+            )
+
+            embed, view = prepare_daily_blog_approval_render_items(
+                item_payload,
+                store=store,
+            )
+            if isinstance(embed, dict):
+                return SendResult(success=False, error="Discord embed를 사용할 수 없습니다.")
+
+            target_id = chat_id
+            if metadata and metadata.get("thread_id"):
+                target_id = metadata["thread_id"]
+            channel = self._client.get_channel(int(target_id))
+            if not channel:
+                channel = await self._client.fetch_channel(int(target_id))
+
+            # Hero image attachments were noisy in the approval channel — only
+            # the full markdown draft is attached for review.
+            files = []
+            blog_file = str(item_payload.get("blog_file") or "")
+            if blog_file and os.path.isfile(blog_file):
+                files.append(discord.File(blog_file, filename=os.path.basename(blog_file)))
+
+            send_kwargs: Dict[str, Any] = {"embed": embed, "view": view}
+            if files:
+                send_kwargs["files"] = files
+            msg = await channel.send(**send_kwargs)
+            return SendResult(success=True, message_id=str(msg.id))
+        except Exception as e:
+            logger.warning("[%s] send_daily_blog_approval failed: %s", self.name, e)
+            return SendResult(success=False, error=str(e))
+
     async def send_slash_confirm(
         self, chat_id: str, title: str, message: str, session_key: str,
         confirm_id: str, metadata: Optional[dict] = None,

@@ -31,7 +31,9 @@ registration is designed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from agent.coo.approval_report import CEOApprovalReport
@@ -89,6 +91,7 @@ _CUSTOM_ID_MAX = 100
 _COO_APPROVAL_CUSTOM_ID_PREFIX = "coo_approval"
 _ALLOWED_COO_APPROVAL_ACTIONS = frozenset({
     "approve",
+    "revise",
     "reject",
     "refresh",
     "prepare_plan",
@@ -824,6 +827,156 @@ def _build_coo_approval_custom_id(action: str, session_id: str) -> str:
     return custom_id
 
 
+_DAILY_STATUS_LABELS = {
+    "pending": "승인 대기",
+    "approved": "승인됨",
+    "rejected": "폐기됨",
+    "expired": "승인 기한 만료",
+    "cancelled": "취소됨",
+}
+
+
+def _daily_item_status_label(item_payload: Dict[str, Any]) -> str:
+    if item_payload.get("revision_requested"):
+        return "수정 요청됨"
+    session = item_payload.get("session") or {}
+    return _DAILY_STATUS_LABELS.get(
+        str(session.get("status") or "pending").lower(),
+        "승인 상태 확인 필요",
+    )
+
+
+def build_daily_blog_approval_embed_payload(
+    item_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build one Korean, per-platform draft approval embed."""
+    platform = str(
+        item_payload.get("platform_label") or item_payload.get("platform") or "-"
+    )
+    category = str(item_payload.get("category_name") or "-")
+    title = str(item_payload.get("topic_title") or "제목 없음")
+    score = item_payload.get("quality_score", "-")
+    passed = "통과" if item_payload.get("quality_passed") else "확인 필요"
+    warnings = list(item_payload.get("quality_warnings") or [])
+    human_review_items = list(item_payload.get("human_review_items") or [])
+    warning_text = (
+        "\n".join(f"- {_truncate(warning, 240)}" for warning in warnings[:5])
+        if warnings
+        else "- 자동 검사에서 주요 경고 없음"
+    )
+    preview_chunks = [
+        str(chunk).strip()
+        for chunk in item_payload.get("preview_chunks") or []
+        if str(chunk).strip()
+    ]
+    if not preview_chunks and item_payload.get("blog_preview"):
+        preview_chunks = [str(item_payload["blog_preview"])]
+
+    fields: List[Dict[str, Any]] = [
+        {"name": "카테고리", "value": _truncate(category, 256), "inline": True},
+        {
+            "name": "품질 점수",
+            "value": f"{score}점 · {passed}",
+            "inline": True,
+        },
+        {
+            "name": "승인 상태",
+            "value": _daily_item_status_label(item_payload),
+            "inline": True,
+        },
+        {
+            "name": "핵심 요약",
+            "value": _truncate(item_payload.get("blog_summary") or "-", _FIELD_VALUE_MAX),
+            "inline": False,
+        },
+        {
+            "name": "확인할 내용",
+            "value": _truncate(warning_text, _FIELD_VALUE_MAX),
+            "inline": False,
+        },
+    ]
+    if human_review_items:
+        fields.append(
+            {
+                "name": "사람이 최종 확인할 항목",
+                "value": _truncate(
+                    "\n".join(f"- {item}" for item in human_review_items[:4]),
+                    _FIELD_VALUE_MAX,
+                ),
+                "inline": False,
+            }
+        )
+    for index, chunk in enumerate(preview_chunks[:2], start=1):
+        fields.append(
+            {
+                "name": "글 미리보기" if index == 1 else "글 미리보기 (계속)",
+                "value": _truncate(chunk, _FIELD_VALUE_MAX),
+                "inline": False,
+            }
+        )
+    if item_payload.get("revision_note"):
+        fields.append(
+            {
+                "name": "요청한 수정 내용",
+                "value": _truncate(item_payload["revision_note"], _FIELD_VALUE_MAX),
+                "inline": False,
+            }
+        )
+    fields.append(
+        {
+            "name": "전체 원고 파일",
+            "value": f"`{_truncate(item_payload.get('blog_file') or '-', 980)}`",
+            "inline": False,
+        }
+    )
+
+    payload = {
+        "title": f"📝 플랫폼별 원고 승인 · {platform}",
+        "description": f"**글 제목**\n{_truncate(title, 500)}",
+        "color": 0x1ABC9C if item_payload.get("quality_passed") else 0xF39C12,
+        "fields": fields,
+        "footer": {
+            "text": (
+                "승인 전에는 업로더를 호출하지 않습니다. "
+                "승인 시 WordPress/Blogspot은 초안(draft)만 생성합니다. "
+                "수정 요청은 학습 기록에 저장되며 업로드되지 않습니다."
+            )
+        },
+    }
+    return _enforce_embed_total_length(payload)
+
+
+def build_daily_blog_approval_components(
+    item_payload: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Build the existing session's three Korean approval actions."""
+    session = item_payload.get("session") or {}
+    session_id = _require_session_id(session)
+    disabled = _is_terminal_approval_status(
+        str(session.get("status") or "")
+    ) or bool(item_payload.get("revision_requested"))
+    return [
+        _coo_approval_button_component(
+            label="승인",
+            style="success",
+            custom_id=_build_coo_approval_custom_id("approve", session_id),
+            disabled=disabled,
+        ),
+        _coo_approval_button_component(
+            label="수정 요청",
+            style="secondary",
+            custom_id=_build_coo_approval_custom_id("revise", session_id),
+            disabled=disabled,
+        ),
+        _coo_approval_button_component(
+            label="폐기",
+            style="danger",
+            custom_id=_build_coo_approval_custom_id("reject", session_id),
+            disabled=disabled,
+        ),
+    ]
+
+
 def parse_coo_approval_custom_id(custom_id: str) -> Dict[str, str]:
     """Parse ``coo_approval:<action>:<session_id>`` button custom IDs."""
     parts = str(custom_id or "").split(":", 2)
@@ -1030,6 +1183,8 @@ def execute_coo_approval_button_action(
     normalized_action = str(action).strip().lower()
     if normalized_action not in _ALLOWED_COO_APPROVAL_ACTIONS:
         raise ValueError(f"Invalid COO approval action: {action!r}")
+    if normalized_action == "revise":
+        raise ValueError("Revision requests are only valid for daily blog items.")
 
     user_id = normalize_discord_snowflake(discord_user_id)
 
@@ -1579,6 +1734,389 @@ def _map_button_style(discord_mod: Any, style_name: str) -> Any:
         "secondary": discord_mod.ButtonStyle.secondary,
     }
     return style_map.get(style_key, discord_mod.ButtonStyle.secondary)
+
+
+def execute_daily_blog_approval_action(
+    *,
+    action: str,
+    session_id: str,
+    discord_user_id: DiscordSnowflake,
+    revision_note: str = "",
+    store: Optional["CEOApprovalSessionStore"] = None,
+    bundle_store: Any = None,
+    publisher: Any = None,
+) -> Dict[str, Any]:
+    """Handle one existing daily-item session; only approval may publish.
+
+    Revision and rejection only update the existing session/bundle/learning
+    records. Live publishers wired here: WordPress draft and Blogspot draft.
+    """
+    from agent.coo.approval_session import CEOApprovalSessionStatus
+    from agent.coo.daily_blog_bundle import get_default_bundle_store
+    from agent.coo.discord_approval_adapter import (
+        approve_discord_session,
+        get_discord_approval_session,
+        reject_discord_session,
+    )
+    from agent.content.learning.feedback import record_feedback
+
+    user_id = normalize_discord_snowflake(discord_user_id)
+    bundles = bundle_store or get_default_bundle_store()
+    match = bundles.find_by_session(session_id)
+    if match is None:
+        raise KeyError(session_id)
+    bundle, item = match
+
+    existing = get_discord_approval_session(session_id, store=store)
+    if existing is None:
+        raise KeyError(session_id)
+    _assert_session_owner(existing, user_id, session_id)
+    normalized_action = str(action or "").strip().lower()
+    existing_status = str(existing.get("status") or "")
+    if existing_status != "pending":
+        # Duplicate approve clicks after a successful publish should re-show
+        # the draft result instead of erroring (the first interaction may have
+        # expired before the user saw the success message).
+        if (
+            normalized_action == "approve"
+            and existing_status == "approved"
+            and item.publish_result
+        ):
+            return {
+                "session": existing,
+                "item": item.to_dict(),
+                "publish_result": item.publish_result,
+            }
+        raise ValueError(
+            f"이미 처리된 원고입니다 (현재 상태: {_DAILY_STATUS_LABELS.get(existing_status, existing_status)})."
+        )
+    if normalized_action == "revise":
+        note = str(revision_note or "").strip()
+        if not note:
+            raise ValueError("수정 요청 내용을 입력해 주세요.")
+        record_feedback(
+            platform_id=item.platform,
+            category_id=item.category_id,
+            topic_title=item.topic_title,
+            action="revise",
+            note=note,
+            reviewer=user_id,
+        )
+        item.revision_requested = True
+        item.revision_note = note
+        return {
+            "session": existing,
+            "item": item.to_dict(),
+            "publish_result": None,
+        }
+
+    if normalized_action == "reject":
+        session = reject_discord_session(
+            session_id,
+            user_id,
+            reason="Discord에서 폐기 선택",
+            store=store,
+        )
+        record_feedback(
+            platform_id=item.platform,
+            category_id=item.category_id,
+            topic_title=item.topic_title,
+            action="discard",
+            note="Discord 승인 화면에서 폐기",
+            reviewer=user_id,
+        )
+        return {
+            "session": session,
+            "item": item.to_dict(),
+            "publish_result": None,
+        }
+
+    if normalized_action != "approve":
+        raise ValueError(f"지원하지 않는 원고 승인 작업: {action!r}")
+    if item.revision_requested:
+        raise ValueError("수정 요청된 원고는 업로드할 수 없습니다.")
+
+    if item.platform == "wordpress" and publisher is None:
+        from agent.content.publishers.wordpress import is_live_wordpress_draft_enabled
+
+        if not is_live_wordpress_draft_enabled(os.environ):
+            raise ValueError(
+                "WordPress 실제 초안 기능이 비활성화되어 승인 처리를 중단했습니다."
+            )
+
+    if item.platform == "blogspot" and publisher is None:
+        from agent.content.publishers.blogspot import is_live_blogspot_draft_enabled
+
+        if not is_live_blogspot_draft_enabled(os.environ):
+            raise ValueError(
+                "Blogspot OAuth 설정(BLOGGER_*)이 없어 초안 업로드를 중단했습니다."
+            )
+
+    session = approve_discord_session(session_id, user_id, store=store)
+    publish_result = None
+    if item.platform in {"wordpress", "blogspot"}:
+        if publisher is None:
+            from agent.content.publish_on_approval import publish_approved_item
+
+            publisher = publish_approved_item
+        publish_result = publisher(bundle, item.platform, live=True)
+        if item.platform == "wordpress":
+            response = dict(publish_result.get("response") or {})
+            verification = dict(publish_result.get("verification") or {})
+            if (
+                not publish_result.get("apiCalled")
+                or response.get("status") != "draft"
+                or verification.get("status") != "draft"
+            ):
+                raise RuntimeError(
+                    "WordPress 초안 생성 또는 재조회 검증에 실패했습니다."
+                )
+        else:
+            if not publish_result.get("apiCalled") or publish_result.get("dryRun"):
+                raise RuntimeError(
+                    "Blogspot 초안 업로드에 실패했습니다 "
+                    f"(apiCalled={publish_result.get('apiCalled')}, "
+                    f"error={publish_result.get('error') or 'unknown'})."
+                )
+            if not publish_result.get("postId"):
+                raise RuntimeError("Blogspot 초안이 생성되었지만 postId가 없습니다.")
+        item.publish_result = publish_result
+        item.session.publish_dispatched = True
+        session_store = store
+        if session_store is None:
+            from agent.coo.approval_session import get_default_session_store
+
+            session_store = get_default_session_store()
+        session_store.save(item.session)
+        session = item.session.to_dict()
+
+    return {
+        "session": session,
+        "item": item.to_dict(),
+        "publish_result": publish_result,
+    }
+
+
+def _daily_blog_result_message(result: Dict[str, Any], action: str) -> str:
+    item = result.get("item") or {}
+    platform = str(item.get("platform_label") or item.get("platform") or "")
+    platform_id = str(item.get("platform") or "").lower()
+    if action == "reject":
+        return f"{platform} 원고를 폐기했습니다. 업로더는 호출되지 않았습니다."
+    if action == "revise":
+        return (
+            f"{platform} 수정 요청을 학습 기록에 저장했습니다. "
+            "이 원고는 업로드되지 않습니다."
+        )
+    publish_result = result.get("publish_result")
+    if not publish_result:
+        return (
+            f"{platform} 원고를 승인했습니다. "
+            "이 플랫폼은 아직 자동 초안 업로드가 연결되지 않았습니다."
+        )
+    if platform_id == "blogspot":
+        post_id = publish_result.get("postId") or "-"
+        link = publish_result.get("url") or publish_result.get("selfLink") or "-"
+        return (
+            "Blogspot 초안 생성 완료\n"
+            f"- 글 ID: `{post_id}`\n"
+            f"- 상태: `draft`\n"
+            f"- 확인 링크: {link}\n"
+            "- 공개 발행: 실행되지 않음"
+        )
+    response = publish_result.get("response") or {}
+    verification = publish_result.get("verification") or {}
+    post_id = response.get("id") or verification.get("id") or "-"
+    status = verification.get("status") or response.get("status") or "-"
+    link = (
+        response.get("adminLink")
+        or response.get("editLink")
+        or response.get("link")
+        or "-"
+    )
+    hero_status = publish_result.get("hero_image_status")
+    if hero_status == "attached":
+        hero_label = "정상 첨부됨"
+    elif hero_status == "upload_failed":
+        hero_label = "⚠️ 첨부 실패 (이미지 없이 발행됨)"
+    elif hero_status == "attach_mismatch":
+        hero_label = "⚠️ 첨부 불일치 (수동 확인 필요)"
+    else:
+        hero_label = "확인 불가"
+    return (
+        "WordPress 초안 생성 완료\n"
+        f"- 글 ID: `{post_id}`\n"
+        f"- 상태: `{status}`\n"
+        f"- 관리자 확인 링크: {link}\n"
+        f"- 대표이미지: {hero_label}\n"
+        "- 공개 발행: 실행되지 않음"
+    )
+
+
+async def _update_daily_blog_interaction(
+    interaction: Any,
+    item_payload: Dict[str, Any],
+    *,
+    store: Optional["CEOApprovalSessionStore"] = None,
+) -> bool:
+    embed_payload = build_daily_blog_approval_embed_payload(item_payload)
+    embed = build_discord_embed_from_payload(embed_payload)
+    view = build_daily_blog_approval_view(item_payload, store=store)
+    if isinstance(embed, dict) or isinstance(view, dict):
+        return False
+    response = getattr(interaction, "response", None)
+    if response is not None and hasattr(response, "is_done") and not response.is_done():
+        await response.edit_message(embed=embed, view=view)
+        return True
+    message = getattr(interaction, "message", None)
+    if message is not None and hasattr(message, "edit"):
+        await message.edit(embed=embed, view=view)
+        return True
+    return False
+
+
+def _build_daily_revision_modal(
+    *,
+    session_id: str,
+    store: Optional["CEOApprovalSessionStore"] = None,
+) -> Any:
+    discord_mod = _get_discord_module()
+    if discord_mod is None:
+        return None
+
+    class DailyBlogRevisionModal(discord_mod.ui.Modal, title="원고 수정 요청"):
+        revision_note = discord_mod.ui.TextInput(
+            label="수정할 내용을 입력해 주세요",
+            placeholder="예: 서론을 더 짧게 하고 공식 출처를 추가해 주세요.",
+            style=discord_mod.TextStyle.paragraph,
+            min_length=2,
+            max_length=1000,
+            required=True,
+        )
+
+        async def on_submit(self, interaction: Any) -> None:
+            try:
+                user = getattr(interaction, "user", None)
+                result = execute_daily_blog_approval_action(
+                    action="revise",
+                    session_id=session_id,
+                    discord_user_id=getattr(user, "id", ""),
+                    revision_note=str(self.revision_note.value),
+                    store=store,
+                )
+                await _update_daily_blog_interaction(
+                    interaction,
+                    result["item"],
+                    store=store,
+                )
+                await _respond_coo_approval_ephemeral(
+                    interaction,
+                    _daily_blog_result_message(result, "revise"),
+                )
+            except Exception as exc:
+                logger.warning("Daily blog revision request failed: %s", exc)
+                await _respond_coo_approval_ephemeral(
+                    interaction,
+                    f"수정 요청을 처리하지 못했습니다: {exc}",
+                )
+
+    return DailyBlogRevisionModal()
+
+
+def _make_daily_blog_approval_button_callback(
+    custom_id: str,
+    store: Optional["CEOApprovalSessionStore"] = None,
+):
+    async def _callback(interaction: Any) -> None:
+        try:
+            parsed = parse_coo_approval_custom_id(custom_id)
+            if parsed["action"] == "revise":
+                modal = _build_daily_revision_modal(
+                    session_id=parsed["session_id"],
+                    store=store,
+                )
+                if modal is None:
+                    raise RuntimeError("Discord 텍스트 입력 UI를 사용할 수 없습니다.")
+                await interaction.response.send_modal(modal)
+                return
+
+            # WordPress publish can exceed Discord's 3s interaction window;
+            # acknowledge immediately so the token stays valid for follow-ups.
+            response = getattr(interaction, "response", None)
+            if (
+                response is not None
+                and hasattr(response, "defer")
+                and hasattr(response, "is_done")
+                and not response.is_done()
+            ):
+                await response.defer()
+
+            user = getattr(interaction, "user", None)
+            # The approve path performs blocking WordPress HTTP calls; keep the
+            # gateway event loop (and Discord heartbeat) responsive.
+            result = await asyncio.to_thread(
+                execute_daily_blog_approval_action,
+                action=parsed["action"],
+                session_id=parsed["session_id"],
+                discord_user_id=getattr(user, "id", ""),
+                store=store,
+            )
+            updated = await _update_daily_blog_interaction(
+                interaction,
+                result["item"],
+                store=store,
+            )
+            if not updated or result.get("publish_result"):
+                await _respond_coo_approval_ephemeral(
+                    interaction,
+                    _daily_blog_result_message(result, parsed["action"]),
+                )
+        except Exception as exc:
+            logger.warning("Daily blog approval action failed: %s", exc)
+            await _respond_coo_approval_ephemeral(
+                interaction,
+                f"원고 승인 작업을 처리하지 못했습니다: {exc}",
+            )
+
+    return _callback
+
+
+def build_daily_blog_approval_view(
+    item_payload: Dict[str, Any],
+    *,
+    store: Optional["CEOApprovalSessionStore"] = None,
+) -> Any:
+    discord_mod = _get_discord_module()
+    components = build_daily_blog_approval_components(item_payload)
+    if discord_mod is None:
+        return {"_fallback": "view", "components": components}
+    view = discord_mod.ui.View(timeout=_COO_APPROVAL_VIEW_TIMEOUT_SECONDS)
+    for component in components:
+        button = discord_mod.ui.Button(
+            label=component["label"],
+            style=_map_button_style(discord_mod, component["style"]),
+            custom_id=component["custom_id"],
+            disabled=bool(component.get("disabled")),
+        )
+        button.callback = _make_daily_blog_approval_button_callback(
+            button.custom_id,
+            store=store,
+        )
+        view.add_item(button)
+    return view
+
+
+def prepare_daily_blog_approval_render_items(
+    item_payload: Dict[str, Any],
+    *,
+    store: Optional["CEOApprovalSessionStore"] = None,
+) -> tuple[Any, Any]:
+    return (
+        build_discord_embed_from_payload(
+            build_daily_blog_approval_embed_payload(item_payload)
+        ),
+        build_daily_blog_approval_view(item_payload, store=store),
+    )
 
 
 def _make_coo_approval_button_callback(

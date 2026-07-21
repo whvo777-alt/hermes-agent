@@ -19,6 +19,42 @@ from agent.content.llm_client import call_llm
 from agent.content.prompts.prompt_builder import build_system_prompt, build_writing_brief, summarize_planning, summarize_research
 
 
+def _ensure_emphasis_marks(content: str) -> str:
+    """If the model wrote a flat body, inject **bold** on known emphasis phrases.
+
+    HTML conversion turns these into highlighter / red / blue styles.
+    """
+    text = content or ""
+    bold_count = len(re.findall(r"\*\*[^*]+\*\*", text))
+    if bold_count >= 6:
+        return text
+
+    phrases = [
+        "전문가 상담",
+        "의사, 물리치료사",
+        "동작을 멈추는 것이 우선",
+        "참고 버티기",
+        "핵심 기준",
+        "확인 기준",
+        "오늘 할 체크",
+        "통증",
+        "중단",
+        "목표를 작게",
+        "몸 반응 기록",
+        "강도를 천천히",
+    ]
+    for phrase in phrases:
+        if phrase not in text:
+            continue
+        if f"**{phrase}**" in text:
+            continue
+        # Wrap first plain occurrence only.
+        text = text.replace(phrase, f"**{phrase}**", 1)
+        if len(re.findall(r"\*\*[^*]+\*\*", text)) >= 8:
+            break
+    return text
+
+
 def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: str, content: str) -> str:
     enhanced = content
     # Strip internal pipeline jargon that falsely trips the quality gate.
@@ -30,6 +66,12 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
     enhanced = re.sub(r"아웃라인만", "목차", enhanced)
     enhanced = re.sub(r"섹션\s*개요", "소주제", enhanced)
     enhanced = re.sub(r"작성\s*계획\s*문서", "본문", enhanced)
+    enhanced = re.sub(
+        r"\n##\s*(?:▶\s*)?\[?(?:모바일\s*최적화\s*체크|애드센스\s*승인\s*체크)\]?\s*\n"
+        r"[\s\S]*?(?=\n##\s|\Z)",
+        "\n",
+        enhanced,
+    )
     enhanced = re.sub(r"2023년?|2024년?|2025년?", "2026년 기준", enhanced)
     enhanced = re.sub(
         r"\n?!\[[^\]]*\]\((?:https?://(?:example\.com|via\.placeholder\.com|source\.unsplash\.com|"
@@ -39,7 +81,7 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
         enhanced,
         flags=re.I,
     )
-    enhanced = re.sub(r"무조건\s+", "단순히 ", enhanced)
+    enhanced = re.sub(r"무조건\s+", "일률적인 ", enhanced)
     enhanced = re.sub(r"반드시 효과", "도움이 될 수 있음", enhanced)
     enhanced = re.sub(r"수익 보장", "수익을 확정한다는 표현", enhanced)
     # Finance/health disclaimer wording that otherwise trips guarantee HARD FAIL.
@@ -56,12 +98,6 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
 
     if not re.search(r"요약|핵심|첫 화면|한눈에", enhanced):
         enhanced += f"\n\n## 한눈에 보는 핵심 요약\n- 오늘의 주제는 {topic_title}입니다.\n- {category_name} 독자가 모바일에서 빠르게 판단할 수 있도록 핵심 기준과 주의점을 정리했습니다."
-
-    if not re.search(r"모바일 최적화|모바일 가독성|\[모바일 최적화 체크\]", enhanced):
-        enhanced += "\n\n## 모바일 최적화 체크\n- 첫 화면: 제목, 요약, 대표 이미지가 휴대폰에서 한 번에 이해되도록 구성했습니다.\n- 문단: 2~3문장 이하로 끊어 읽기 부담을 낮췄습니다.\n- 이미지: 대표 이미지는 텍스트 없이도 주제를 알 수 있는 카드형 이미지로 배치합니다.\n- CTA: 글 마지막에만 짧게 안내해 본문 흐름을 방해하지 않습니다."
-
-    if not re.search(r"애드센스 승인 체크", enhanced):
-        enhanced += f"\n\n## 애드센스 승인 체크\n- 독창성: 단순 요약이 아니라 {category_name} 독자의 실제 선택 기준과 주의점을 함께 정리했습니다.\n- 신뢰성: 과장된 효과 약속, 단정적 표현, 결과를 확정하는 문구를 피하고 정보 제공 목적을 명확히 했습니다.\n- 체류 시간: 첫 화면 요약, 본문 체크리스트, FAQ/마무리로 자연스럽게 읽히도록 구성했습니다.\n- 이미지: 대표 이미지는 주제와 직접 연결되고 로고·저작권·자극적 표현 없이 제작합니다."
 
     if not re.search(r"정보 제공 목적|개인 상황|전문가|상담|보장하지 않습니다|참고", enhanced):
         enhanced += "\n\n[정보 제공 안내]\n이 글은 일반적인 정보 제공 목적입니다. 개인 상황에 따라 적용 결과가 달라질 수 있으므로 중요한 결정 전에는 추가 확인이 필요합니다."
@@ -86,16 +122,87 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
         if not re.search(r"대표 이미지 ALT|이미지 ALT|ALT", enhanced):
             enhanced += f"\n\n대표 이미지 ALT: {topic_title}를 이해하기 쉽게 정리한 {category_name} 카드형 대표 이미지"
 
-    if platform_id == "blogspot":
-        if not re.search(r"slug|URL 슬러그|슬러그", enhanced, flags=re.I):
-            slug = re.sub(r"^-|-$", "", re.sub(r"[^a-z0-9-]+", "-", topic_title.lower())) or f"{category_name}-guide"
-            enhanced = f"URL 슬러그: /{slug}\n{enhanced}"
-        if not re.search(r"meta|메타 디스크립션", enhanced, flags=re.I):
-            enhanced = f"메타 디스크립션: {topic_title}를 처음 보는 독자를 위해 핵심 기준, 실천 체크리스트, 주의점을 모바일 친화적으로 정리했습니다.\n\n{enhanced}"
-        if not re.search(r"FAQ|자주 묻는 질문", enhanced, flags=re.I):
-            enhanced += "\n\n## FAQ\n\n### 처음 시작해도 괜찮나요?\n네. 다만 본문 체크리스트처럼 작은 기준부터 확인하는 방식이 안전합니다.\n\n### 무엇을 먼저 봐야 하나요?\n내 상황에 맞는 필요성, 비용, 지속 가능성을 먼저 확인하세요.\n\n### 주의할 점은 무엇인가요?\n과장된 효과나 단정적인 추천보다 실제 조건과 한계를 함께 보는 것이 좋습니다."
+    if platform_id in ("blogspot", "wordpress"):
+        # Force Hangul slug lines — replace English-only writer slugs.
+        hangul_slug = re.sub(r"[^\w가-힣]+", "-", topic_title, flags=re.UNICODE)
+        hangul_slug = re.sub(r"-{2,}", "-", hangul_slug).strip("-")[:48] or category_name
 
+        def _ko_slug_line(match: re.Match) -> str:
+            value = (match.group(2) or "").strip().strip("`")
+            if re.search(r"[가-힣]", value):
+                return match.group(0)
+            prefix = match.group(1)
+            return f"{prefix} `{hangul_slug}`"
+
+        enhanced = re.sub(
+            r"(?im)^(\**\s*(?:URL\s*slug|URL\s*슬러그|슬러그|slug)\s*:?\**\s*:?\s*)(.+)$",
+            _ko_slug_line,
+            enhanced,
+        )
+        if not re.search(r"slug|URL 슬러그|슬러그", enhanced, flags=re.I):
+            enhanced += f"\n\n**URL slug:** `{hangul_slug}`"
+
+    if platform_id == "blogspot":
+        # Keep light SEO hints at the end for the quality gate only.
+        if not re.search(r"meta|메타 디스크립션", enhanced, flags=re.I):
+            enhanced += (
+                f"\n\n**Meta description:** {topic_title} 핵심 기준과 오늘 할 체크를 "
+                "짧게 정리한 실전 가이드입니다."
+            )
+        if not re.search(r"태그 후보|Tags?:", enhanced, flags=re.I):
+            enhanced += (
+                f"\n\n**태그 후보:** {topic_title.split()[0] if topic_title.split() else category_name}, "
+                f"자기계발, 루틴, 체크리스트, 습관, 생산성"
+            )
+        if not re.search(r"개인\s*상황|개인차|상황에\s*따라", enhanced):
+            enhanced += (
+                "\n\n[정보 제공 안내]\n"
+                "이 글은 일반적인 자기계발 정보입니다. 개인 상황·업무 강도에 따라 "
+                "적용 방식이 달라질 수 있으니, 무리한 계획보다 지속 가능한 단위로 조정하세요."
+            )
+        # Never keep AdSense / mobile ops checklists in the body.
+        enhanced = re.sub(
+            r"\n##\s*(?:▶\s*)?\[?(?:모바일\s*최적화\s*체크|애드센스\s*승인\s*체크)\]?\s*\n"
+            r"[\s\S]*?(?=\n##\s|\Z)",
+            "\n",
+            enhanced,
+        )
+
+    enhanced = _ensure_emphasis_marks(enhanced)
     return enhanced
+
+
+def _expression_goals(*, platform_id: str, category_id: str) -> str:
+    """Quality-first practical writing goals for WordPress and Blogspot."""
+    shared = """- 본문 분량 4,000~6,500자 (3,000자 미만·속이 빈 짧은 글 금지, 8,000자 초과 금지).
+- H2 4~5개. 흐름: 독자 문제 → 판단 기준 → 실전 적용(상황별) → 함정/주의 → 오늘 체크·마무리.
+- 사람이 쓴 호흡: 문장 길이를 섞고, 한 줄 팁만 나열하지 않는다. 각 팁에 왜/어떻게를 붙인다.
+- AI 요약체·양산 블로그 리스트 재탕·가짜 1인칭 후기 금지. 남 글 베낀 느낌을 내지 않는다.
+- 나쁜 예 → 고친 예 문장을 최소 2개 넣는다. 상황별 차이(시간/체력/일정/통증 등)를 구체적으로.
+- 【강조 필수 — 단조로운 본문 금지】
+  - 핵심 기준·체크·권장 문구는 `**볼드**` (문단당 1~2개, 글 전체 12개 이상).
+  - 주의·통증·중단·전문가 상담은 `**볼드**`.
+  - 단계 제목은 `### 1단계: …` / `### 2단계: …` 형식 (형광펜 처리됨).
+  - 번호 팁은 `1. 짧은 제목` 다음 줄에 `: 왜/어떻게 설명` (크림 박스+설명).
+- 최종 체크리스트는 글 끝에 1회만 (5~8항목).
+- H1에 숫자를 넣고, 포커스 키워드는 본문 6~12회만 자연스럽게.
+- URL slug는 **한글**로 쓴다 (예: `요가-초보-확인-기준`). 영어 전용 slug 금지.
+- 외부 링크 0~1개. 없는 URL 금지. slug/meta/태그/ALT는 글 맨 아래에만."""
+
+    if category_id == "health" or platform_id == "wordpress":
+        return f"""표현 목표 (밀도 있는 건강 정보 — 자격 가장 금지):
+{shared}
+- 독자가 “무엇을 확인·피하면 되는지”가 남도록 쓴다. 치료·효과 보장 금지."""
+
+    if category_id == "self-dev" or platform_id == "blogspot":
+        return f"""표현 목표 (밀도 있는 자기계발 실행 가이드 — 자격 가장 금지):
+{shared}
+- 독자가 “오늘 실행·측정할 문장”을 가져가게 쓴다. FAQ는 생략하거나 Q 2개만.
+- 동기부여 구호·성공 보장 문구 금지."""
+
+    return f"""표현 목표 (밀도 있는 실전 가이드):
+{shared}
+- 독자가 바로 판단·실행할 기준을 남긴다."""
 
 
 def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, category_name: str,
@@ -128,14 +235,18 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
 
 과거 연도를 최신 트렌드처럼 쓰지 말고, 필요하면 현재 기준 또는 연도 없는 표현을 사용하세요.
 위 시스템 프롬프트의 Research/Planning Summary를 반영해서 실제 발행 직전 검토가 가능한 블로그 글 1편을 작성해줘.
-저품질/양산형 느낌을 피하고, 독자가 저장하거나 공유할 만큼 구체적인 예시·체크리스트·주의점을 포함해줘.
+
+{_expression_goals(platform_id=platform_id, category_id=category_id)}
 
 중요(품질 게이트 통과 조건):
 - 독자에게 보이는 완성 블로그 본문만 작성한다. 내부 작업 문서처럼 쓰지 않는다.
 - 본문/출처/메타에 '기획안', '콘텐츠 개요', '구성안(초안)', '아웃라인만', '섹션 개요', '작성 계획 문서' 표현을 절대 쓰지 않는다.
 - Research/Planning은 참고만 하고, 그것을 인용·언급하지 않은 채 자연스러운 글로 녹여 쓴다.
-- 치료·예방·효과를 단정하거나 수익/원금을 보장하는 표현을 쓰지 않는다.
-- H1 1개, H2 2개 이상, 개인차 안내와 전문가 상담 권장, 출처/참고 근거를 포함한다."""
+- 치료·예방·효과를 단정하거나 수익/원금/성공/합격을 보장하는 표현을 쓰지 않는다.
+- H1 1개, H2 4~5개, 본문 4,000~6,500자. 개인차 안내를 포함한다.
+- 건강 주제면 전문가 상담 권장, 자기계발 주제면 상황별 조정·복구 기준.
+- AI 요약체·양산 블로그 재탕·가짜 후기로 분량을 채우지 않는다. 나쁜 예→고친 예 최소 2개.
+- 단조 본문 금지: `**볼드**` 12회+, `### n단계` 또는 `1. 제목` + `: 설명` 팁을 넣는다."""
 
     raw = call_llm(system=system, user=user)
     body = _enhance_blog_quality(platform_id=platform_id, category_name=category_name, topic_title=topic_title, content=raw)

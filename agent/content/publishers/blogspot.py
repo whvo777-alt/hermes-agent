@@ -9,7 +9,8 @@ calls — never posts, and never anything but ``isDraft=true``.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+import os
+from typing import Any, Dict, Mapping, Optional
 
 import httpx
 
@@ -20,6 +21,24 @@ _TIMEOUT = 30.0
 
 class BlogspotPublisherError(RuntimeError):
     pass
+
+
+def is_live_blogspot_draft_enabled(env: Optional[Mapping[str, str]] = None) -> bool:
+    """True when Blogger OAuth credentials are present for draft upload.
+
+    Opt-out with LIVE_BLOGSPOT_DRAFT=0/false/off. Default is on when all
+    BLOGGER_* credentials exist (approval should create a real draft).
+    """
+    source = env if env is not None else os.environ
+    flag = str(source.get("LIVE_BLOGSPOT_DRAFT", "1")).strip().lower()
+    if flag in {"0", "false", "no", "off"}:
+        return False
+    return bool(
+        str(source.get("BLOGGER_BLOG_ID") or "").strip()
+        and str(source.get("BLOGGER_CLIENT_ID") or "").strip()
+        and str(source.get("BLOGGER_CLIENT_SECRET") or "").strip()
+        and str(source.get("BLOGGER_REFRESH_TOKEN") or "").strip()
+    )
 
 
 def _exchange_refresh_token(*, client_id: str, client_secret: str, refresh_token: str) -> str:
@@ -36,7 +55,10 @@ def _exchange_refresh_token(*, client_id: str, client_secret: str, refresh_token
     )
     data = response.json() if response.content else {}
     if response.status_code >= 400 or not data.get("access_token"):
-        raise BlogspotPublisherError(f"OAuth token refresh failed: HTTP {response.status_code}")
+        detail = data.get("error_description") or data.get("error") or response.text[:200]
+        raise BlogspotPublisherError(
+            f"OAuth token refresh failed: HTTP {response.status_code} ({detail})"
+        )
     return data["access_token"]
 
 
@@ -61,7 +83,9 @@ def create_blogspot_draft(*, markdown: str, blog_id: Optional[str], client_id: O
     if not client_id or not client_secret or not refresh_token:
         raise BlogspotPublisherError("Blogger OAuth client_id/client_secret/refresh_token missing")
 
-    access_token = _exchange_refresh_token(client_id=client_id, client_secret=client_secret, refresh_token=refresh_token)
+    access_token = _exchange_refresh_token(
+        client_id=client_id, client_secret=client_secret, refresh_token=refresh_token
+    )
     url = f"https://www.googleapis.com/blogger/v3/blogs/{blog_id}/posts?isDraft=true"
     response = httpx.post(
         url,
@@ -71,6 +95,76 @@ def create_blogspot_draft(*, markdown: str, blog_id: Optional[str], client_id: O
     )
     data = response.json() if response.content else {}
     if response.status_code >= 400:
-        raise BlogspotPublisherError(f"Blogger posts.insert draft failed: HTTP {response.status_code}")
+        detail = (
+            data.get("error", {}).get("message")
+            if isinstance(data.get("error"), dict)
+            else data.get("error")
+        )
+        raise BlogspotPublisherError(
+            f"Blogger posts.insert draft failed: HTTP {response.status_code} "
+            f"({detail or response.text[:200]})"
+        )
 
-    return {"apiCalled": True, "dryRun": False, "postId": data.get("id"), "url": data.get("url"), "selfLink": data.get("selfLink")}
+    return {
+        "apiCalled": True,
+        "dryRun": False,
+        "postId": data.get("id"),
+        "url": data.get("url"),
+        "selfLink": data.get("selfLink"),
+        "status": "draft",
+    }
+
+
+def update_blogspot_draft(
+    *,
+    markdown: str,
+    blog_id: Optional[str],
+    post_id: str,
+    client_id: Optional[str],
+    client_secret: Optional[str],
+    refresh_token: Optional[str],
+    live: bool,
+) -> Dict[str, Any]:
+    """Overwrite an existing Blogger draft body (keeps isDraft)."""
+    post = build_blogger_post(markdown)
+    if not live:
+        return {"apiCalled": False, "dryRun": True, "postPreview": post, "postId": post_id}
+
+    if not blog_id:
+        raise BlogspotPublisherError("BLOGGER_BLOG_ID missing")
+    if not client_id or not client_secret or not refresh_token:
+        raise BlogspotPublisherError("Blogger OAuth client_id/client_secret/refresh_token missing")
+    if not post_id:
+        raise BlogspotPublisherError("post_id missing")
+
+    access_token = _exchange_refresh_token(
+        client_id=client_id, client_secret=client_secret, refresh_token=refresh_token
+    )
+    url = f"https://www.googleapis.com/blogger/v3/blogs/{blog_id}/posts/{post_id}"
+    response = httpx.put(
+        url,
+        headers={"content-type": "application/json", "authorization": f"Bearer {access_token}"},
+        json=post,
+        timeout=_TIMEOUT,
+    )
+    data = response.json() if response.content else {}
+    if response.status_code >= 400:
+        detail = (
+            data.get("error", {}).get("message")
+            if isinstance(data.get("error"), dict)
+            else data.get("error")
+        )
+        raise BlogspotPublisherError(
+            f"Blogger posts.update draft failed: HTTP {response.status_code} "
+            f"({detail or response.text[:200]})"
+        )
+
+    return {
+        "apiCalled": True,
+        "dryRun": False,
+        "postId": data.get("id") or post_id,
+        "url": data.get("url"),
+        "selfLink": data.get("selfLink"),
+        "status": "draft",
+        "updated": True,
+    }

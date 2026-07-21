@@ -900,6 +900,452 @@ class TestDiscordCooApprovalStoreInjection(unittest.IsolatedAsyncioTestCase):
         store.clear()
 
 
+class TestDiscordDailyBlogApproval(unittest.TestCase):
+    def _item_payload(self, **overrides: object) -> dict:
+        payload = {
+            "platform": "wordpress",
+            "platform_label": "WordPress",
+            "category_id": "health",
+            "category_name": "건강",
+            "topic_title": "영양제 선택 기준",
+            "quality_score": 92,
+            "quality_passed": True,
+            "quality_warnings": ["의학적 정확성은 사람이 최종 확인해야 합니다."],
+            "blog_summary": "성분표와 개인 상황을 함께 확인하는 방법을 설명합니다.",
+            "blog_preview": "# 영양제 선택 기준\n\n도입부",
+            "preview_chunks": [
+                "# 영양제 선택 기준\n\n**도입부 핵심**\n성분표를 먼저 확인합니다.",
+                "## 결론\n개인 상황에 따라 전문가와 상담합니다.",
+            ],
+            "blog_file": "/tmp/wordpress.md",
+            "image_file": "/tmp/hero.svg",
+            "image_alt": "대표 이미지",
+            "revision_requested": False,
+            "revision_note": "",
+            "session": _sample_session_payload(task_kind="create_and_report"),
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_korean_embed_and_three_buttons_fit_discord_limits(self) -> None:
+        item = self._item_payload()
+        embed = coo_approval.build_daily_blog_approval_embed_payload(item)
+        components = coo_approval.build_daily_blog_approval_components(item)
+
+        self.assertIn("플랫폼별 원고 승인", embed["title"])
+        self.assertTrue(all(len(field["value"]) <= 1024 for field in embed["fields"]))
+        self.assertLessEqual(_calculate_embed_size(embed), 6000)
+        self.assertEqual(
+            [button["label"] for button in components],
+            ["승인", "수정 요청", "폐기"],
+        )
+        self.assertEqual(
+            [
+                parse_coo_approval_custom_id(button["custom_id"])["action"]
+                for button in components
+            ],
+            ["approve", "revise", "reject"],
+        )
+
+    def test_structured_preview_samples_intro_sections_and_conclusion(self) -> None:
+        from agent.coo.daily_blog_bundle import build_structured_preview
+
+        content = """---
+platform: wordpress
+---
+# 건강한 영양제 선택
+
+광고보다 성분과 개인 상황을 먼저 살펴야 합니다. 이 글은 판단 기준을 설명합니다.
+
+## 성분표 확인
+일일 섭취량과 중복 성분을 차례로 확인해야 합니다. 제품 앞면만 보지 않습니다.
+
+## 복용 전 점검
+복용 중인 약이 있다면 전문가와 상의하고 개인차를 고려해야 합니다.
+
+## 결론
+식사와 생활 습관을 우선하고 필요한 경우에만 신중하게 선택합니다.
+"""
+        summary, preview, chunks = build_structured_preview(content)
+
+        self.assertIn("광고보다 성분", summary)
+        self.assertIn("# 건강한 영양제 선택", preview)
+        self.assertIn("## 성분표 확인", preview)
+        self.assertIn("## 결론", preview)
+        self.assertTrue(chunks)
+        self.assertTrue(all(len(chunk) <= 1024 for chunk in chunks))
+
+    def test_revision_records_learning_and_never_publishes(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        session = store.get(seeded["session_id"])
+
+        class Item:
+            platform = "wordpress"
+            platform_label = "WordPress"
+            category_id = "health"
+            category_name = "건강"
+            topic_title = "영양제 선택 기준"
+            revision_requested = False
+            revision_note = ""
+            publish_result = None
+
+            def __init__(self, approval_session):
+                self.session = approval_session
+
+            def to_dict(self):
+                return {
+                    **TestDiscordDailyBlogApproval()._item_payload(),
+                    "session": self.session.to_dict(),
+                    "revision_requested": self.revision_requested,
+                    "revision_note": self.revision_note,
+                }
+
+        item = Item(session)
+        bundles = types.SimpleNamespace(
+            find_by_session=lambda _session_id: (object(), item)
+        )
+        publisher = unittest.mock.Mock()
+        with patch("agent.content.learning.feedback.record_feedback") as feedback:
+            result = coo_approval.execute_daily_blog_approval_action(
+                action="revise",
+                session_id=seeded["session_id"],
+                discord_user_id=seeded["requester_id"],
+                revision_note="서론을 더 짧게 해 주세요.",
+                store=store,
+                bundle_store=bundles,
+                publisher=publisher,
+            )
+
+        self.assertTrue(result["item"]["revision_requested"])
+        self.assertEqual(store.get(seeded["session_id"]).status.value, "pending")
+        feedback.assert_called_once()
+        publisher.assert_not_called()
+
+    def test_reject_never_publishes(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        session = store.get(seeded["session_id"])
+
+        class Item:
+            platform = "wordpress"
+            platform_label = "WordPress"
+            category_id = "health"
+            category_name = "건강"
+            topic_title = "영양제 선택 기준"
+            revision_requested = False
+            revision_note = ""
+            publish_result = None
+
+            def __init__(self, approval_session):
+                self.session = approval_session
+
+            def to_dict(self):
+                return {
+                    **TestDiscordDailyBlogApproval()._item_payload(),
+                    "session": self.session.to_dict(),
+                }
+
+        item = Item(session)
+        bundles = types.SimpleNamespace(
+            find_by_session=lambda _session_id: (object(), item)
+        )
+        publisher = unittest.mock.Mock()
+        with patch("agent.content.learning.feedback.record_feedback"):
+            result = coo_approval.execute_daily_blog_approval_action(
+                action="reject",
+                session_id=seeded["session_id"],
+                discord_user_id=seeded["requester_id"],
+                store=store,
+                bundle_store=bundles,
+                publisher=publisher,
+            )
+
+        self.assertEqual(result["session"]["status"], "rejected")
+        publisher.assert_not_called()
+
+    def test_wordpress_approval_calls_only_draft_publisher(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        session = store.get(seeded["session_id"])
+
+        class Item:
+            platform = "wordpress"
+            platform_label = "WordPress"
+            category_id = "health"
+            category_name = "건강"
+            topic_title = "영양제 선택 기준"
+            revision_requested = False
+            revision_note = ""
+            publish_result = None
+
+            def __init__(self, approval_session):
+                self.session = approval_session
+
+            def to_dict(self):
+                return {
+                    **TestDiscordDailyBlogApproval()._item_payload(),
+                    "session": self.session.to_dict(),
+                    "publish_result": self.publish_result,
+                }
+
+        item = Item(session)
+        bundle = object()
+        bundles = types.SimpleNamespace(
+            find_by_session=lambda _session_id: (bundle, item)
+        )
+        publisher = unittest.mock.Mock(
+            return_value={
+                "apiCalled": True,
+                "dryRun": False,
+                "response": {"id": 123, "status": "draft"},
+                "verification": {"id": 123, "status": "draft", "checked": True},
+            }
+        )
+
+        result = coo_approval.execute_daily_blog_approval_action(
+            action="approve",
+            session_id=seeded["session_id"],
+            discord_user_id=seeded["requester_id"],
+            store=store,
+            bundle_store=bundles,
+            publisher=publisher,
+        )
+
+        publisher.assert_called_once_with(bundle, "wordpress", live=True)
+        self.assertEqual(result["session"]["status"], "approved")
+        self.assertTrue(result["session"]["publish_dispatched"])
+        self.assertEqual(result["publish_result"]["response"]["status"], "draft")
+
+    def test_blogspot_approval_calls_draft_publisher(self) -> None:
+        store = CEOApprovalSessionStore()
+        seeded = _seed_session_in_store(store)
+        session = store.get(seeded["session_id"])
+
+        class Item:
+            platform = "blogspot"
+            platform_label = "블로그스팟"
+            category_id = "self-dev"
+            category_name = "자기계발"
+            topic_title = "목표설정 확인할 때 알아야 할 기준"
+            revision_requested = False
+            revision_note = ""
+            publish_result = None
+
+            def __init__(self, approval_session):
+                self.session = approval_session
+
+            def to_dict(self):
+                return {
+                    "platform": self.platform,
+                    "platform_label": self.platform_label,
+                    "category_id": self.category_id,
+                    "topic_title": self.topic_title,
+                    "session": self.session.to_dict(),
+                    "publish_result": self.publish_result,
+                }
+
+        item = Item(session)
+        bundle = object()
+        bundles = types.SimpleNamespace(
+            find_by_session=lambda _session_id: (bundle, item)
+        )
+        publisher = unittest.mock.Mock(
+            return_value={
+                "apiCalled": True,
+                "dryRun": False,
+                "postId": "999",
+                "url": "https://example.blogspot.com/p/draft.html",
+                "status": "draft",
+            }
+        )
+
+        result = coo_approval.execute_daily_blog_approval_action(
+            action="approve",
+            session_id=seeded["session_id"],
+            discord_user_id=seeded["requester_id"],
+            store=store,
+            bundle_store=bundles,
+            publisher=publisher,
+        )
+
+        publisher.assert_called_once_with(bundle, "blogspot", live=True)
+        self.assertEqual(result["session"]["status"], "approved")
+        self.assertTrue(result["session"]["publish_dispatched"])
+        self.assertEqual(result["publish_result"]["postId"], "999")
+        message = coo_approval._daily_blog_result_message(result, "approve")
+        self.assertIn("Blogspot 초안 생성 완료", message)
+        self.assertIn("999", message)
+
+
+class TestWordPressDraftSafety(unittest.TestCase):
+    def test_unapproved_item_blocks_publisher_before_file_read(self) -> None:
+        from types import SimpleNamespace
+
+        from agent.content.publish_on_approval import (
+            PublishBlockedError,
+            publish_approved_item,
+        )
+        from agent.coo.approval_session import CEOApprovalSessionStatus
+
+        item = SimpleNamespace(
+            platform="wordpress",
+            topic_title="테스트",
+            blog_file="/does/not/exist.md",
+            session=SimpleNamespace(status=CEOApprovalSessionStatus.PENDING),
+            revision_requested=False,
+        )
+        bundle = SimpleNamespace(items=[item])
+        with patch(
+            "agent.content.publish_on_approval.create_wordpress_draft"
+        ) as publisher:
+            with self.assertRaises(PublishBlockedError):
+                publish_approved_item(bundle, "wordpress", live=True)
+        publisher.assert_not_called()
+
+    def test_wordpress_payload_removes_local_only_image_paths(self) -> None:
+        import tempfile
+        from types import SimpleNamespace
+
+        from agent.content.publish_on_approval import publish_approved_item
+        from agent.coo.approval_session import CEOApprovalSessionStatus
+
+        with tempfile.TemporaryDirectory() as directory:
+            blog_file = Path(directory) / "blog.md"
+            image_file = Path(directory) / "hero.svg"
+            blog_file.write_text(
+                "# 제목\n\n"
+                f"![대표 이미지]({image_file})\n\n"
+                "> 대표 이미지 설명\n\n"
+                "## 본문\n완성형 본문입니다.\n\n"
+                f"대표 이미지 파일: {image_file}\n"
+                "이미지 ALT: 대표 이미지\n"
+                "이미지 설명: 설명\n",
+                encoding="utf-8",
+            )
+            item = SimpleNamespace(
+                platform="wordpress",
+                topic_title="제목",
+                category_id="self-dev",
+                category_name="자기계발",
+                blog_file=str(blog_file),
+                image_file=str(image_file),
+                revision_requested=False,
+                session=SimpleNamespace(status=CEOApprovalSessionStatus.APPROVED),
+            )
+            result = publish_approved_item(
+                SimpleNamespace(items=[item]),
+                "wordpress",
+                live=False,
+            )
+
+        html = result["request"]["body"]["content"]
+        self.assertNotIn(str(image_file), html)
+        self.assertNotIn("대표 이미지 파일:", html)
+        self.assertIn("완성형 본문", html)
+
+    def test_live_wordpress_create_is_requeried_as_draft(self) -> None:
+        from types import SimpleNamespace
+
+        from agent.content.publishers.wordpress import create_wordpress_draft
+
+        created = {
+            "id": 123,
+            "status": "draft",
+            "slug": "test",
+            "link": "https://blog.example/?p=123",
+            "_links": {"wp:action-edit": [{"href": "https://blog.example/api/edit"}]},
+        }
+        verified = {
+            "id": 123,
+            "status": "draft",
+            "slug": "test",
+            "link": "https://blog.example/?p=123",
+        }
+        post_response = SimpleNamespace(
+            status_code=201,
+            content=b"{}",
+            json=lambda: created,
+        )
+        get_response = SimpleNamespace(
+            status_code=200,
+            content=b"{}",
+            json=lambda: verified,
+        )
+        with patch(
+            "agent.content.publishers.wordpress.httpx.post",
+            return_value=post_response,
+        ) as post, patch(
+            "agent.content.publishers.wordpress.httpx.get",
+            return_value=get_response,
+        ) as get:
+            result = create_wordpress_draft(
+                site_url="https://blog.example",
+                username="user",
+                app_password="password",
+                payload={
+                    "status": "draft",
+                    "title": "테스트",
+                    "slug": "test",
+                    "content": "<p>본문</p>",
+                },
+                live=True,
+            )
+
+        post.assert_called_once()
+        get.assert_called_once()
+        self.assertEqual(result["response"]["status"], "draft")
+        self.assertEqual(result["verification"]["status"], "draft")
+        self.assertTrue(result["verification"]["checked"])
+
+
+class TestDiscordDailyBlogRenderWiring(unittest.IsolatedAsyncioTestCase):
+    async def test_send_daily_card_attaches_only_full_markdown(self) -> None:
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from gateway.config import PlatformConfig
+        from plugins.platforms.discord.adapter import DiscordAdapter
+
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "hero.svg"
+            article = Path(directory) / "blog.md"
+            image.write_text("<svg></svg>", encoding="utf-8")
+            article.write_text("# 전체 원고", encoding="utf-8")
+            item = TestDiscordDailyBlogApproval()._item_payload(
+                image_file=str(image),
+                blog_file=str(article),
+            )
+            sent_msg = SimpleNamespace(id=777)
+            channel = SimpleNamespace(send=AsyncMock(return_value=sent_msg))
+            adapter = DiscordAdapter(PlatformConfig(enabled=True, token="token"))
+            adapter._client = SimpleNamespace(
+                get_channel=lambda _cid: channel,
+                fetch_channel=AsyncMock(),
+            )
+            fake_discord = SimpleNamespace(
+                File=lambda path, filename: {"path": path, "filename": filename}
+            )
+            with patch(
+                "plugins.platforms.discord.adapter.DISCORD_AVAILABLE", True
+            ), patch(
+                "plugins.platforms.discord.adapter.discord", fake_discord
+            ), patch.object(
+                coo_approval,
+                "prepare_daily_blog_approval_render_items",
+                return_value=(object(), object()),
+            ):
+                result = await adapter.send_daily_blog_approval("555", item)
+
+        self.assertTrue(result.success)
+        kwargs = channel.send.await_args.kwargs
+        # Hero image attachments were removed as approval-channel noise; only
+        # the full markdown draft is attached.
+        self.assertEqual(len(kwargs["files"]), 1)
+        self.assertEqual(kwargs["files"][0]["filename"], "blog.md")
+
+
 class TestDiscordCooApprovalInteractionViewRefresh(unittest.IsolatedAsyncioTestCase):
     def _mock_interaction(self, user_id: int = 987654321012345678):
         from types import SimpleNamespace

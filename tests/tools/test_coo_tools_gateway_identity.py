@@ -5,12 +5,27 @@ from __future__ import annotations
 import json
 import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from agent.coo.approval_session import CEOApprovalSessionStore
 from agent.coo.discord_approval_adapter import approve_discord_session
 from plugins.platforms.discord.coo_approval import execute_coo_approval_button_action
 from tools.coo_tools import coo_orchestrate
+
+
+def _fake_daily_blog_bundle(*, items: int = 4):
+    bundle = MagicMock()
+    bundle.to_dict.return_value = {
+        "run_date": "2026-07-04",
+        "items": [
+            {
+                "platform": platform,
+                "session": {"status": "pending"},
+            }
+            for platform in ("wordpress", "blogspot", "tistory", "naver")[:items]
+        ],
+    }
+    return bundle
 
 
 class TestCooToolsGatewayApprovalIdentity(unittest.TestCase):
@@ -191,7 +206,13 @@ class TestCooOrchestrateCeoMessageFallback(unittest.TestCase):
             user_message="오늘 블로그 글 작성해서 보고해",
         )
         try:
-            with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):
+            with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")), patch(
+                "agent.content.orchestrator.generate_daily_bundle",
+                return_value=[object(), object(), object(), object()],
+            ), patch(
+                "tools.coo_tools.create_daily_blog_approval_bundle",
+                return_value=_fake_daily_blog_bundle(),
+            ):
                 raw = coo_orchestrate(
                     "",
                     run_date="2026-07-04",
@@ -211,6 +232,25 @@ class TestCooOrchestrateCeoMessageFallback(unittest.TestCase):
         self.assertEqual(len(bundle["items"]), 4)
         for item in bundle["items"]:
             self.assertEqual(item["session"]["status"], "pending")
+
+    def test_create_and_report_bundle_failure_skips_generic_approval_card(self) -> None:
+        store = CEOApprovalSessionStore()
+        with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")), patch(
+            "agent.content.orchestrator.generate_daily_bundle",
+            side_effect=RuntimeError("LLM interrupted"),
+        ):
+            raw = coo_orchestrate(
+                "오늘 블로그 글 4개 작성해서 보고해줘",
+                run_date="2026-07-04",
+                session_store=store,
+            )
+
+        payload = json.loads(raw)
+        self.assertEqual(payload["intent"]["task_kind"], "create_and_report")
+        self.assertIsNone(payload["approval_session"])
+        self.assertIsNone(payload["daily_blog_bundle"])
+        self.assertIn("원고 생성 실패", payload["error"])
+        self.assertIn("LLM interrupted", payload["error"])
 
     def test_empty_ceo_message_without_context_still_errors(self) -> None:
         with patch.object(subprocess, "run", side_effect=AssertionError("no subprocess")):

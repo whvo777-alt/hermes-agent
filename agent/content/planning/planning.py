@@ -19,7 +19,8 @@ _PLANNING_SYSTEM = """너는 콘텐츠 파이프라인의 기획 에이전트다
 - 플랫폼이 티스토리면 애드센스 승인, 목차, H2/H3, 내부링크 후보, 대표 이미지 ALT 중심으로 기획한다.
 - 플랫폼이 블로그스팟이면 slug/meta/FAQ/H2-H3 중심으로 기획한다.
 - 민감 카테고리는 주의 표현과 면책 문구를 명시한다.
-- Memory Check가 제공되면 최근 유사 글을 참고해 중복되는 제목/각도/메인 키워드를 피하는 기획 방향을 제안한다."""
+- 【절대 규칙】 Memory Check의 기작성 글·같은 메인 키워드·비슷한 제목은 절대 재사용하지 않는다. 중복이면 다른 키워드/각도로만 기획한다.
+- 【절대 규칙】 대표 이미지는 이전 글과 같은 색·뱃지·레이아웃으로 복제하지 않는다. 글마다 다른 시각 스타일을 명시한다."""
 
 
 def _format_memory_check(memory_check: Optional[Dict]) -> str:
@@ -37,8 +38,9 @@ def _format_memory_check(memory_check: Optional[Dict]) -> str:
     )
     return (
         f"중복 위험도: {memory_check.get('duplicateRisk')}\n"
+        f"차단 여부: {'차단(절대 재작성 금지)' if memory_check.get('blocked') else '허용'}\n"
         f"동일 메인 키워드 여부: {'있음' if memory_check.get('sameKeyword') else '없음'}\n"
-        f"최근 30일 유사 글 수: {memory_check.get('similarCount')}\n{similar_text}"
+        f"기작성 유사 글 수: {memory_check.get('similarCount')}\n{similar_text}"
     )
 
 
