@@ -222,6 +222,7 @@ def _blogspot_publishable_markdown(markdown: str) -> str:
     from agent.content.markdown_html import strip_frontmatter as _strip_fm
 
     value = _strip_fm(str(markdown or ""))
+    value = _strip_wordpress_body_title(value)
     value = _strip_hero_caption(value)
     value = _strip_seo_meta_block(value)
     value = _strip_ops_checklist_sections(value)
@@ -557,9 +558,11 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
         return result
 
     if platform_id == "blogspot":
+        blogspot_title = extract_title(blog_content, item.topic_title)
         publishable = _blogspot_publishable_markdown(blog_content)
         return create_blogspot_draft(
             markdown=publishable,
+            title=blogspot_title,
             blog_id=os.environ.get("BLOGGER_BLOG_ID"),
             client_id=os.environ.get("BLOGGER_CLIENT_ID"),
             client_secret=os.environ.get("BLOGGER_CLIENT_SECRET"),

@@ -14,7 +14,7 @@ from typing import Any, Dict, Mapping, Optional
 
 import httpx
 
-from agent.content.markdown_html import extract_labels, extract_title, markdown_to_html
+from agent.content.markdown_html import extract_labels, markdown_to_html
 
 _TIMEOUT = 30.0
 
@@ -62,18 +62,18 @@ def _exchange_refresh_token(*, client_id: str, client_secret: str, refresh_token
     return data["access_token"]
 
 
-def build_blogger_post(markdown: str) -> Dict[str, Any]:
+def build_blogger_post(markdown: str, *, title: str) -> Dict[str, Any]:
     return {
         "kind": "blogger#post",
-        "title": extract_title(markdown, "Blogspot 초안"),
+        "title": title,
         "content": markdown_to_html(markdown),
         "labels": extract_labels(markdown),
     }
 
 
-def create_blogspot_draft(*, markdown: str, blog_id: Optional[str], client_id: Optional[str],
+def create_blogspot_draft(*, markdown: str, title: str, blog_id: Optional[str], client_id: Optional[str],
                            client_secret: Optional[str], refresh_token: Optional[str], live: bool) -> Dict[str, Any]:
-    post = build_blogger_post(markdown)
+    post = build_blogger_post(markdown, title=title)
 
     if not live:
         return {"apiCalled": False, "dryRun": True, "postPreview": post}
