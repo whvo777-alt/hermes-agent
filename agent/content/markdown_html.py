@@ -152,14 +152,16 @@ def markdown_to_html(markdown: str) -> str:
     lines = strip_frontmatter(markdown).split("\n")
     html: List[str] = []
     in_list = False
+    list_accent: Optional[dict] = None
     table_rows: List[str] = []
     doc_seed = extract_title(markdown, "") or (lines[0] if lines else "post")
 
     def close_list() -> None:
-        nonlocal in_list
+        nonlocal in_list, list_accent
         if in_list:
             html.append("</ul>")
             in_list = False
+        list_accent = None
 
     def close_table() -> None:
         nonlocal table_rows
@@ -211,17 +213,17 @@ def markdown_to_html(markdown: str) -> str:
                 break
         else:
             if re.match(r"^[-*]\s+", line):
+                item_text = re.sub(r"^[-*]\s+", "", line)
                 if not in_list:
                     html.append(
                         '<ul style="margin:0.8em 0 1.6em;padding-left:1.4em;line-height:1.85;'
                         'list-style:none;">'
                     )
                     in_list = True
-                item_text = re.sub(r"^[-*]\s+", "", line)
-                bullet_accent = accent_for(item_text, seed=doc_seed)
+                    list_accent = accent_for(item_text, seed=doc_seed)
                 html.append(
                     f'<li style="margin:0 0 0.55em;">'
-                    f'<span style="color:{bullet_accent["ink"]};margin-right:8px;">●</span>'
+                    f'<span style="color:{list_accent["ink"]};margin-right:8px;">●</span>'
                     f"{_inline_md(item_text, seed=doc_seed)}</li>"
                 )
                 continue
