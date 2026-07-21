@@ -63,9 +63,12 @@ def classify_emphasis(text: str) -> str:
         return "caution"
     if re.search(r"기대|도움|완화|가능|장점|좋은|권장|추천|효과적|편안", value):
         return "positive"
-    if re.search(r"단계|방법|조절|기록|비교|선택|고친|수정|실행|적용|실천", value):
+    if re.search(
+        r"단계|방법|기록|비교|고친|실천|강도\s*조절|선택\s*기준|수정\s*문장|실행\s*단계|상황별\s*적용",
+        value,
+    ):
         return "method"
-    if re.search(r"목표|체크|기준|필수|핵심|중요|오늘|확인\s*질문", value):
+    if re.search(r"목표|체크|필수|핵심|중요|오늘|확인\s*질문|판단\s*기준", value):
         return "focus"
     if re.search(r"습관|루틴|집중|계획|생산|자기계발", value):
         return "growth"
@@ -148,7 +151,10 @@ def choose_hero_mode(*, topic_title: str = "", category_id: str = "", style_seed
 
     Photo mode prefers experiential / body / travel-ish topics;
     card mode prefers checklists / criteria / comparison topics.
-    Seed breaks ties so consecutive posts still mix.
+    A strong bias (|photo_bias - card_bias| >= 3) is trusted outright —
+    no flip. A weak bias (diff == 1) still gets a seeded flip so
+    consecutive posts in the same category don't clone. True ties
+    (diff == 0) keep the original 50/50 seed coin-flip.
     """
     title = str(topic_title or "")
     photo_hits = len(re.findall(r"요가|운동|스트레칭|걷기|여행|맛집|수면|루틴|아침|사진|현장|분위기", title))
@@ -160,8 +166,13 @@ def choose_hero_mode(*, topic_title: str = "", category_id: str = "", style_seed
     if category_id in {"finance", "it-tech", "self-dev"}:
         card_bias += 1
     roll = _seed_int(style_seed, topic_title, category_id) % 10
+    bias_diff = abs(photo_bias - card_bias)
     if photo_bias > card_bias:
+        if bias_diff >= 3:
+            return "photo"
         return "photo" if roll >= 2 else "card"
     if card_bias > photo_bias:
+        if bias_diff >= 3:
+            return "card"
         return "card" if roll >= 2 else "photo"
     return "photo" if roll % 2 == 0 else "card"

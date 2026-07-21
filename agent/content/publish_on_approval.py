@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 
 from agent.coo.approval_session import CEOApprovalSessionStatus
 from agent.coo.daily_blog_bundle import DailyBlogApprovalBundle, find_item
-from agent.content.markdown_html import escape_html, extract_title, markdown_to_html
+from agent.content.markdown_html import escape_html, extract_title, markdown_to_html, strip_frontmatter
 from agent.content.publishers.blogspot import create_blogspot_draft
 from agent.content.publishers.naver import create_naver_draft
 from agent.content.publishers.tistory import create_tistory_draft
@@ -267,7 +267,7 @@ def _strip_wordpress_body_title(markdown: str) -> str:
 
 
 def _attach_wordpress_infographics(*, html: str, markdown: str, category_id: str,
-                                   output_dir: str, live: bool) -> tuple:
+                                   output_dir: str, live: bool, doc_seed: str) -> tuple:
     """Upload section infographics and insert each after its H2 heading."""
     from agent.content.images.section_infographics import build_section_infographics
 
@@ -291,7 +291,7 @@ def _attach_wordpress_infographics(*, html: str, markdown: str, category_id: str
         from agent.content.markdown_html import h2_inner_html
 
         anchor = re.compile(
-            rf"(<h2[^>]*>{re.escape(h2_inner_html(info['heading']))}</h2>)"
+            rf"(<h2[^>]*>{re.escape(h2_inner_html(info['heading'], seed=doc_seed))}</h2>)"
         )
         figure = (
             '<figure style="margin:1.2em 0 1.8em;">'
@@ -371,6 +371,13 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
             live=wp_live,
         )
         publishable_content = seo_enrichment["markdown"]
+
+        # Must match markdown_to_html()'s own doc_seed formula exactly — the
+        # HTML below is rendered with that seed, so anchors reconstructed
+        # here have to use the identical seed or the H2 color/markup diverges
+        # and the regex anchor silently fails to match.
+        doc_lines = strip_frontmatter(publishable_content).split("\n")
+        doc_seed = extract_title(publishable_content, "") or (doc_lines[0] if doc_lines else "post")
 
         payload = {
             "status": "draft",
@@ -466,6 +473,7 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
                 category_id=item.category_id,
                 output_dir=str(Path(item.blog_file).parent / "images"),
                 live=wp_live,
+                doc_seed=doc_seed,
             )
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
