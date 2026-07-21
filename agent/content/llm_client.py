@@ -21,6 +21,7 @@ Never logs or returns raw API keys.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
@@ -64,6 +65,7 @@ def get_call_stats() -> Dict[str, Any]:
 
 
 def _record_call(*, provider: str, mock: bool) -> None:
+    logging.getLogger(__name__).info("LLM call provider=%s mock=%s", provider, mock)
     with _stats_lock:
         _CALL_STATS["provider"] = provider
         _CALL_STATS["calls"] += 1
