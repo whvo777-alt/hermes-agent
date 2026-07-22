@@ -23,7 +23,8 @@ from typing import Any, Dict, List, Optional
 from agent.content.config.categories import Category
 from agent.content.config.launch_policy import get_launch_category
 from agent.content.config.platforms import Platform, find_platform
-from agent.content.images.hero_image import HeroImage, create_hero_image, insert_hero_image
+from agent.content.images.ai_hero_image import create_hero_image_ai
+from agent.content.images.hero_image import HeroImage, insert_hero_image
 from agent.content.learning.feedback import get_recent_feedback
 from agent.content.memory.content_memory import (
     _normalize_text,
@@ -183,7 +184,7 @@ def generate_platform_draft(
     )
 
     platform_dir = _drafts_dir(resolved_date) / platform_id
-    image = create_hero_image(
+    image = create_hero_image_ai(
         out_dir=platform_dir / "images", platform_id=platform.id, platform_label=platform.label,
         category_id=category.id, category_name=category.name, category_keywords=category.keywords,
         topic_title=topic["topic_title"], blog_content=blog_content,

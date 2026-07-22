@@ -231,9 +231,39 @@ def _blogspot_publishable_markdown(markdown: str) -> str:
     return value.strip()
 
 
+def _reencode_jpeg_for_inline(path: Path, *, max_size: tuple = (1280, 720), quality: int = 80) -> bytes:
+    """Downscale + re-encode a raster hero image as JPEG bytes.
+
+    AI-generated heroes run 100KB-1MB+ (photographic texture), unlike the
+    flat-illustration PNGs ``render_hero_png`` produces — inlined as base64
+    at full size/format they would noticeably bloat the Blogger post body.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    with Image.open(path) as img:
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.thumbnail(max_size, Image.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, "JPEG", quality=quality, optimize=True)
+        return buf.getvalue()
+
+
 def _embed_blogspot_hero_png(markdown: str) -> str:
-    """Replace ``![...](...hero_adsense.svg)`` with an embedded PNG data URI."""
-    match = re.search(r"!\[([^\]]*)\]\(([^)]*hero_adsense\.svg)\)", markdown or "")
+    """Replace the hero image markdown with an embedded base64 data URI.
+
+    SVG source (the local template fallback): rasterize via
+    ``render_hero_png`` and embed as PNG — unchanged behavior. Raster source
+    (an AI-generated hero, ``hero_ai.<ext>``): skip the SVG render step
+    entirely and embed a resized/re-encoded JPEG instead (see
+    ``_reencode_jpeg_for_inline``).
+    """
+    match = re.search(
+        r"!\[([^\]]*)\]\(([^)]*hero_(?:adsense\.svg|ai\.(?:png|jpe?g|webp)))\)",
+        markdown or "",
+    )
     if not match:
         return markdown
     alt, src = match.group(1), match.group(2).strip()
@@ -241,22 +271,29 @@ def _embed_blogspot_hero_png(markdown: str) -> str:
     if not path.is_file():
         return markdown
     try:
-        from agent.content.images.hero_image import extract_blog_title, render_hero_png
-        from agent.content.markdown_html import extract_title
-
-        title = extract_title(markdown, extract_blog_title(markdown, alt or "가이드"))
-        png_path = render_hero_png(
-            str(path),
-            category_id="self-dev",
-            title=title,
-            subtitle="",
-            platform_label="",
-            style_seed=f"blogspot:{title}",
-        )
         import base64
 
-        b64 = base64.b64encode(Path(png_path).read_bytes()).decode("ascii")
-        data_uri = f"data:image/png;base64,{b64}"
+        if path.suffix.lower() == ".svg":
+            from agent.content.images.hero_image import extract_blog_title, render_hero_png
+            from agent.content.markdown_html import extract_title
+
+            title = extract_title(markdown, extract_blog_title(markdown, alt or "가이드"))
+            png_path = render_hero_png(
+                str(path),
+                category_id="self-dev",
+                title=title,
+                subtitle="",
+                platform_label="",
+                style_seed=f"blogspot:{title}",
+            )
+            data = Path(png_path).read_bytes()
+            mime = "image/png"
+        else:
+            data = _reencode_jpeg_for_inline(path)
+            mime = "image/jpeg"
+
+        b64 = base64.b64encode(data).decode("ascii")
+        data_uri = f"data:{mime};base64,{b64}"
         return markdown[: match.start()] + f"![{alt}]({data_uri})" + markdown[match.end() :]
     except Exception:  # noqa: BLE001 — keep original if render fails
         return markdown
@@ -416,32 +453,38 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
             )
             tags_result = {"apiCalled": False, "error": type(exc).__name__, "names": tag_names}
 
-        # Hero image: WordPress rejects SVG, so render the card as PNG and
-        # upload it as the featured image. Image failure never blocks the
+        # Hero image: WordPress rejects SVG, so an SVG hero is rendered to PNG
+        # before upload. An AI-generated hero (hero_ai.<ext>) is already a
+        # raster file and uploads as-is. Image failure never blocks the
         # draft itself — the text draft is the primary deliverable.
         media_result: Optional[Dict[str, Any]] = None
         image_file = str(item.image_file or "")
         if not image_file:
-            fallback_image = Path(item.blog_file).parent / "images" / "hero_adsense.svg"
-            if fallback_image.is_file():
-                image_file = str(fallback_image)
+            images_dir = Path(item.blog_file).parent / "images"
+            for candidate in ("hero_ai.png", "hero_ai.jpg", "hero_ai.jpeg", "hero_ai.webp", "hero_adsense.svg"):
+                fallback_image = images_dir / candidate
+                if fallback_image.is_file():
+                    image_file = str(fallback_image)
+                    break
         if image_file:
             try:
-                from agent.content.images.hero_image import render_hero_png
+                upload_path = image_file
+                if Path(image_file).suffix.lower() == ".svg":
+                    from agent.content.images.hero_image import render_hero_png
 
-                png_path = render_hero_png(
-                    image_file,
-                    category_id=item.category_id,
-                    title=title,
-                    subtitle=f"{item.category_name} · {item.topic_title}",
-                    platform_label="",  # never stamp platform name on the hero
-                    style_seed=f"{item.platform}:{item.topic_title}:{title}",
-                )
+                    upload_path = render_hero_png(
+                        image_file,
+                        category_id=item.category_id,
+                        title=title,
+                        subtitle=f"{item.category_name} · {item.topic_title}",
+                        platform_label="",  # never stamp platform name on the hero
+                        style_seed=f"{item.platform}:{item.topic_title}:{title}",
+                    )
                 media_result = upload_wordpress_media(
                     site_url=os.environ.get("WORDPRESS_SITE_URL"),
                     username=os.environ.get("WORDPRESS_USERNAME"),
                     app_password=os.environ.get("WORDPRESS_APP_PASSWORD"),
-                    file_path=png_path,
+                    file_path=upload_path,
                     alt_text=item.image_alt,
                     live=wp_live,
                 )
