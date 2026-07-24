@@ -122,6 +122,22 @@ def _build_rank_math_title(title: str, focus_keyword: str) -> str:
     return ensure_number_in_seo_title(base)
 
 
+_META_DELIM_RE = re.compile(r"\n-{3,}\s*META\s*-{3,}\s*\n?", re.I)
+
+
+def _split_meta_block(markdown: str) -> tuple:
+    """Split writer output into (body, meta_block) on the ``---META---`` delimiter.
+
+    ``meta_block`` is "" when the delimiter is absent — callers fall back to
+    the legacy whole-document regex scan for drafts written before this
+    convention (already-queued approvals).
+    """
+    parts = _META_DELIM_RE.split(str(markdown or ""), maxsplit=1)
+    if len(parts) == 2:
+        return parts[0].rstrip(), parts[1].strip()
+    return str(markdown or ""), ""
+
+
 _SEO_META_LINE_RE = re.compile(
     r"^\**\s*(URL slug|URL 슬러그|슬러그|slug|Meta description|메타 디스크립션|"
     r"meta\s*title|메타\s*타이틀|메타\s*제목|"
@@ -132,8 +148,10 @@ _SEO_META_LINE_RE = re.compile(
 
 def extract_seo_meta(markdown: str) -> Dict[str, str]:
     """Read the writer's SEO suggestion block (slug/meta description/etc.)."""
+    _, meta_block = _split_meta_block(markdown)
+    scan_target = meta_block or str(markdown or "")  # legacy fallback: no delimiter
     meta: Dict[str, str] = {}
-    for match in _SEO_META_LINE_RE.finditer(str(markdown or "")):
+    for match in _SEO_META_LINE_RE.finditer(scan_target):
         key = match.group(1).strip()
         # Normalize Korean aliases to the English keys used downstream.
         if re.search(r"슬러그|slug", key, re.I):
@@ -153,9 +171,14 @@ def extract_seo_meta(markdown: str) -> Dict[str, str]:
 def _strip_seo_meta_block(markdown: str) -> str:
     """Remove the SEO suggestion lines from the publishable body.
 
-    These lines are editor-facing metadata (slug, meta description, tag
-    candidates) — they must never appear inside the published post body.
+    Primary path: split on the ``---META---`` delimiter the writer prompt
+    now mandates and keep only the body. Legacy fallback (no delimiter
+    found, e.g. an approval already queued before this change): scan the
+    whole document line-by-line as before.
     """
+    body, meta_block = _split_meta_block(markdown)
+    if meta_block:
+        return body
     value = _SEO_META_LINE_RE.sub("", str(markdown or ""))
     # Collapse separator runs left behind by the removed block (e.g. the
     # "---" fence that framed it right under the H1 title).
@@ -304,17 +327,48 @@ def _strip_wordpress_body_title(markdown: str) -> str:
     return re.sub(r"^#\s+[^\n]+\n+", "", str(markdown or ""), count=1, flags=re.M).strip()
 
 
-def _attach_wordpress_infographics(*, html: str, markdown: str, category_id: str,
-                                   output_dir: str, live: bool, doc_seed: str) -> tuple:
-    """Upload section infographics and insert each after its H2 heading."""
+def _build_section_infographic_results(*, markdown: str, category_id: str, output_dir: str, style_seed: str) -> list:
+    """Render (but don't upload/insert) section infographics for ``markdown``.
+
+    Single point where specs get rendered for a platform, so the same
+    ``results`` (with their ``strip_ranges``) drive both the source-block
+    strip and the later image insertion — never rebuilt a second time with
+    a fresh seed roll, which would risk the stripped ranges and inserted
+    images disagreeing.
+    """
     from agent.content.images.section_infographics import build_section_infographics
 
+    return build_section_infographics(
+        markdown=markdown, category_id=category_id, output_dir=output_dir, style_seed=style_seed,
+    )
+
+
+def _strip_infographic_source_blocks(markdown: str, results: list) -> str:
+    """Remove each infographic's visualized source lines from ``markdown``.
+
+    Without this, the section keeps both the rendered card AND the original
+    table/checklist/step text — the exact duplication bug this refactor
+    fixes. Quote-style results carry no ``strip_ranges`` (a pull-quote is
+    supposed to repeat a body sentence), so they're a no-op here.
+    """
+    lines = str(markdown or "").split("\n")
+    to_remove: set = set()
+    for info in results:
+        for start, end in info.get("strip_ranges") or []:
+            for i in range(start, end + 1):
+                if 0 <= i < len(lines):
+                    to_remove.add(i)
+    kept = [line for i, line in enumerate(lines) if i not in to_remove]
+    text = "\n".join(kept)
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def _attach_wordpress_infographics(*, html: str, results: list, live: bool, doc_seed: str) -> tuple:
+    """Upload pre-rendered section infographics and insert each after its H2 heading."""
+    from agent.content.markdown_html import h2_inner_html
+
     uploaded: list = []
-    for info in build_section_infographics(
-        markdown=markdown,
-        category_id=category_id,
-        output_dir=output_dir,
-    ):
+    for info in results:
         media = upload_wordpress_media(
             site_url=os.environ.get("WORDPRESS_SITE_URL"),
             username=os.environ.get("WORDPRESS_USERNAME"),
@@ -326,7 +380,6 @@ def _attach_wordpress_infographics(*, html: str, markdown: str, category_id: str
         source_url = media.get("sourceUrl")
         if not source_url:
             continue
-        from agent.content.markdown_html import h2_inner_html
 
         anchor = re.compile(
             rf"(<h2[^>]*>{re.escape(h2_inner_html(info['heading'], seed=doc_seed))}</h2>)"
@@ -342,6 +395,42 @@ def _attach_wordpress_infographics(*, html: str, markdown: str, category_id: str
             html = new_html
             uploaded.append(media)
     return html, uploaded
+
+
+def _attach_blogspot_infographics(markdown: str, *, category_id: str, output_dir: str, style_seed: str) -> str:
+    """Render section infographics and inline them as base64 data URIs.
+
+    Blogger receives markdown that ``create_blogspot_draft`` converts to
+    HTML itself (see ``publishers/blogspot.py``'s ``build_blogger_post``),
+    so — unlike WordPress — there is no media-upload step: the image goes
+    straight in as a ``data:`` URI, the same pattern the hero image already
+    uses (``_embed_blogspot_hero_png``) to sidestep Blogger's unpredictable
+    inline-``style`` stripping.
+    """
+    import base64
+
+    results = _build_section_infographic_results(
+        markdown=markdown, category_id=category_id, output_dir=output_dir, style_seed=style_seed,
+    )
+    if not results:
+        return markdown
+
+    narrative = _strip_infographic_source_blocks(markdown, results)
+    lines = narrative.split("\n")
+    for info in results:
+        try:
+            data = Path(str(info["file"])).read_bytes()
+        except OSError:
+            continue
+        b64 = base64.b64encode(data).decode("ascii")
+        data_uri = f"data:image/png;base64,{b64}"
+        markdown_img = f"\n![{info['alt']}]({data_uri})\n"
+        heading_line = f"## {info['heading']}"
+        for i, line in enumerate(lines):
+            if line.strip() == heading_line:
+                lines.insert(i + 1, markdown_img)
+                break
+    return "\n".join(lines)
 
 
 def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, live: bool = False) -> Dict[str, Any]:
@@ -412,18 +501,44 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
         )
         publishable_content = seo_enrichment["markdown"]
 
+        # Section infographics are rendered from the pre-strip markdown, then
+        # their source blocks (table rows / step headings / bullets / etc.)
+        # are removed from the narrative copy BEFORE HTML conversion — this
+        # is what stops the section's original text and its infographic card
+        # from both ending up in the published HTML (see
+        # _strip_infographic_source_blocks's docstring). Built once here and
+        # reused below for upload/insertion so the same seeded style choices
+        # and strip ranges are never rebuilt with a fresh (and potentially
+        # different) roll.
+        infographic_results: list = []
+        narrative_content = publishable_content
+        try:
+            infographic_results = _build_section_infographic_results(
+                markdown=publishable_content,
+                category_id=item.category_id,
+                output_dir=str(Path(item.blog_file).parent / "images"),
+                style_seed=f"{item.platform}:{item.topic_title}:{title}",
+            )
+            narrative_content = _strip_infographic_source_blocks(publishable_content, infographic_results)
+        except Exception as exc:  # noqa: BLE001 — draft must proceed even if infographic build fails
+            logging.getLogger(__name__).warning(
+                "WordPress section infographics build failed: %s", exc
+            )
+            infographic_results = []
+            narrative_content = publishable_content
+
         # Must match markdown_to_html()'s own doc_seed formula exactly — the
         # HTML below is rendered with that seed, so anchors reconstructed
         # here have to use the identical seed or the H2 color/markup diverges
         # and the regex anchor silently fails to match.
-        doc_lines = strip_frontmatter(publishable_content).split("\n")
-        doc_seed = extract_title(publishable_content, "") or (doc_lines[0] if doc_lines else "post")
+        doc_lines = strip_frontmatter(narrative_content).split("\n")
+        doc_seed = extract_title(narrative_content, "") or (doc_lines[0] if doc_lines else "post")
 
         payload = {
             "status": "draft",
             "title": title,
             "slug": raw_slug,
-            "content": markdown_to_html(publishable_content),
+            "content": markdown_to_html(narrative_content),
         }
         if seo_meta.get("Meta description"):
             payload["excerpt"] = seo_meta["Meta description"]
@@ -509,15 +624,14 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
                     "WordPress hero image upload failed: %s", exc
                 )
 
-        # Section infographics: 3–5 in-body cards matched to H2 sections.
+        # Section infographics: up to 5 in-body cards matched to H2 sections
+        # (already rendered above; this step only uploads + inserts them).
         # Same policy as the hero — image failure never blocks the draft.
         infographic_media: list[Dict[str, Any]] = []
         try:
             payload["content"], infographic_media = _attach_wordpress_infographics(
                 html=payload["content"],
-                markdown=publishable_content,
-                category_id=item.category_id,
-                output_dir=str(Path(item.blog_file).parent / "images"),
+                results=infographic_results,
                 live=wp_live,
                 doc_seed=doc_seed,
             )
@@ -610,6 +724,21 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
         publishable = append_external_links(
             publishable, category_id=item.category_id, platform_id="blogspot", seed=blogspot_title,
         )
+        # Section infographics: same generator as WordPress, but inlined as
+        # base64 data URIs at the markdown level (no media-upload step —
+        # Blogger renders whatever markdown_to_html produces from this
+        # string). Image failure never blocks the draft.
+        try:
+            publishable = _attach_blogspot_infographics(
+                publishable,
+                category_id=item.category_id,
+                output_dir=str(Path(item.blog_file).parent / "images"),
+                style_seed=f"{item.platform}:{item.topic_title}:{blogspot_title}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "Blogspot section infographics failed: %s", exc
+            )
         return create_blogspot_draft(
             markdown=publishable,
             title=blogspot_title,
