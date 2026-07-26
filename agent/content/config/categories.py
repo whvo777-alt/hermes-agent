@@ -66,7 +66,12 @@ CATEGORIES: List[Category] = [
         name="자기계발",
         target_audience="20~35대 성장 원하는 직장인, 취준생, 사이드 프로젝트 관심자",
         tone="생산성·습관 실행 전문가형 톤, 짧고 명확한 문장, 동기부여보다 측정 가능한 기준·루틴·체크리스트 중심",
-        keywords=["독서", "습관", "생산성", "시간관리", "목표설정", "마인드셋", "루틴", "집중력", "기록", "아침루틴"],
+        keywords=[
+            "독서", "습관", "생산성", "시간관리", "목표설정", "마인드셋", "루틴", "집중력", "기록", "아침루틴",
+            "자기효능감", "미루기극복", "번아웃회복", "새벽기상", "리추얼",
+            "자기객관화", "성장마인드", "디지털디톡스", "생산성도구", "월간계획",
+            "연간목표", "자기성찰", "동기부여", "실행력", "완벽주의극복",
+        ],
         caution_hints=["과장된 성공 보장 표현 금지", "자격·성공담 가장 금지", "개인차·환경 차이 명시"],
     ),
 ]
@@ -76,3 +81,29 @@ _BY_ID = {category.id: category for category in CATEGORIES}
 
 def find_category(category_id: str) -> Optional[Category]:
     return _BY_ID.get(category_id)
+
+
+def get_effective_keywords(category_id: str) -> List[str]:
+    """Hand-curated core keywords + Naver-expanded cache, deduped, core first.
+
+    Best-effort: any failure reading the expansion cache (missing module,
+    corrupted cache file, etc.) falls back to core-only -- topic selection
+    must never break because the weekly expansion job hasn't run yet.
+    """
+    category = find_category(category_id)
+    if category is None:
+        return []
+    core = list(category.keywords)
+    try:
+        from agent.content.keywords.keyword_expander import get_expanded_keywords
+        expanded_candidates = get_expanded_keywords(category_id)
+    except Exception:  # noqa: BLE001 — expansion cache is optional, never blocking
+        return core
+    seen = set(core)
+    expanded = []
+    for keyword in expanded_candidates:
+        if keyword in seen:
+            continue
+        seen.add(keyword)
+        expanded.append(keyword)
+    return core + expanded

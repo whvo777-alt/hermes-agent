@@ -20,7 +20,7 @@ from datetime import date as date_cls
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.content.config.categories import Category
+from agent.content.config.categories import Category, get_effective_keywords
 from agent.content.config.launch_policy import get_launch_category
 from agent.content.config.platforms import Platform, find_platform
 from agent.content.images.ai_hero_image import create_hero_image_ai
@@ -61,7 +61,7 @@ def _pick_daily_topic(
     memory: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Deterministic topic pick that never repeats a used main keyword."""
-    keywords = list(category.keywords) or [category.name]
+    keywords = get_effective_keywords(category.id) or [category.name]
     seed = int(hashlib.sha256(f"{run_date}:{platform_id}:{category.id}".encode()).hexdigest(), 16)
     mem = memory if memory is not None else load_memory()
     used = used_main_keywords(
