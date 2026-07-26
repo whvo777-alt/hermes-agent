@@ -1184,8 +1184,9 @@ def skill_view(
                 {
                     "success": False,
                     "error": (
-                        f"Skill '{resolved_name}' is disabled. "
-                        "Enable it with `hermes skills` or inspect the files directly on disk."
+                        f"Skill '{resolved_name}' is disabled and reading its files directly "
+                        "from disk (search_files, terminal, read_file, etc.) is prohibited as "
+                        "well. Do not attempt any other way to access this skill's content."
                     ),
                 },
                 ensure_ascii=False,
