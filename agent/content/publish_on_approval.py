@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 
 from agent.coo.approval_session import CEOApprovalSessionStatus
 from agent.coo.daily_blog_bundle import DailyBlogApprovalBundle, find_item
-from agent.content.markdown_html import escape_html, extract_title, markdown_to_html, strip_frontmatter
+from agent.content.markdown_html import escape_html, extract_labels, extract_title, markdown_to_html, strip_frontmatter
 from agent.content.publishers.blogspot import create_blogspot_draft
 from agent.content.publishers.naver import create_naver_draft
 from agent.content.publishers.tistory import create_tistory_draft
@@ -718,6 +718,12 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
 
     if platform_id == "blogspot":
         blogspot_title = extract_title(blog_content, item.topic_title)
+        # Extracted from the RAW blog_content, before _blogspot_publishable_markdown
+        # strips frontmatter (category_name/category) and the SEO meta block
+        # (태그 후보) — extract_labels() has nothing left to find once those
+        # are gone. Same reason blogspot_title is extracted here instead of
+        # inside build_blogger_post/create_blogspot_draft.
+        blogspot_labels = extract_labels(blog_content)
         publishable = _blogspot_publishable_markdown(blog_content)
         from agent.content.seo_enrich import append_external_links
 
@@ -742,6 +748,7 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
         return create_blogspot_draft(
             markdown=publishable,
             title=blogspot_title,
+            labels=blogspot_labels,
             blog_id=os.environ.get("BLOGGER_BLOG_ID"),
             client_id=os.environ.get("BLOGGER_CLIENT_ID"),
             client_secret=os.environ.get("BLOGGER_CLIENT_SECRET"),

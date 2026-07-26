@@ -10,7 +10,7 @@ calls — never posts, and never anything but ``isDraft=true``.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import httpx
 
@@ -62,18 +62,26 @@ def _exchange_refresh_token(*, client_id: str, client_secret: str, refresh_token
     return data["access_token"]
 
 
-def build_blogger_post(markdown: str, *, title: str) -> Dict[str, Any]:
+def build_blogger_post(markdown: str, *, title: str, labels: Optional[List[str]] = None) -> Dict[str, Any]:
+    """``labels`` should be extracted from the RAW pre-strip blog content by
+    the caller and passed in explicitly — by the time ``markdown`` reaches
+    here it's already had frontmatter/SEO-meta stripped (same reason
+    ``title`` is passed in rather than re-extracted, see
+    ``publish_on_approval.py``'s blogspot branch). Falls back to
+    ``extract_labels(markdown)`` when the caller doesn't pass any, so this
+    stays backward compatible for any other caller."""
     return {
         "kind": "blogger#post",
         "title": title,
         "content": markdown_to_html(markdown),
-        "labels": extract_labels(markdown),
+        "labels": labels if labels is not None else extract_labels(markdown),
     }
 
 
 def create_blogspot_draft(*, markdown: str, title: str, blog_id: Optional[str], client_id: Optional[str],
-                           client_secret: Optional[str], refresh_token: Optional[str], live: bool) -> Dict[str, Any]:
-    post = build_blogger_post(markdown, title=title)
+                           client_secret: Optional[str], refresh_token: Optional[str], live: bool,
+                           labels: Optional[List[str]] = None) -> Dict[str, Any]:
+    post = build_blogger_post(markdown, title=title, labels=labels)
 
     if not live:
         return {"apiCalled": False, "dryRun": True, "postPreview": post}
@@ -118,15 +126,24 @@ def create_blogspot_draft(*, markdown: str, title: str, blog_id: Optional[str], 
 def update_blogspot_draft(
     *,
     markdown: str,
+    title: str,
     blog_id: Optional[str],
     post_id: str,
     client_id: Optional[str],
     client_secret: Optional[str],
     refresh_token: Optional[str],
     live: bool,
+    labels: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Overwrite an existing Blogger draft body (keeps isDraft)."""
-    post = build_blogger_post(markdown)
+    """Overwrite an existing Blogger draft body (keeps isDraft).
+
+    ``title`` was previously not accepted here at all, so the internal
+    ``build_blogger_post(markdown)`` call was missing its required
+    keyword-only ``title`` argument and would raise ``TypeError`` on any
+    real call. Unused by any current call site (caught while fixing the
+    labels bug alongside it), so this was never actually exercised.
+    """
+    post = build_blogger_post(markdown, title=title, labels=labels)
     if not live:
         return {"apiCalled": False, "dryRun": True, "postPreview": post, "postId": post_id}
 
