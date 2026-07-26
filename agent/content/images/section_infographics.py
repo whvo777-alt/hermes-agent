@@ -611,16 +611,38 @@ def _render_before_after_card(spec: InfographicSpec, output_path: str, *, catego
 
     pairs = spec.before_pairs[:3]
     width = 1200
-    row_h = 64
-    height = 170 + len(pairs) * row_h + 50
+    mid = width // 2
+    top = _HEADER_H + 20
+    col_width = mid - 104 - 24
+
+    item_font = _korean_font(24)
+    # Wrap every pair BEFORE sizing the canvas -- text measurement only
+    # depends on font metrics, not canvas size, so a throwaway 1x1 image is
+    # enough here. The card height must be derived from the actual wrapped
+    # line counts (up to 2 lines/side via _wrap's own cap+ellipsis), not a
+    # fixed per-pair budget -- a fixed budget silently undercounts height
+    # for any pair that wraps to 2 lines, which is exactly what let long
+    # "나쁜 예/고친 예" sentences draw past the box (and, with several long
+    # pairs, past the PNG canvas itself).
+    measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    wrapped_pairs = [
+        (
+            _wrap(measure_draw, bad, item_font, col_width, 2),
+            _wrap(measure_draw, good, item_font, col_width, 2),
+        )
+        for bad, good in pairs
+    ]
+
+    ty = top + 76
+    for bad_lines, good_lines in wrapped_pairs:
+        ty += max(len(bad_lines), len(good_lines)) * 30 + 24
+    bottom = ty + 6
+    height = bottom + 30
 
     img = Image.new("RGB", (width, height), "#ffffff")
     draw = ImageDraw.Draw(img, "RGBA")
     accent_rgb, deep_rgb = _draw_label_strip(draw, category_id=category_id, style="before_after")
 
-    mid = width // 2
-    top = _HEADER_H + 20
-    bottom = height - 30
     draw.rounded_rectangle((80, top, mid - 24, bottom), radius=20, fill=(255, 236, 236))
     draw.rounded_rectangle((mid + 24, top, width - 80, bottom), radius=20, fill=_mix(accent_rgb, (255, 255, 255), 0.88))
 
@@ -628,11 +650,8 @@ def _render_before_after_card(spec: InfographicSpec, output_path: str, *, catego
     draw.text((80 + (mid - 104) / 2, top + 22), "나쁜 예", font=head_font, fill=(198, 40, 40), anchor="ma")
     draw.text((mid + 24 + (mid - 104) / 2, top + 22), "고친 예", font=head_font, fill=deep_rgb, anchor="ma")
 
-    item_font = _korean_font(24)
     ty = top + 76
-    for bad, good in pairs:
-        bad_lines = _wrap(draw, bad, item_font, mid - 104 - 24, 2)
-        good_lines = _wrap(draw, good, item_font, mid - 104 - 24, 2)
+    for bad_lines, good_lines in wrapped_pairs:
         for i, line in enumerate(bad_lines):
             draw.text((104, ty + i * 30), line, font=item_font, fill=(120, 40, 40))
         for i, line in enumerate(good_lines):
