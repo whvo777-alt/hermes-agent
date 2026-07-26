@@ -18,6 +18,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+from agent.content.llm_client import call_llm
 from agent.content.images.hero_image import (
     HeroImage,
     _category_visual,
@@ -81,19 +82,74 @@ _NEGATIVE = (
     "no signature, no border"
 )
 
+_SCENE_SYSTEM_PROMPT = (
+    "You write a single-sentence English scene description for a text-to-image "
+    "prompt that illustrates a Korean blog post's hero image.\n"
+    "Rules:\n"
+    "1) Output ONLY the scene description, one line, no quotes, no explanation.\n"
+    "2) Describe objects/setting only — no readable text, letters, numbers, logos, "
+    "or brand names in the scene, and no identifiable real people.\n"
+    "3) Nothing unsafe, medical/legal claims, or NSFW.\n"
+    "4) Under 20 words, concrete and visual (objects, props, setting, lighting), "
+    "suitable for a clean editorial flat-lay or lifestyle photo.\n"
+    "5) Stay topically relevant to the blog post title given by the user."
+)
+_MAX_SCENE_WORDS = 25
 
-def build_hero_prompt(*, category_id: str, hero_mode: str, style_seed: str) -> str:
+
+def _sanitize_scene(text: str) -> Optional[str]:
+    line = (text or "").strip()
+    if not line:
+        return None
+    line = line.splitlines()[0].strip().strip(' "\'').rstrip(".")
+    if not line or len(line.split()) > _MAX_SCENE_WORDS:
+        return None
+    return line
+
+
+def _generate_llm_scene(topic_title: str, category_name: str) -> Optional[str]:
+    """Ask the content LLM for a one-line safe English scene tied to the topic.
+
+    Best-effort only: any LLM failure or invalid output returns None so the
+    caller falls back to the fixed ``_SCENE_VOCAB`` rotation unchanged.
+    """
+    topic_title = (topic_title or "").strip()
+    if not topic_title:
+        return None
+    try:
+        user = (
+            f'Blog post title (Korean): "{topic_title}"\n'
+            f"Category: {category_name or 'general'}\n"
+            "Write the one-line English scene description now."
+        )
+        text = call_llm(system=_SCENE_SYSTEM_PROMPT, user=user)
+    except Exception as exc:  # noqa: BLE001 — best-effort, fall back to fixed vocab
+        logger.warning("LLM hero scene generation failed for %r: %s", topic_title, exc)
+        return None
+    return _sanitize_scene(text)
+
+
+def build_hero_prompt(
+    *,
+    category_id: str,
+    hero_mode: str,
+    style_seed: str,
+    topic_title: str = "",
+    category_name: str = "",
+) -> str:
     """Build an English text-to-image prompt from category + hero-mode signals.
 
-    Topic words are deliberately excluded from the prompt itself — see the
-    module docstring. Topic still shapes the result indirectly through
-    ``hero_mode`` (``choose_hero_mode`` already factors in the topic title)
-    and through ``style_seed`` (usually the topic id), which rotates which
-    scene is picked.
+    When ``topic_title`` is given, first tries an LLM-generated one-line
+    scene tied to the actual topic (``_generate_llm_scene``). Falls back to
+    the fixed ``_SCENE_VOCAB`` rotation — unchanged from before — on any LLM
+    failure, empty ``topic_title``, or invalid output, so the AI hero path
+    never blocks on this step.
     """
-    vocab = _SCENE_VOCAB.get(category_id, _DEFAULT_SCENE_VOCAB)
-    idx = _style_index(style_seed or category_id)
-    scene = vocab[idx % len(vocab)]
+    scene = _generate_llm_scene(topic_title, category_name) if topic_title else None
+    if scene is None:
+        vocab = _SCENE_VOCAB.get(category_id, _DEFAULT_SCENE_VOCAB)
+        idx = _style_index(style_seed or category_id)
+        scene = vocab[idx % len(vocab)]
     style = _PHOTO_STYLE if hero_mode == "photo" else _CARD_STYLE
     return f"{scene}, {style}. {_NEGATIVE}."
 
@@ -125,6 +181,45 @@ def _resolve_provider():
     return get_active_provider()
 
 
+_LANDSCAPE_MIN_RATIO = 1.3
+_LANDSCAPE_TARGET_RATIO = 16 / 9
+
+
+def _enforce_landscape_crop(path: Path) -> None:
+    """Center-crop a non-landscape AI hero image to ~16:9 in place.
+
+    The image_gen provider is asked for aspect_ratio="landscape" but some
+    backends (observed: openai-codex/ChatGPT image tool returning
+    1122x1402 despite a 1536x1024 size request) silently ignore the
+    requested size and return a portrait/square image instead. Rather than
+    trust the provider, verify the result and center-crop to a landscape
+    box when it isn't already reasonably wide — a tighter crop reads
+    better in the Blogspot content column than visible side margins.
+
+    No-op (leaves the file untouched) when: PIL is unavailable, the image
+    is already >= _LANDSCAPE_MIN_RATIO wide, or cropping would need to
+    *upscale* height (shouldn't happen, guarded defensively). Never raises
+    — a failed crop just leaves the original image, same as today.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    try:
+        with Image.open(path) as img:
+            w, h = img.size
+            if h <= 0 or w / h >= _LANDSCAPE_MIN_RATIO:
+                return
+            target_h = int(w / _LANDSCAPE_TARGET_RATIO)
+            if target_h <= 0 or target_h >= h:
+                return
+            top = (h - target_h) // 2
+            cropped = img.crop((0, top, w, top + target_h))
+            cropped.save(path)
+    except Exception as exc:  # noqa: BLE001 — best-effort, never block the hero
+        logger.warning("Landscape crop enforcement failed for %s: %s", path, exc)
+
+
 def _materialize_provider_image(image_ref: str, *, dest_dir: Path) -> Optional[Path]:
     """Copy (or download) the provider's output into ``dest_dir/hero_ai.<ext>``."""
     if image_ref.startswith("http://") or image_ref.startswith("https://"):
@@ -148,6 +243,7 @@ def _materialize_provider_image(image_ref: str, *, dest_dir: Path) -> Optional[P
     except OSError as exc:
         logger.warning("Could not copy AI hero image into draft dir: %s", exc)
         return None
+    _enforce_landscape_crop(dest)
     return dest
 
 
@@ -213,7 +309,13 @@ def _try_generate(
         return None
 
     visual = _category_visual(category_id, category_name, None, style_seed=style_seed, topic_title=topic_title)
-    prompt = build_hero_prompt(category_id=category_id, hero_mode=visual.hero_mode, style_seed=style_seed)
+    prompt = build_hero_prompt(
+        category_id=category_id,
+        hero_mode=visual.hero_mode,
+        style_seed=style_seed,
+        topic_title=topic_title,
+        category_name=category_name,
+    )
 
     try:
         result = provider.generate(prompt, aspect_ratio="landscape")
