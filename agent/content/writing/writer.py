@@ -63,28 +63,26 @@ def _visible_for_check(text: str) -> str:
 
 
 def _ensure_emphasis_marks(content: str) -> str:
-    """If the model wrote a flat body, inject **bold** on known emphasis phrases.
+    """Only steps in for a genuinely bare body with almost no emphasis at all.
 
-    HTML conversion turns these into highlighter / red / blue styles.
+    Bold is meant to be sparse/irregular now (see _expression_goals), so this
+    no longer tops bodies up toward a target count — it just guards against
+    the 0-1-bold extreme where the HTML highlighter/red/blue styling never
+    triggers anywhere in the post.
     """
     text = content or ""
     bold_count = len(re.findall(r"\*\*[^*]+\*\*", text))
-    if bold_count >= 6:
+    if bold_count >= 2:
         return text
 
     phrases = [
         "전문가 상담",
         "의사, 물리치료사",
         "동작을 멈추는 것이 우선",
-        "참고 버티기",
         "핵심 기준",
         "확인 기준",
-        "오늘 할 체크",
         "통증",
         "중단",
-        "목표를 작게",
-        "몸 반응 기록",
-        "강도를 천천히",
     ]
     for phrase in phrases:
         if phrase not in text:
@@ -93,13 +91,36 @@ def _ensure_emphasis_marks(content: str) -> str:
             continue
         # Wrap first plain occurrence only.
         text = text.replace(phrase, f"**{phrase}**", 1)
-        if len(re.findall(r"\*\*[^*]+\*\*", text)) >= 8:
+        if len(re.findall(r"\*\*[^*]+\*\*", text)) >= 3:
             break
     return text
 
 
+_META_LEAK_SENTENCE_RE = re.compile(
+    r"[^.\n]*?"
+    r"(?:독자(?:가|를\s*위해|에게)|타겟\s*독자(?:가|를\s*위해)?)"
+    r"[^.\n]*?"
+    r"(?:(?:판단할\s*수\s*있도록|이해하기\s*쉽도록|쉽게\s*알\s*수\s*있도록|도움이\s*되도록|하도록)[^.\n]*?)?"
+    r"(?:정리했습니다|작성했습니다|구성했습니다|담았습니다|준비했습니다|정리해\s*봤습니다)"
+    r"[^.\n]*\.?\s*"
+)
+
+
+def _strip_meta_leak_sentences(text: str) -> str:
+    """Remove sentences where the model describes its own writing intent /
+    target audience instead of just writing the content — e.g. "{카테고리}
+    독자가 모바일에서 판단할 수 있도록 정리했습니다". These read as a leaked
+    internal instruction, not something a reader-facing post would say.
+    Whole sentence is dropped rather than rewritten in place: there's no
+    reliable way to salvage a real point from a sentence that's purely
+    about the writing process itself.
+    """
+    value = _META_LEAK_SENTENCE_RE.sub("", text or "")
+    return re.sub(r"\n{3,}", "\n\n", value)
+
+
 def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: str, content: str) -> str:
-    enhanced = content
+    enhanced = _strip_meta_leak_sentences(content)
     # Strip internal pipeline jargon that falsely trips the quality gate.
     enhanced = re.sub(r"제공된\s*리서치\s*요약과\s*기획안을\s*바탕으로\s*작성한\s*", "", enhanced)
     enhanced = re.sub(r"리서치\s*요약과\s*기획안을\s*바탕으로\s*", "", enhanced)
@@ -140,7 +161,7 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
     enhanced = re.sub(r"100%", "충분히", enhanced)
 
     if not re.search(r"요약|핵심|첫 화면|한눈에", enhanced):
-        enhanced = _append_to_body(enhanced, f"## 한눈에 보는 핵심 요약\n- 오늘의 주제는 {topic_title}입니다.\n- {category_name} 독자가 모바일에서 빠르게 판단할 수 있도록 핵심 기준과 주의점을 정리했습니다.")
+        enhanced = _append_to_body(enhanced, f"## 한눈에 보는 핵심 요약\n- 오늘 주제는 {topic_title}.\n- 핵심만 짚으면, 확인할 기준과 주의할 점 두 가지다.")
 
     if not re.search(r"정보 제공 목적|개인 상황|전문가|상담|보장하지 않습니다|참고", enhanced):
         enhanced = _append_to_body(enhanced, "[정보 제공 안내]\n이 글은 일반적인 정보 제공 목적입니다. 개인 상황에 따라 적용 결과가 달라질 수 있으므로 중요한 결정 전에는 추가 확인이 필요합니다.")
@@ -226,16 +247,23 @@ def _expression_goals(*, platform_id: str, category_id: str) -> str:
 - H2 4~5개. 흐름: 독자 문제 → 판단 기준 → 실전 적용(상황별) → 함정/주의 → 오늘 체크·마무리.
 - 사람이 쓴 호흡: 문장 길이를 섞고, 한 줄 팁만 나열하지 않는다. 각 팁에 왜/어떻게를 붙인다.
 - AI 요약체·양산 블로그 리스트 재탕·가짜 1인칭 후기 금지. 남 글 베낀 느낌을 내지 않는다.
-- 나쁜 예 → 고친 예 문장을 최소 2개 넣는다. 상황별 차이(시간/체력/일정/통증 등)를 구체적으로.
-- 【강조 필수 — 단조로운 본문 금지】
-  - 핵심 기준·체크·권장 문구는 `**볼드**` (문단당 1~2개, 글 전체 12개 이상).
-  - 주의·통증·중단·전문가 상담은 `**볼드**`.
-  - 단계 제목은 `### 1단계: …` / `### 2단계: …` 형식 (형광펜 처리됨).
-  - 번호 팁은 `1. 짧은 제목` 다음 줄에 `: 왜/어떻게 설명` (크림 박스+설명).
-- 최종 체크리스트는 글 끝에 1회만 (5~8항목).
+- 대비(나쁜 선택 vs 나은 선택)를 보여줄 땐 매번 같은 "나쁜 예 → 고친 예" 화살표 문장으로 쓰지 않는다.
+  질문형("이렇게 하고 있다면?"), 일화형(짧은 상황 묘사), 서술형(문단 안에 자연스럽게 녹이기) 등으로
+  글마다 다르게 표현한다. 상황별 차이(시간/체력/일정/통증 등)를 구체적으로.
+- 【강조는 불규칙하게 — 단조로운 결론투 금지】
+  - `**볼드**`는 글 전체에서 정말 중요한 곳에만 띄엄띄엄(총 3~6곳 정도, 문단마다 넣지 않는다).
+  - 모든 단락 끝에 굵은 결론 문장을 다는 습관을 피한다. 강조 없이 끝나는 단락이 더 많아야 자연스럽다.
+  - 주의·통증·중단·전문가 상담처럼 정말 중요한 경고만 `**볼드**`.
+  - 단계형으로 쓸 경우 제목은 `### 1단계: …` 형식(형광펜 처리됨) — 다만 매번 단계형일 필요는 없다.
+- 글 구조를 매번 똑같이 맞추지 않는다: 체크리스트·표·번호 목록은 필요할 때만 넣고, 없어도 된다.
+  넣을 때도 체크리스트 항목 수, 단계 개수를 매번 다르게 한다 (고정된 5단계+표+체크리스트 조합 금지).
 - H1에 숫자를 넣고, 포커스 키워드는 본문 6~12회만 자연스럽게.
 - URL slug는 **한글**로 쓴다 (예: `요가-초보-확인-기준`). 영어 전용 slug 금지.
-- 외부 링크 0~1개. 없는 URL 금지. slug/meta/태그/ALT는 글 맨 아래에만."""
+- 외부 링크 0~1개. 없는 URL 금지. slug/meta/태그/ALT는 글 맨 아래에만.
+- 사람 냄새: 가벼운 개인적 어투, 문장 길이의 완급, 가끔 던지는 반문, 뉘앙스 있는 의견(단정 아님)을 섞는다.
+  다만 카테고리 규칙(특히 health/finance/parenting의 YMYL 안전장치)은 절대 흔들지 않는다.
+- 본문에 글쓰기 의도·독자 타겟·작성 목적을 설명하는 문장을 쓰지 않는다
+  (예: "독자가 ~하도록 정리했습니다", "타겟 독자를 위해 ~했습니다" 같은 문장 금지 — 그냥 본문 내용만 쓴다)."""
 
     if category_id == "health" or platform_id == "wordpress":
         return f"""표현 목표 (밀도 있는 건강 정보 — 자격 가장 금지):
@@ -293,8 +321,8 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
 - 치료·예방·효과를 단정하거나 수익/원금/성공/합격을 보장하는 표현을 쓰지 않는다.
 - H1 1개, H2 4~5개, 본문 4,000~6,500자. 개인차 안내를 포함한다.
 - 건강 주제면 전문가 상담 권장, 자기계발 주제면 상황별 조정·복구 기준.
-- AI 요약체·양산 블로그 재탕·가짜 후기로 분량을 채우지 않는다. 나쁜 예→고친 예 최소 2개.
-- 단조 본문 금지: `**볼드**` 12회+, `### n단계` 또는 `1. 제목` + `: 설명` 팁을 넣는다."""
+- AI 요약체·양산 블로그 재탕·가짜 후기로 분량을 채우지 않는다. 대비 표현은 매번 다른 방식(질문형/일화형/서술형)으로.
+- 볼드는 아껴 쓴다(3~6곳, 모든 단락 끝마다 X). 구조(단계/표/체크리스트 유무·개수)는 매번 다르게 가져간다."""
 
     raw = call_llm(system=system, user=user)
     body = _enhance_blog_quality(platform_id=platform_id, category_name=category_name, topic_title=topic_title, content=raw)
