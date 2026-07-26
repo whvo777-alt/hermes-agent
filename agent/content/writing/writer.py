@@ -19,6 +19,49 @@ from agent.content.llm_client import call_llm
 from agent.content.prompts.prompt_builder import build_system_prompt, build_writing_brief, summarize_planning, summarize_research
 
 
+_META_DELIM = "---META---"
+_META_DELIM_RE = re.compile(r"\n-{3,}\s*META\s*-{3,}\s*\n?", re.I)
+
+
+def _split_meta(text: str) -> tuple:
+    """Split writer output into (body, meta_block) on the ``---META---`` delimiter.
+
+    ``meta_block`` is "" when the delimiter is absent, so callers degrade to
+    plain appends for older-format output.
+    """
+    parts = _META_DELIM_RE.split(text or "", maxsplit=1)
+    if len(parts) == 2:
+        return parts[0].rstrip(), parts[1].strip()
+    return text or "", ""
+
+
+def _append_to_body(text: str, addition: str) -> str:
+    """Append ``addition`` to the reader-facing body, before the meta block."""
+    body, meta_block = _split_meta(text)
+    body = f"{body}\n\n{addition}"
+    return f"{body}\n\n{_META_DELIM}\n{meta_block}" if meta_block else body
+
+
+def _ensure_meta_block(text: str, lines: List[str]) -> str:
+    """Append ``lines`` after the ``---META---`` delimiter, creating it if
+    missing, instead of tacking meta entries onto the last body paragraph.
+    """
+    if not lines:
+        return text
+    body, meta_block = _split_meta(text)
+    meta_block = (meta_block + "\n" + "\n".join(lines)).strip() if meta_block else "\n".join(lines)
+    return f"{body}\n\n{_META_DELIM}\n{meta_block}"
+
+
+def _visible_for_check(text: str) -> str:
+    """``text`` with the ``---META---`` marker itself removed.
+
+    Presence checks like ``re.search(r"meta|...", enhanced)`` must not treat
+    the delimiter token as if it were an actual "Meta description:" line.
+    """
+    return (text or "").replace(_META_DELIM, "")
+
+
 def _ensure_emphasis_marks(content: str) -> str:
     """If the model wrote a flat body, inject **bold** on known emphasis phrases.
 
@@ -97,10 +140,10 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
     enhanced = re.sub(r"100%", "충분히", enhanced)
 
     if not re.search(r"요약|핵심|첫 화면|한눈에", enhanced):
-        enhanced += f"\n\n## 한눈에 보는 핵심 요약\n- 오늘의 주제는 {topic_title}입니다.\n- {category_name} 독자가 모바일에서 빠르게 판단할 수 있도록 핵심 기준과 주의점을 정리했습니다."
+        enhanced = _append_to_body(enhanced, f"## 한눈에 보는 핵심 요약\n- 오늘의 주제는 {topic_title}입니다.\n- {category_name} 독자가 모바일에서 빠르게 판단할 수 있도록 핵심 기준과 주의점을 정리했습니다.")
 
     if not re.search(r"정보 제공 목적|개인 상황|전문가|상담|보장하지 않습니다|참고", enhanced):
-        enhanced += "\n\n[정보 제공 안내]\n이 글은 일반적인 정보 제공 목적입니다. 개인 상황에 따라 적용 결과가 달라질 수 있으므로 중요한 결정 전에는 추가 확인이 필요합니다."
+        enhanced = _append_to_body(enhanced, "[정보 제공 안내]\n이 글은 일반적인 정보 제공 목적입니다. 개인 상황에 따라 적용 결과가 달라질 수 있으므로 중요한 결정 전에는 추가 확인이 필요합니다.")
 
     if platform_id == "naver":
         existing = {m for m in re.findall(r"\[이미지(\d+)(?:[^\]]*)?\]", enhanced)}
@@ -110,17 +153,17 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
                 f"[이미지{i}: {topic_title} 관련 모바일 카드형 보강 이미지]\n이미지 설명: 작은 화면에서도 핵심 메시지가 읽히도록 짧은 문구와 여백 중심으로 구성합니다."
                 for i in missing
             )
-            enhanced += f"\n\n## 모바일 이미지 배치 보강\n{blocks}"
+            enhanced = _append_to_body(enhanced, f"## 모바일 이미지 배치 보강\n{blocks}")
         if not re.search(r"이웃|댓글", enhanced):
-            enhanced += f"\n\n궁금한 점은 댓글로 남겨주세요. 이웃 추가하면 {category_name} 관련 새 글을 계속 받아볼 수 있습니다."
+            enhanced = _append_to_body(enhanced, f"궁금한 점은 댓글로 남겨주세요. 이웃 추가하면 {category_name} 관련 새 글을 계속 받아볼 수 있습니다.")
 
     if platform_id == "tistory":
         if not re.search(r"목차", enhanced):
             enhanced = f"## 목차\n1. {topic_title} 핵심 요약\n2. 기준과 체크리스트\n3. 실전 적용 방법\n4. 마무리\n\n{enhanced}"
         if not re.search(r"내부링크|관련 글|함께 읽", enhanced):
-            enhanced += f"\n\n## 내부링크 후보\n- {category_name} 기본 가이드\n- {topic_title} 체크리스트\n- {category_name} 관련 최신 글"
+            enhanced = _append_to_body(enhanced, f"## 내부링크 후보\n- {category_name} 기본 가이드\n- {topic_title} 체크리스트\n- {category_name} 관련 최신 글")
         if not re.search(r"대표 이미지 ALT|이미지 ALT|ALT", enhanced):
-            enhanced += f"\n\n대표 이미지 ALT: {topic_title}를 이해하기 쉽게 정리한 {category_name} 카드형 대표 이미지"
+            enhanced = _append_to_body(enhanced, f"대표 이미지 ALT: {topic_title}를 이해하기 쉽게 정리한 {category_name} 카드형 대표 이미지")
 
     if platform_id in ("blogspot", "wordpress"):
         # Force Hangul slug lines — replace English-only writer slugs.
@@ -139,26 +182,31 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
             _ko_slug_line,
             enhanced,
         )
-        if not re.search(r"slug|URL 슬러그|슬러그", enhanced, flags=re.I):
-            enhanced += f"\n\n**URL slug:** `{hangul_slug}`"
+        missing_meta = []
+        if not re.search(r"slug|URL 슬러그|슬러그", _visible_for_check(enhanced), flags=re.I):
+            missing_meta.append(f"**URL slug:** `{hangul_slug}`")
+        enhanced = _ensure_meta_block(enhanced, missing_meta)
 
     if platform_id == "blogspot":
         # Keep light SEO hints at the end for the quality gate only.
-        if not re.search(r"meta|메타 디스크립션", enhanced, flags=re.I):
-            enhanced += (
-                f"\n\n**Meta description:** {topic_title} 핵심 기준과 오늘 할 체크를 "
+        missing_meta = []
+        if not re.search(r"meta|메타 디스크립션", _visible_for_check(enhanced), flags=re.I):
+            missing_meta.append(
+                f"**Meta description:** {topic_title} 핵심 기준과 오늘 할 체크를 "
                 "짧게 정리한 실전 가이드입니다."
             )
-        if not re.search(r"태그 후보|Tags?:", enhanced, flags=re.I):
-            enhanced += (
-                f"\n\n**태그 후보:** {topic_title.split()[0] if topic_title.split() else category_name}, "
+        if not re.search(r"태그 후보|Tags?:", _visible_for_check(enhanced), flags=re.I):
+            missing_meta.append(
+                f"**태그 후보:** {topic_title.split()[0] if topic_title.split() else category_name}, "
                 f"자기계발, 루틴, 체크리스트, 습관, 생산성"
             )
+        enhanced = _ensure_meta_block(enhanced, missing_meta)
         if not re.search(r"개인\s*상황|개인차|상황에\s*따라", enhanced):
-            enhanced += (
-                "\n\n[정보 제공 안내]\n"
+            enhanced = _append_to_body(
+                enhanced,
+                "[정보 제공 안내]\n"
                 "이 글은 일반적인 자기계발 정보입니다. 개인 상황·업무 강도에 따라 "
-                "적용 방식이 달라질 수 있으니, 무리한 계획보다 지속 가능한 단위로 조정하세요."
+                "적용 방식이 달라질 수 있으니, 무리한 계획보다 지속 가능한 단위로 조정하세요.",
             )
         # Never keep AdSense / mobile ops checklists in the body.
         enhanced = re.sub(
