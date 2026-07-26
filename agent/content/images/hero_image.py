@@ -96,7 +96,11 @@ def _wrap_title_lines(title: str, *, max_chars: int = 18, max_lines: int = 3) ->
         while len(line) > max_chars and len(fixed) < max_lines - 1:
             fixed.append(line[:max_chars])
             line = line[max_chars:]
-        fixed.append(line[:max_chars])
+        if len(line) > max_chars:
+            # Last available slot still overflows — mark the cut instead of
+            # silently dropping the remainder.
+            line = line[: max_chars - 1].rstrip() + "…"
+        fixed.append(line)
     return fixed[:max_lines]
 
 
