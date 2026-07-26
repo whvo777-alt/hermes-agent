@@ -5034,7 +5034,90 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         self._enqueue_fifo(session_key, event, adapter)
 
+    async def _dispatch_native_content_route(
+        self, event: MessageEvent, source: SessionSource,
+    ) -> Optional[str]:
+        """Try Hermes Native Flow for a Discord natural-language blog request.
+
+        Shared by both the cold path (_handle_message) and the busy path
+        (_handle_active_session_busy_message) so a message that arrives while
+        the adapter's _active_sessions guard is already held for this
+        session_key gets the SAME native-flow check as a brand-new message.
+
+        Root cause this closes (2026-07-22/23 incident): is_native_content_request()
+        was only ever evaluated inside _handle_message. Any message routed
+        through _handle_active_session_busy_message instead (because
+        gateway/platforms/base.py's handle_message() found session_key already
+        in self._active_sessions) skipped the check entirely, got merged/queued
+        as a plain conversational turn, and from there could pick a legacy
+        skill (chutzrit-broadcasting, content-pipeline-coo, etc.) instead of
+        Native Flow — with zero "Native Flow route selected/failed" log trace,
+        which is why the routing gate looked untouched from the logs alone.
+
+        Returns the Discord-ready response text when Native Flow handled the
+        request, or None when the message isn't a native content request (the
+        caller should fall through to its normal dispatch).
+        """
+        try:
+            from gateway.native_content_route import handle_native_content_request
+
+            _native_adapter = self.adapters.get(source.platform)
+            _native_approval_sender = None
+            if _native_adapter is not None and hasattr(
+                _native_adapter, "send_daily_blog_approval"
+            ):
+                _native_metadata = self._thread_metadata_for_source(source)
+
+                async def _send_native_approval_item(item_payload):
+                    return await _native_adapter.send_daily_blog_approval(
+                        str(source.chat_id),
+                        item_payload,
+                        metadata=_native_metadata,
+                    )
+
+                _native_approval_sender = _send_native_approval_item
+
+            # TEMP DIAGNOSTIC (2026-07-23) — remove once the native-flow bypass
+            # fix above is confirmed working in production for both the cold
+            # and busy paths.
+            try:
+                from gateway.native_content_route import is_native_content_request as _diag_is_native
+                _diag_matched = _diag_is_native(event, source)
+            except Exception as _diag_exc:  # noqa: BLE001 — diagnostic must never break dispatch
+                _diag_matched = f"ERROR:{_diag_exc}"
+            logger.info(
+                "Native content route check: matched=%s text=%r",
+                _diag_matched, str(event.text or "")[:30],
+            )
+
+            return await handle_native_content_request(
+                event, source, approval_sender=_native_approval_sender,
+            )
+        except Exception as _native_content_exc:
+            logger.warning("Hermes Native Flow route failed: %s", _native_content_exc, exc_info=True)
+            # Fail closed for any matched Native Flow phrase — never fall
+            # through to content-pipeline-coo / generic legacy approval cards.
+            try:
+                from gateway.native_content_route import is_native_content_request as _is_native
+                _matched_native = _is_native(event, source)
+            except Exception:
+                _matched_native = False
+            if _matched_native:
+                return (
+                    "Hermes Native Flow 실패로 원고 승인을 준비하지 못했습니다. "
+                    f"레거시 경로로 전환하지 않습니다. 원인: {_native_content_exc}"
+                )
+            return None
+
     async def _handle_active_session_busy_message(self, event: MessageEvent, session_key: str) -> bool:
+        # TEMP DIAGNOSTIC (2026-07-23) — bisecting the 2026-07-22/23 Native
+        # Flow bypass: confirm this busy-path handler is actually entered.
+        # Remove once the bypass root cause is found.
+        logger.info(
+            "[DIAG] _handle_active_session_busy_message entered, session_key=%s text=%r",
+            session_key, str(event.text or "")[:30],
+        )
+
         # --- Authorization gate (#17775) ---
         # The cold path (_handle_message) checks _is_user_authorized before
         # creating a session.  The busy path must enforce the same check;
@@ -5077,6 +5160,27 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 ),
                 metadata=thread_meta,
             )
+            return True
+
+        # --- Hermes Native Flow check (2026-07-23 fix) ---
+        # Without this, a matched "블로그 써줘" request arriving while this
+        # session_key is in self._active_sessions silently falls into the
+        # queue/steer/interrupt logic below and ends up as a plain
+        # conversational turn — which can then pick a legacy skill
+        # (chutzrit-broadcasting, content-pipeline-coo, etc.) instead of
+        # Native Flow. See _dispatch_native_content_route() for the full
+        # root-cause note.
+        _native_content_response = await self._dispatch_native_content_route(event, event.source)
+        if _native_content_response is not None:
+            adapter = self._adapter_for_source(event.source)
+            if adapter:
+                _anchor = self._reply_anchor_for_event(event)
+                await adapter._send_with_retry(
+                    chat_id=event.source.chat_id,
+                    content=_native_content_response,
+                    reply_to=_anchor,
+                    metadata=self._thread_metadata_for_source(event.source, _anchor),
+                )
             return True
 
         # --- Approval response routing (#46866) ---
@@ -8545,6 +8649,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         """
         source = event.source
 
+        # TEMP DIAGNOSTIC (2026-07-23) — bisecting the 2026-07-22/23 Native
+        # Flow bypass: confirm _handle_message() (the cold path, which
+        # contains the native-flow check) is actually entered. Remove once
+        # the bypass root cause is found.
+        logger.info(
+            "[DIAG] _handle_message entered, text=%r", str(event.text or "")[:30],
+        )
+
         # 🔴 Cross-session leak guard. This handler runs inside a per-message
         # asyncio task created via create_task(), which snapshots the spawning
         # context with copy_context(). If a *concurrent* message had already
@@ -9519,46 +9631,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         # Repository2 content-pipeline-coo skill.  This is a routing-only
         # bypass for the Discord natural-language daily blog request; it does
         # not alter Research/Planning/Writing/Quality/Publisher code.
-        try:
-            from gateway.native_content_route import handle_native_content_request
-
-            _native_adapter = self.adapters.get(source.platform)
-            _native_approval_sender = None
-            if _native_adapter is not None and hasattr(
-                _native_adapter, "send_daily_blog_approval"
-            ):
-                _native_metadata = self._thread_metadata_for_source(source)
-
-                async def _send_native_approval_item(item_payload):
-                    return await _native_adapter.send_daily_blog_approval(
-                        str(source.chat_id),
-                        item_payload,
-                        metadata=_native_metadata,
-                    )
-
-                _native_approval_sender = _send_native_approval_item
-
-            _native_content_response = await handle_native_content_request(
-                event,
-                source,
-                approval_sender=_native_approval_sender,
-            )
-        except Exception as _native_content_exc:
-            logger.warning("Hermes Native Flow route failed: %s", _native_content_exc, exc_info=True)
-            # Fail closed for any matched Native Flow phrase — never fall through
-            # to content-pipeline-coo / generic English COO approval cards.
-            try:
-                from gateway.native_content_route import is_native_content_request as _is_native
-
-                _matched_native = _is_native(event, source)
-            except Exception:
-                _matched_native = False
-            if _matched_native:
-                return (
-                    "Hermes Native Flow 실패로 원고 승인을 준비하지 못했습니다. "
-                    f"레거시 경로로 전환하지 않습니다. 원인: {_native_content_exc}"
-                )
-            _native_content_response = None
+        _native_content_response = await self._dispatch_native_content_route(event, source)
         if _native_content_response is not None:
             return _native_content_response
         

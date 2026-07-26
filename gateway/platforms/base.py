@@ -4607,6 +4607,15 @@ class BasePlatformAdapter(ABC):
             thread_sessions_per_user=self.config.extra.get("thread_sessions_per_user", False),
         )
 
+        # TEMP DIAGNOSTIC (2026-07-23) — bisecting the 2026-07-22/23 Native
+        # Flow bypass: confirm handle_message() is actually entered, and
+        # whether the adapter already considers this session_key "active"
+        # at this point. Remove once the bypass root cause is found.
+        logger.info(
+            "[DIAG] handle_message entered, session_key=%s active=%s",
+            session_key, session_key in self._active_sessions,
+        )
+
         # On-entry self-heal: if the adapter still has an _active_sessions
         # entry for this key but the owner task has already exited (done or
         # cancelled), the lock is stale.  Clear it and fall through to
