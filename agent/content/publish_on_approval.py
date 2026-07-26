@@ -498,6 +498,7 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
             site_url=site_url,
             auth_header=auth_header,
             live=wp_live,
+            topic_title=item.topic_title,
         )
         publishable_content = seo_enrichment["markdown"]
 
@@ -729,6 +730,7 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
 
         publishable = append_external_links(
             publishable, category_id=item.category_id, platform_id="blogspot", seed=blogspot_title,
+            topic_title=item.topic_title,
         )
         # Section infographics: same generator as WordPress, but inlined as
         # base64 data URIs at the markdown level (no media-upload step —

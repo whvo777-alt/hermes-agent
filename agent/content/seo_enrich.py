@@ -7,12 +7,15 @@ a number in the SEO title.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import httpx
 
 from agent.content.visual_accents import _seed_int
+
+logger = logging.getLogger(__name__)
 
 _TIMEOUT = 30.0
 
@@ -61,6 +64,105 @@ _EXTERNAL_LINKS: Dict[str, List[Tuple[str, str]]] = {
 _DEFAULT_EXTERNAL = [
     ("대한민국 정부 포털", "https://www.gov.kr/"),
 ]
+
+# Topic-keyword -> institution, matched against the actual topic
+# title/focus keyword BEFORE falling back to the category-wide pool above.
+# Fixes: a "건강보험료" post no longer gets a random health-category link
+# (식약처/질병관리청/...) that has nothing to do with insurance premiums —
+# it gets 국민건강보험공단. Order matters: first (most specific) match wins,
+# so check narrower patterns before broader ones. Real institutional URLs
+# only, same rule as ``_EXTERNAL_LINKS`` above.
+_TOPIC_EXTERNAL_LINKS: List[Tuple[re.Pattern, List[Tuple[str, str]]]] = [
+    (re.compile(r"건강보험료|건강보험"), [("국민건강보험공단", "https://www.nhis.or.kr/")]),
+    (re.compile(r"국민연금|노령연금|연금\s*수급"), [("국민연금공단", "https://www.nps.or.kr/")]),
+    (re.compile(r"식품|영양제|건강기능식품|보충제|첨가물"), [("식품의약품안전처", "https://www.mfds.go.kr/")]),
+    (re.compile(r"질병|감염|백신|전염|예방접종"), [("질병관리청", "https://www.kdca.go.kr/")]),
+    (re.compile(r"의료|병원|진료|의학|처방"), [("대한의학회", "https://www.kams.or.kr/")]),
+    (re.compile(r"세금|절세|연말정산|종합소득세"), [("국세청", "https://www.nts.go.kr/")]),
+    (re.compile(r"대출|금리|예금|적금|저축"), [("금융감독원", "https://www.fss.or.kr/")]),
+    (re.compile(r"개인정보|정보보호|보안\s*사고"), [("개인정보보호위원회", "https://www.pipc.go.kr/")]),
+    (re.compile(r"통신|5g|와이파이|인터넷\s*속도"), [("과학기술정보통신부", "https://www.msit.go.kr/")]),
+    (re.compile(r"취업|이직|채용|자격증"), [("한국산업인력공단", "https://www.hrdkorea.or.kr/")]),
+    (re.compile(r"육아휴직|출산휴가|근로\s*기준"), [("고용노동부", "https://www.moel.go.kr/")]),
+    (re.compile(r"이유식|영유아\s*건강|신생아"), [("아이사랑", "https://www.childcare.go.kr/")]),
+    (re.compile(r"해외여행|해외\s*안전"), [("외교부 해외안전여행", "https://www.0404.go.kr/")]),
+    (re.compile(r"국내여행|국내\s*숙박"), [("대한민국 구석구석", "https://korean.visitkorea.or.kr/")]),
+]
+
+_OFFICIAL_DOMAIN_RE = re.compile(r"\.go\.kr(?:/|$)|\.or\.kr(?:/|$)", re.I)
+
+
+def _search_fallback_links(query: str) -> List[Tuple[str, str]]:
+    """Best-effort: ask the active web-search provider (whichever backend
+    ``web.search_backend`` resolves to — Tavily or otherwise) for an
+    official page when the topic doesn't match anything in
+    ``_TOPIC_EXTERNAL_LINKS``. Results are filtered to .go.kr/.or.kr domains
+    only. Never raises — any failure (no provider configured, network
+    error, empty results) just returns [] and the caller falls back to the
+    category pool, same as before this existed.
+    """
+    query = (query or "").strip()
+    if not query:
+        return []
+    try:
+        from agent.web_search_registry import get_active_search_provider
+
+        provider = get_active_search_provider()
+        if provider is None or not provider.supports_search() or not provider.is_available():
+            return []
+        result = provider.search(f"{query} 공식 기관", limit=5)
+    except Exception as exc:  # noqa: BLE001 — search fallback must never block publish
+        logger.warning("External link search fallback failed for %r: %s", query, exc)
+        return []
+    if not isinstance(result, dict) or not result.get("success"):
+        return []
+    web_results = ((result.get("data") or {}).get("web")) or []
+    picked: List[Tuple[str, str]] = []
+    for item in web_results:
+        url = str((item or {}).get("url") or "").strip()
+        title = str((item or {}).get("title") or "").strip()
+        if not url or not title or not _OFFICIAL_DOMAIN_RE.search(url):
+            continue
+        picked.append((title[:40], url))
+        if len(picked) >= 2:
+            break
+    return picked
+
+
+def _pick_external_links_for_topic(
+    *, topic_title: str, focus_keyword: str, category_id: str, platform_id: str, seed: str,
+) -> List[Tuple[str, str]]:
+    """Topic keywords first, then the category pool to top up, then (only
+    when the topic matched nothing at all) a live search fallback."""
+    text = f"{topic_title or ''} {focus_keyword or ''}".strip()
+    matched: List[Tuple[str, str]] = []
+    seen_urls: set = set()
+
+    if text:
+        for pattern, links in _TOPIC_EXTERNAL_LINKS:
+            if not pattern.search(text):
+                continue
+            for label, url in links:
+                if url in seen_urls:
+                    continue
+                matched.append((label, url))
+                seen_urls.add(url)
+                if len(matched) >= 2:
+                    break
+            if len(matched) >= 2:
+                break
+
+    if not matched:
+        matched = _search_fallback_links(text)
+        seen_urls.update(url for _label, url in matched)
+
+    if len(matched) < 2:
+        category_pool = _EXTERNAL_LINKS.get(category_id, _DEFAULT_EXTERNAL)
+        remaining = [c for c in category_pool if c[1] not in seen_urls]
+        top_up = _pick_external_links(remaining, platform_id=platform_id, category_id=category_id, seed=seed)
+        matched.extend(top_up[: 2 - len(matched)])
+
+    return matched[:2]
 
 _EXTERNAL_LINKS_TOPIC_LABEL: Dict[str, str] = {
     "health": "건강·생활",
@@ -229,13 +331,21 @@ def _pick_external_links(
 
 def append_external_links(
     markdown: str, *, category_id: str, platform_id: str = "", seed: str = "",
+    topic_title: str = "", focus_keyword: str = "",
 ) -> str:
-    """Append a short DoFollow reference section if none exist yet."""
+    """Append a short DoFollow reference section if none exist yet.
+
+    Links are matched to the actual topic (``topic_title``/``focus_keyword``)
+    via ``_TOPIC_EXTERNAL_LINKS`` first; the category-wide pool only tops up
+    what the topic match didn't cover. Passing neither keeps the old
+    category-only behavior (topic match finds nothing to match against, so
+    it's a no-op and every link comes from the category pool, unchanged).
+    """
     if _has_external_link(markdown):
         return markdown
-    candidates = _EXTERNAL_LINKS.get(category_id, _DEFAULT_EXTERNAL)
-    links = _pick_external_links(
-        candidates, platform_id=platform_id, category_id=category_id, seed=seed,
+    links = _pick_external_links_for_topic(
+        topic_title=topic_title, focus_keyword=focus_keyword,
+        category_id=category_id, platform_id=platform_id, seed=seed,
     )
     if not links:
         return markdown
@@ -357,6 +467,7 @@ def enrich_wordpress_markdown_for_seo(
     auth_header: str = "",
     exclude_post_id: Optional[int] = None,
     live: bool = False,
+    topic_title: str = "",
 ) -> Dict[str, Any]:
     """Apply density thinning + external/internal link enrichment."""
     original = markdown
@@ -365,6 +476,7 @@ def enrich_wordpress_markdown_for_seo(
     before_links = content
     content = append_external_links(
         content, category_id=category_id, platform_id=platform_id, seed=seed,
+        topic_title=topic_title, focus_keyword=focus_keyword,
     )
     external_added = content != before_links
 
