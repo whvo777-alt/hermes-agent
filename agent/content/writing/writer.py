@@ -281,6 +281,38 @@ def _expression_goals(*, platform_id: str, category_id: str) -> str:
 - 독자가 바로 판단·실행할 기준을 남긴다."""
 
 
+def _visual_marker_hint() -> str:
+    """Optional structured-data markers that section_infographics.py's
+    qa/ox_quiz/risk_tier extractors look for (see that module's _extract_qa/
+    _extract_ox_quiz/_extract_risk_tiers). Deliberately framed as "only if
+    it already fits" -- these must not become a new mechanical template
+    fighting the structure-diversity goal above (varied structure, no
+    forced pattern every post).
+    """
+    return """시각 카드 마커 (전부 선택 사항 — 아래 셋 중 아무것도 안 써도 정상이다):
+
+내용상 실제로 아래 패턴에 해당하는 부분이 있을 때만, 정확히 이 형식으로 표시한다.
+없으면 억지로 만들지 않는다 — 매 글, 매 섹션에 강제로 넣는 것이 아니다.
+
+1. 자주 묻는 질문이 실제로 있다면 (많아야 1~2쌍):
+질문: (실제 질문)
+답변: (실제 답변)
+
+2. 흔한 오해를 바로잡는 내용이 있다면 (많아야 1개 — 나쁜예/고친예와는 다른 용도다:
+그건 "행동"을 고치는 대비이고, 이건 "통념/사실"을 고치는 대비다):
+통념: (사람들이 흔히 잘못 아는 것)
+사실: (실제로 맞는 것)
+
+3. 위험도·강도를 3단계로 실제로 나눌 수 있다면 (셋 다 있어야 인식된다 — 하나라도
+빠지면 그냥 일반 문단으로 남는다):
+안전: (낮은 단계)
+중간: (중간 단계)
+위험: (높은 단계)
+
+이미 나쁜예/고친예, 체크리스트, 표, 단계(### N단계) 형식을 쓰기로 한 섹션에는
+이 마커를 추가로 넣지 않는다 — 한 섹션은 한 형식만 쓴다."""
+
+
 def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, category_name: str,
                      target_audience: str, tone: str, topic_title: str, topic_keywords: List[str],
                      category_keywords: List[str], caution_hints: List[str], current_date: str,
@@ -313,6 +345,8 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
 위 시스템 프롬프트의 Research/Planning Summary를 반영해서 실제 발행 직전 검토가 가능한 블로그 글 1편을 작성해줘.
 
 {_expression_goals(platform_id=platform_id, category_id=category_id)}
+
+{_visual_marker_hint()}
 
 중요(품질 게이트 통과 조건):
 - 독자에게 보이는 완성 블로그 본문만 작성한다. 내부 작업 문서처럼 쓰지 않는다.

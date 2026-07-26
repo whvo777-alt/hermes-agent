@@ -851,7 +851,11 @@ def _render_ox_quiz_card_skin_c(spec: InfographicSpec, output_path: str, *, cate
         ly += 28
 
     tip_y = card_top + answer_h + 24
-    _render_tipbox(draw, 80, tip_y, width - 160, "몸 반응(각성감·통증)을 보고 판단하세요.", font=tip_font)
+    # Generic, category-neutral wording -- there's no extracted per-content
+    # tip data to draw from, and a fixed health/exercise-specific phrase
+    # ("몸 반응(각성감·통증)") was wrong for other categories (caught
+    # rendering a real finance/ETF draft).
+    _render_tipbox(draw, 80, tip_y, width - 160, "정답은 상황에 따라 다를 수 있으니, 본문 설명을 함께 확인하세요.", font=tip_font)
 
     return _save_png(img, output_path)
 
@@ -893,7 +897,10 @@ def _render_risk_tier_card_skin_c(spec: InfographicSpec, output_path: str, *, ca
             ty += 30
         y += row_h + 14
 
-    _render_tipbox(draw, 80, y + 10, width - 160, "몸 반응(각성감·통증)을 보고 단계를 조정하세요.", font=tip_font)
+    # Generic, category-neutral wording -- see the same fix note in
+    # _render_ox_quiz_card_skin_c above (a fixed health/exercise phrase was
+    # wrong for other categories, caught rendering a real finance draft).
+    _render_tipbox(draw, 80, y + 10, width - 160, "실제 적용은 개인 상황에 따라 달라질 수 있습니다.", font=tip_font)
 
     return _save_png(img, output_path)
 
