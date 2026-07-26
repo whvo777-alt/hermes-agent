@@ -702,7 +702,11 @@ def render_hero_png(
 def insert_hero_image(*, platform_id: str, blog_content: str, image: HeroImage) -> str:
     if not image.file:
         return blog_content
-    if re.search(r"!\[[^\]]+\]\([^)]*hero_adsense\.svg\)", blog_content):
+    # Dedupe by the actual featured-image filename (title_card.png,
+    # hero_adsense.svg, hero_ai.*, ...) rather than one hardcoded name, so
+    # this works for whichever generator produced ``image``.
+    image_name = re.escape(Path(image.file).name)
+    if re.search(rf"!\[[^\]]+\]\([^)]*{image_name}\)", blog_content):
         return blog_content
 
     # Blogspot: hero image only — no "발행용 대표 이미지입니다" caption in the body.

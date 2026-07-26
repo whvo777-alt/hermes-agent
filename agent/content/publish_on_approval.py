@@ -275,16 +275,16 @@ def _reencode_jpeg_for_inline(path: Path, *, max_size: tuple = (1280, 720), qual
 
 
 def _embed_blogspot_hero_png(markdown: str) -> str:
-    """Replace the hero image markdown with an embedded base64 data URI.
+    """Replace the featured-image markdown with an embedded base64 data URI.
 
-    SVG source (the local template fallback): rasterize via
+    SVG source (the legacy hero template fallback): rasterize via
     ``render_hero_png`` and embed as PNG — unchanged behavior. Raster source
-    (an AI-generated hero, ``hero_ai.<ext>``): skip the SVG render step
-    entirely and embed a resized/re-encoded JPEG instead (see
-    ``_reencode_jpeg_for_inline``).
+    (title cards, or a legacy AI-generated hero ``hero_ai.<ext>``): skip the
+    SVG render step entirely and embed a resized/re-encoded JPEG instead
+    (see ``_reencode_jpeg_for_inline``).
     """
     match = re.search(
-        r"!\[([^\]]*)\]\(([^)]*hero_(?:adsense\.svg|ai\.(?:png|jpe?g|webp)))\)",
+        r"!\[([^\]]*)\]\(([^)]*(?:title_card\.png|hero_(?:adsense\.svg|ai\.(?:png|jpe?g|webp))))\)",
         markdown or "",
     )
     if not match:
@@ -577,7 +577,7 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
         image_file = str(item.image_file or "")
         if not image_file:
             images_dir = Path(item.blog_file).parent / "images"
-            for candidate in ("hero_ai.png", "hero_ai.jpg", "hero_ai.jpeg", "hero_ai.webp", "hero_adsense.svg"):
+            for candidate in ("title_card.png", "hero_ai.png", "hero_ai.jpg", "hero_ai.jpeg", "hero_ai.webp", "hero_adsense.svg"):
                 fallback_image = images_dir / candidate
                 if fallback_image.is_file():
                     image_file = str(fallback_image)

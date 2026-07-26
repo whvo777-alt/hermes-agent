@@ -23,8 +23,8 @@ from typing import Any, Dict, List, Optional
 from agent.content.config.categories import Category, get_effective_keywords
 from agent.content.config.launch_policy import get_launch_category
 from agent.content.config.platforms import Platform, find_platform
-from agent.content.images.ai_hero_image import create_hero_image_ai
 from agent.content.images.hero_image import HeroImage, insert_hero_image
+from agent.content.images.title_card import create_title_card
 from agent.content.learning.feedback import get_recent_feedback
 from agent.content.memory.content_memory import (
     _normalize_text,
@@ -184,7 +184,10 @@ def generate_platform_draft(
     )
 
     platform_dir = _drafts_dir(resolved_date) / platform_id
-    image = create_hero_image_ai(
+    # Featured image is always a title card (seeded rotation across
+    # title_card.TEMPLATE_IDS) -- never the old hero "photo" mode. In-body
+    # section cards (section_infographics.py) are unaffected.
+    image = create_title_card(
         out_dir=platform_dir / "images", platform_id=platform.id, platform_label=platform.label,
         category_id=category.id, category_name=category.name, category_keywords=category.keywords,
         topic_title=topic["topic_title"], blog_content=blog_content,
