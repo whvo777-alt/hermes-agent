@@ -16,7 +16,13 @@ from typing import Sequence
 from agent.content.visual_accents import _seed_int
 
 # Structural card styles — usable for both the hero and in-body section images.
-SECTION_CARD_STYLES = ("grid", "checklist", "timeline", "gauge", "quote", "before_after")
+# "qa" (and later ox_quiz/risk_tier) have NO unskinned default renderer —
+# they only ever get chosen when the document's resolved skin (see
+# choose_card_skin) actually supports them (section_infographics.py's
+# _style_has_renderer / extract_infographic_specs enforce this at
+# allocation time, dropping a section entirely rather than risking a
+# broken/empty card).
+SECTION_CARD_STYLES = ("grid", "checklist", "timeline", "gauge", "quote", "before_after", "qa", "ox_quiz", "risk_tier")
 
 # Mood/atmosphere styles — hero-only. A person/object photo cannot carry a
 # table or checklist's actual data, so these never enter the section pool.
@@ -25,6 +31,23 @@ PHOTO_STYLES = ("photo_person", "photo_object")
 # Full 8-style pool, documented in one place for anything that needs to
 # reason about "all styles" (e.g. future hero-side wiring).
 ALL_STYLES = SECTION_CARD_STYLES + PHOTO_STYLES
+
+# Article-level card "skin" (decoration/color treatment layered on top of a
+# shape's chosen style — see section_infographics.py's _SKIN_RENDERERS).
+# Chosen ONCE per document via choose_card_skin() below, never per-section:
+# a single post must stay visually consistent, not mix ribbon/notebook/
+# gradient decoration across its own cards.
+CARD_SKINS = ("A", "B", "C")
+
+
+def choose_card_skin(*, seed_parts: Sequence[str]) -> str:
+    """Deterministically pick one of CARD_SKINS for a whole document.
+
+    Same seed inputs (e.g. platform_id + topic_id) -> same skin on re-runs;
+    different posts land on different skins so a reader skimming several
+    posts sees variety, not one fixed look.
+    """
+    return choose_style(pool=CARD_SKINS, seed_parts=seed_parts)
 
 
 def choose_style(*, pool: Sequence[str], seed_parts: Sequence[str], exclude: Sequence[str] = ()) -> str:
