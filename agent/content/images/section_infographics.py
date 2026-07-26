@@ -61,7 +61,17 @@ _STYLE_LABELS: Dict[str, str] = {
     "before_after": "비교 전/후",
 }
 
-_SKIP_HEADING_RE = re.compile(r"출처|참고|마무리|결론|FAQ|자주 묻는|핵심\s*요약")
+# Structural / meta sections — link lists and boilerplate connectors, never
+# real visual content, so they must never become an infographic card even as
+# a last-resort "quote" filler. "함께 읽으면"/"관련 글" etc. catch
+# seo_enrich.append_internal_links()'s "## 함께 읽으면 좋은 글" block: it's
+# too short (<=2 bullets) to qualify as a checklist, so without this it fell
+# through to _extract_quote() and turned its connector sentence ("같은
+# 블로그에서 이어서 보면 도움이 되는 글입니다.") into a fake pull-quote card.
+_SKIP_HEADING_RE = re.compile(
+    r"출처|참고|마무리|결론|FAQ|자주\s*묻는|핵심\s*요약|"
+    r"함께\s*읽으면|관련\s*글|관련\s*포스트|관련\s*아티클|이어서\s*보면|더\s*보기|추천\s*글"
+)
 _TABLE_SEP_RE = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$")
 _STEP_RE = re.compile(r"^###\s+(\d+단계\s*[:：]?\s*.+)$")
 _NUMBERED_ITEM_RE = re.compile(r"^(\d+)\.\s+(.+)$")
