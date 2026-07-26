@@ -54,7 +54,7 @@ def _inline_md(text: str, *, seed: str = "") -> str:
             final_src = f"data:{mime};base64,{b64}"
         return (
             f'<img src="{escape_html(final_src)}" alt="{alt}" '
-            f'style="max-width:100%;height:auto;border-radius:12px;" />'
+            f'style="width:100%;max-width:100%;height:auto;border-radius:12px;" />'
         )
 
     def _link(match: re.Match) -> str:
