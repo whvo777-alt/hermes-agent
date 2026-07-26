@@ -110,11 +110,44 @@ def _parse_qc(raw) -> int:
         return 0
 
 
+# Region name + a bare "there's a class/institution here" noun (no subject
+# stated) is a real, observed Naver keywordstool pattern -- e.g. "대구강의",
+# "광주강의" turned up for the self-dev seeds ["자기계발","습관","루틴"].
+# These read as topically on-brand (self-dev is about courses/learning) so
+# the LLM relevance filter below lets them through, but they carry zero
+# actual subject: nobody can write a specific blog post about "a class
+# exists in Daegu". Rejected only when the keyword is EXACTLY region+suffix
+# with nothing else -- "부산웹개발강의" (region + subject + suffix) still has
+# "웹개발" between the two and is left alone.
+_REGION_NAMES = [
+    "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종",
+    "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
+    "수원", "성남", "고양", "용인", "청주", "전주", "천안", "포항",
+    "창원", "김해", "안산", "안양", "평택", "춘천", "원주", "부천",
+]
+_TOPICLESS_INSTITUTION_SUFFIXES = [
+    "강의", "학원", "센터", "클래스", "스터디", "자격증", "과외", "교육", "수업",
+]
+_BARE_REGION_COMPOUND_RE = re.compile(
+    "^(?:" + "|".join(_REGION_NAMES) + r")\s*(?:" + "|".join(_TOPICLESS_INSTITUTION_SUFFIXES) + ")$"
+)
+
+
+def _is_bare_region_compound(keyword: str) -> bool:
+    """True only for keywords that are EXACTLY a region name plus a generic
+    institution/class noun with nothing else -- no specific subject named.
+    A keyword with a real subject between region and suffix (e.g. "부산 웹
+    개발 강의") does not match and is left untouched.
+    """
+    normalized = re.sub(r"\s+", "", keyword.strip())
+    return bool(_BARE_REGION_COMPOUND_RE.match(normalized))
+
+
 def _score_candidates(raw_candidates: List[dict]) -> List[dict]:
     parsed = []
     for row in raw_candidates:
         keyword = str(row.get("relKeyword", "")).strip()
-        if not keyword:
+        if not keyword or _is_bare_region_compound(keyword):
             continue
         parsed.append({
             "keyword": keyword,
@@ -190,12 +223,20 @@ def _filter_relevant_keywords(
     keyword_list = "\n".join(f"{i}. {c['keyword']}" for i, c in enumerate(candidates, start=1))
     system = (
         "You review Korean keyword candidates for a blog content category. "
-        "Only flag a keyword as unrelated if it is CLEARLY unrelated -- a "
+        "Flag a keyword as unrelated if it is CLEARLY unrelated -- a "
         "person's name/nickname (e.g. ending in 쌤/선생님/강사), a specific "
         "school/academy/institution name, or an obviously off-topic proper "
-        "noun. When in doubt, keep it. Output ONLY a comma-separated list of "
-        'the item numbers to REMOVE (e.g. "3,7,12"). Output "none" if every '
-        "keyword is fine. No explanation."
+        "noun. ALSO flag a keyword that names a region/city plus a generic "
+        "'there's a class/institution' word (강의/학원/센터/클래스/스터디/"
+        "교육 등) with NO specific subject stated -- e.g. '광주강의', "
+        "'대구학원' say nothing about what the class is actually about, so "
+        "no blog post can be written about them specifically. Do NOT flag a "
+        "keyword where a real subject sits between the region and that "
+        "suffix (e.g. '부산 웹개발 강의', '인천 영어회화 학원' clearly state "
+        "a topic and should be kept). When in doubt on anything else, keep "
+        'it. Output ONLY a comma-separated list of the item numbers to '
+        'REMOVE (e.g. "3,7,12"). Output "none" if every keyword is fine. '
+        "No explanation."
     )
     user = f"카테고리: {category_name}\n\n{keyword_list}"
 
