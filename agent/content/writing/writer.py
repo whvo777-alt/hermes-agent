@@ -243,8 +243,17 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
 
 def _expression_goals(*, platform_id: str, category_id: str) -> str:
     """Quality-first practical writing goals for WordPress and Blogspot."""
-    shared = """- 본문 분량 4,000~6,500자 (3,000자 미만·속이 빈 짧은 글 금지, 8,000자 초과 금지).
-- H2 4~5개. 흐름: 독자 문제 → 판단 기준 → 실전 적용(상황별) → 함정/주의 → 오늘 체크·마무리.
+    if platform_id in ("wordpress", "blogspot"):
+        length_rule = "- 본문 분량 5,500~7,500자 (4,500자 미만·속이 빈 짧은 글 금지, 9,000자 초과 금지)."
+        h2_rule = (
+            "- H2 6~7개. 흐름: 독자 문제 → 판단 기준 → 실전 적용(상황별) → 실제 사례(케이스 1~2개) → "
+            "함정/주의 → FAQ(`질문:`/`답변:` 마커로 3~4쌍) → 오늘 체크·마무리."
+        )
+    else:
+        length_rule = "- 본문 분량 4,000~6,500자 (3,000자 미만·속이 빈 짧은 글 금지, 8,000자 초과 금지)."
+        h2_rule = "- H2 4~5개. 흐름: 독자 문제 → 판단 기준 → 실전 적용(상황별) → 함정/주의 → 오늘 체크·마무리."
+    shared = f"""{length_rule}
+{h2_rule}
 - 사람이 쓴 호흡: 문장 길이를 섞고, 한 줄 팁만 나열하지 않는다. 각 팁에 왜/어떻게를 붙인다.
 - AI 요약체·양산 블로그 리스트 재탕·가짜 1인칭 후기 금지. 남 글 베낀 느낌을 내지 않는다.
 - 대비(나쁜 선택 vs 나은 선택)를 보여줄 땐 매번 같은 "나쁜 예 → 고친 예" 화살표 문장으로 쓰지 않는다.
@@ -271,9 +280,15 @@ def _expression_goals(*, platform_id: str, category_id: str) -> str:
 - 독자가 “무엇을 확인·피하면 되는지”가 남도록 쓴다. 치료·효과 보장 금지."""
 
     if category_id == "self-dev" or platform_id == "blogspot":
+        faq_rule = (
+            "- 독자가 “오늘 실행·측정할 문장”을 가져가게 쓴다. "
+            "FAQ는 필수 섹션으로 넣는다. Q 3~4개, 각 질문은 `질문: …` 다음 줄에 `답변: …` 형식(각 답변 2~4문장)."
+            if platform_id in ("wordpress", "blogspot")
+            else "- 독자가 “오늘 실행·측정할 문장”을 가져가게 쓴다. FAQ는 생략하거나 Q 2개만."
+        )
         return f"""표현 목표 (밀도 있는 자기계발 실행 가이드 — 자격 가장 금지):
 {shared}
-- 독자가 “오늘 실행·측정할 문장”을 가져가게 쓴다. FAQ는 생략하거나 Q 2개만.
+{faq_rule}
 - 동기부여 구호·성공 보장 문구 금지."""
 
     return f"""표현 목표 (밀도 있는 실전 가이드):
@@ -329,6 +344,11 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
         topic_title=topic_title, audience=target_audience, platform_id=platform_id,
         prior_feedback=prior_feedback,
     )
+    length_h2_line = (
+        "- H1 1개, H2 6~7개(실전 사례·FAQ 섹션 포함), 본문 5,500~7,500자. 개인차 안내를 포함한다."
+        if platform_id in ("wordpress", "blogspot")
+        else "- H1 1개, H2 4~5개, 본문 4,000~6,500자. 개인차 안내를 포함한다."
+    )
 
     user = f"""카테고리: {category_name}
 플랫폼: {platform_label}
@@ -353,7 +373,7 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
 - 본문/출처/메타에 '기획안', '콘텐츠 개요', '구성안(초안)', '아웃라인만', '섹션 개요', '작성 계획 문서' 표현을 절대 쓰지 않는다.
 - Research/Planning은 참고만 하고, 그것을 인용·언급하지 않은 채 자연스러운 글로 녹여 쓴다.
 - 치료·예방·효과를 단정하거나 수익/원금/성공/합격을 보장하는 표현을 쓰지 않는다.
-- H1 1개, H2 4~5개, 본문 4,000~6,500자. 개인차 안내를 포함한다.
+{length_h2_line}
 - 건강 주제면 전문가 상담 권장, 자기계발 주제면 상황별 조정·복구 기준.
 - AI 요약체·양산 블로그 재탕·가짜 후기로 분량을 채우지 않는다. 대비 표현은 매번 다른 방식(질문형/일화형/서술형)으로.
 - 볼드는 아껴 쓴다(3~6곳, 모든 단락 끝마다 X). 구조(단계/표/체크리스트 유무·개수)는 매번 다르게 가져간다."""

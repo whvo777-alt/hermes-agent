@@ -14,6 +14,16 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+# WordPress/Blogspot length target: 5,500~7,500자, H2 6~7개 (see writer.py/prompts).
+# Gate thresholds keep the prompt floor/ceiling's original +200/+500 char buffer
+# and the H2 rule's original ±1 buffer around the ideal range.
+_WP_BLOGSPOT_LENGTH = {
+    "body_min_chars": 4700,
+    "body_max_chars": 9500,
+    "h2_min": 5,
+    "h2_max": 8,
+}
+
 _PLACEHOLDER_PATTERNS = [
     ("your-", re.compile(r"\byour-[a-z0-9._/?=&%:#-]*", re.I)),
     ("example.com", re.compile(r"\b(?:https?://)?(?:www\.)?example\.com\b[^\s)]*", re.I)),
@@ -397,18 +407,18 @@ def run_quality_gate(
     h2_count = _count_h2_headings(content)
     if h2_count < 2:
         important(f"H2 소제목 부족 (권장 2개 이상, 현재 {h2_count}개)")
-    if platform_id in {"wordpress", "blogspot"} and h2_count > 6:
-        recommend(f"H2가 많습니다 (밀도 있는 실전은 4~5개 권장, 현재 {h2_count}개)")
-    if platform_id in {"wordpress", "blogspot"} and h2_count < 3:
-        recommend(f"H2가 적습니다 (밀도 있는 실전은 4~5개 권장, 현재 {h2_count}개)")
+    if platform_id in {"wordpress", "blogspot"} and h2_count > _WP_BLOGSPOT_LENGTH["h2_max"]:
+        recommend(f"H2가 많습니다 (밀도 있는 실전은 6~7개 권장, 현재 {h2_count}개)")
+    if platform_id in {"wordpress", "blogspot"} and h2_count < _WP_BLOGSPOT_LENGTH["h2_min"]:
+        recommend(f"H2가 적습니다 (밀도 있는 실전은 6~7개 권장, 현재 {h2_count}개)")
 
     # Body length hint for quality practical mode.
     if platform_id in {"wordpress", "blogspot"}:
         body_chars = len(re.sub(r"^---[\s\S]*?---\s*", "", content or "").strip())
-        if body_chars > 8500:
-            recommend(f"본문이 과도하게 깁니다 (목표 4000~6500자, 현재 약 {body_chars}자)")
-        elif body_chars < 3200:
-            recommend(f"본문이 너무 짧거나 속이 비어 보입니다 (목표 4000~6500자, 현재 약 {body_chars}자)")
+        if body_chars > _WP_BLOGSPOT_LENGTH["body_max_chars"]:
+            recommend(f"본문이 과도하게 깁니다 (목표 5500~7500자, 현재 약 {body_chars}자)")
+        elif body_chars < _WP_BLOGSPOT_LENGTH["body_min_chars"]:
+            recommend(f"본문이 너무 짧거나 속이 비어 보입니다 (목표 5500~7500자, 현재 약 {body_chars}자)")
 
     slug_tier = _get_slug_warning_tier(platform_id)
     if slug_tier and not _has_slug(content):

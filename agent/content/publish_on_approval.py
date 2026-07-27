@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from agent.coo.approval_session import CEOApprovalSessionStatus
 from agent.coo.daily_blog_bundle import DailyBlogApprovalBundle, find_item
+from agent.content.images.section_infographics import extract_all_qa_pairs
 from agent.content.markdown_html import escape_html, extract_labels, extract_title, markdown_to_html, strip_frontmatter
 from agent.content.publishers.blogspot import create_blogspot_draft
 from agent.content.publishers.naver import create_naver_draft
@@ -24,9 +25,11 @@ from agent.content.publishers.wordpress import (
     create_wordpress_draft,
     ensure_wordpress_tags,
     is_live_wordpress_draft_enabled,
+    resolve_or_create_wordpress_category,
     update_rank_math_seo,
     upload_wordpress_media,
 )
+from agent.content.structured_data import build_structured_data_html
 
 
 class PublishBlockedError(RuntimeError):
@@ -489,6 +492,23 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
                 )
             except Exception:  # noqa: BLE001
                 auth_header = ""
+
+        category_result: Dict[str, Any] = {"id": None}
+        if wp_live:
+            try:
+                category_result = resolve_or_create_wordpress_category(
+                    site_url=site_url,
+                    username=os.environ.get("WORDPRESS_USERNAME"),
+                    app_password=os.environ.get("WORDPRESS_APP_PASSWORD"),
+                    slug=item.category_id,
+                    name=item.category_name,
+                    live=wp_live,
+                )
+            except Exception as exc:  # noqa: BLE001 — draft must proceed without category
+                logging.getLogger(__name__).warning(
+                    "WordPress category resolve failed: %s", exc
+                )
+
         seo_enrichment = enrich_wordpress_markdown_for_seo(
             publishable_content,
             focus_keyword=focus_keyword,
@@ -499,8 +519,14 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
             auth_header=auth_header,
             live=wp_live,
             topic_title=item.topic_title,
+            wp_category_term_id=category_result.get("id"),
         )
         publishable_content = seo_enrichment["markdown"]
+        # Extracted from the pre-infographic-strip markdown so FAQPage JSON-LD
+        # reflects every 질문:/답변: pair the writer produced, even ones later
+        # consumed by a section-infographic card (which only ever renders the
+        # first 2 — see extract_all_qa_pairs()'s docstring).
+        qa_pairs = extract_all_qa_pairs(publishable_content)
 
         # Section infographics are rendered from the pre-strip markdown, then
         # their source blocks (table rows / step headings / bullets / etc.)
@@ -543,6 +569,8 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
         }
         if seo_meta.get("Meta description"):
             payload["excerpt"] = seo_meta["Meta description"]
+        if category_result.get("id"):
+            payload["categories"] = [category_result["id"]]
 
         tag_names = _parse_tag_candidates(
             seo_meta,
@@ -641,6 +669,24 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
                 "WordPress section infographics failed: %s", exc
             )
 
+        # Structured data (Article + conditional FAQPage JSON-LD): appended
+        # last, as inline <script> tags in the rendered HTML body — neither
+        # the WP REST client nor Rank Math's own meta endpoint can write into
+        # the theme's actual <head> (see structured_data.py's module docstring).
+        try:
+            structured_html = build_structured_data_html(
+                title=title,
+                description=seo_meta.get("Meta description", ""),
+                date_published_iso=f"{bundle.run_date}T00:00:00+09:00",
+                image_url=(media_result or {}).get("sourceUrl"),
+                qa_pairs=qa_pairs,
+            )
+            payload["content"] = f"{payload['content']}\n{structured_html}"
+        except Exception as exc:  # noqa: BLE001 — draft must proceed without structured data
+            logging.getLogger(__name__).warning(
+                "WordPress structured data build failed: %s", exc
+            )
+
         result = create_wordpress_draft(
             site_url=os.environ.get("WORDPRESS_SITE_URL"),
             username=os.environ.get("WORDPRESS_USERNAME"),
@@ -726,12 +772,45 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
         # inside build_blogger_post/create_blogspot_draft.
         blogspot_labels = extract_labels(blog_content)
         publishable = _blogspot_publishable_markdown(blog_content)
-        from agent.content.seo_enrich import append_external_links
+        from agent.content.seo_enrich import append_external_links, append_internal_links, fetch_blogspot_internal_candidates
+        from agent.content.publishers.blogspot import exchange_blogger_access_token
 
         publishable = append_external_links(
             publishable, category_id=item.category_id, platform_id="blogspot", seed=blogspot_title,
             topic_title=item.topic_title,
         )
+        # Internal links: reuse the category_name already sent as this post's
+        # first Blogger label (see extract_labels()) to filter same-category
+        # candidates. Never blocks the draft — a broken/expired refresh token
+        # or any API error just skips internal-link enrichment for this post.
+        if live:
+            try:
+                access_token = exchange_blogger_access_token(
+                    client_id=os.environ.get("BLOGGER_CLIENT_ID"),
+                    client_secret=os.environ.get("BLOGGER_CLIENT_SECRET"),
+                    refresh_token=os.environ.get("BLOGGER_REFRESH_TOKEN"),
+                )
+                blogspot_candidates = fetch_blogspot_internal_candidates(
+                    blog_id=os.environ.get("BLOGGER_BLOG_ID"),
+                    access_token=access_token,
+                    label=item.category_name,
+                )
+                publishable = append_internal_links(
+                    publishable,
+                    site_url=os.environ.get("BLOGSPOT_SITE_URL", ""),
+                    candidates=blogspot_candidates,
+                    max_links=3,
+                    preferred_terms=[item.topic_title],
+                )
+            except Exception as exc:  # noqa: BLE001 — draft must proceed without internal links
+                logging.getLogger(__name__).warning(
+                    "Blogspot internal link enrichment failed: %s", exc
+                )
+        # Extracted before the infographic strip so FAQPage JSON-LD reflects
+        # every 질문:/답변: pair, not just the first 2 a card image consumes.
+        blogspot_qa_pairs = extract_all_qa_pairs(publishable)
+        blogspot_seo_meta = extract_seo_meta(blog_content)
+
         # Section infographics: same generator as WordPress, but inlined as
         # base64 data URIs at the markdown level (no media-upload step —
         # Blogger renders whatever markdown_to_html produces from this
@@ -747,6 +826,26 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
             logging.getLogger(__name__).warning(
                 "Blogspot section infographics failed: %s", exc
             )
+
+        # Structured data (Article + conditional FAQPage JSON-LD): appended
+        # after markdown_to_html() inside build_blogger_post(), never mixed
+        # into the markdown itself (see build_blogger_post()'s docstring for
+        # why raw <script> tags in markdown get HTML-escaped otherwise).
+        # image_url is always omitted for Blogspot — the hero here is only
+        # ever a base64 data URI, never a hosted URL.
+        blogspot_structured_html = ""
+        try:
+            blogspot_structured_html = build_structured_data_html(
+                title=blogspot_title,
+                description=blogspot_seo_meta.get("Meta description", ""),
+                date_published_iso=f"{bundle.run_date}T00:00:00+09:00",
+                qa_pairs=blogspot_qa_pairs,
+            )
+        except Exception as exc:  # noqa: BLE001 — draft must proceed without structured data
+            logging.getLogger(__name__).warning(
+                "Blogspot structured data build failed: %s", exc
+            )
+
         return create_blogspot_draft(
             markdown=publishable,
             title=blogspot_title,
@@ -756,6 +855,7 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
             client_secret=os.environ.get("BLOGGER_CLIENT_SECRET"),
             refresh_token=os.environ.get("BLOGGER_REFRESH_TOKEN"),
             live=live,
+            extra_content_html=blogspot_structured_html,
         )
 
     if platform_id == "naver":

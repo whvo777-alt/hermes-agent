@@ -228,6 +228,29 @@ def _extract_qa(lines: List[str], *, base: int) -> Tuple[List[Tuple[str, str]], 
     return pairs[:2], ranges
 
 
+def extract_all_qa_pairs(markdown: str) -> List[Tuple[str, str]]:
+    """All 질문:/답변: (or Q:/A:) pairs in the whole document, uncapped.
+
+    Unlike ``_extract_qa()`` (which hard-caps at 2 pairs for the infographic
+    card and is scoped to one section's lines), this scans the entire
+    document for FAQPage JSON-LD, which should reflect every FAQ pair the
+    writer produced, not just the first 2 rendered as a card image."""
+    lines = (markdown or "").split("\n")
+    pairs: List[Tuple[str, str]] = []
+    i, n = 0, len(lines)
+    while i < n:
+        m_q = _QA_QUESTION_RE.match(lines[i].strip())
+        if m_q:
+            for j in range(i + 1, min(i + 3, n)):
+                m_a = _QA_ANSWER_RE.match(lines[j].strip())
+                if m_a:
+                    pairs.append((_clean_inline(m_q.group(1).strip()), _clean_inline(m_a.group(1).strip())))
+                    i = j
+                    break
+        i += 1
+    return pairs
+
+
 def _extract_ox_quiz(lines: List[str], *, base: int) -> Tuple[Optional[Tuple[str, str]], List[Tuple[int, int]]]:
     """Explicit "통념: .../사실: ..." pair -- see _OX_MYTH_RE's docstring
     note for why this doesn't try to guess from "가 아니라" contrast

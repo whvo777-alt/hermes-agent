@@ -364,3 +364,53 @@ def ensure_wordpress_tags(
         "resolved": resolved,
         "count": len(uniq),
     }
+
+
+def resolve_or_create_wordpress_category(*, site_url: Optional[str], username: Optional[str],
+                                          app_password: Optional[str], slug: str, name: str,
+                                          live: bool = False) -> Dict[str, Any]:
+    """Resolve our internal ``category_id`` (already an ASCII slug, e.g.
+    "health") to a WordPress category term ID via an exact ``slug=`` lookup,
+    creating the WP category if it doesn't exist yet. Used both to tag new
+    posts with a real WP category and to scope internal-link candidates to
+    "same category" via ``fetch_wordpress_internal_candidates(categories=...)``.
+    """
+    if not live:
+        return {"apiCalled": False, "dryRun": True, "id": None, "slug": slug}
+    if not slug:
+        return {"apiCalled": False, "skipped": True, "reason": "no slug", "id": None}
+
+    auth_header = _build_auth_header(username=username, app_password=app_password)
+    base = f"{_require_site_url(site_url)}/wp-json/wp/v2/categories"
+
+    search = httpx.get(
+        base,
+        headers={"Authorization": auth_header},
+        params={"slug": slug},
+        timeout=_TIMEOUT,
+    )
+    if search.status_code < 400:
+        for item in search.json() if search.content else []:
+            if str(item.get("slug") or "").strip().lower() == slug.lower():
+                return {"apiCalled": True, "id": int(item["id"]), "slug": slug, "created": False}
+
+    create = httpx.post(
+        base,
+        headers={"Authorization": auth_header, "Content-Type": "application/json"},
+        json={"name": name or slug, "slug": slug},
+        timeout=_TIMEOUT,
+    )
+    body = create.json() if create.content else {}
+    if create.status_code >= 400:
+        # Category may already exist under this slug but the create call
+        # raced with another process — try a term_id hint if present.
+        existing = body.get("data", {}).get("term_id") if isinstance(body, dict) else None
+        if existing:
+            return {"apiCalled": True, "id": int(existing), "slug": slug, "created": False}
+        raise WordPressPublisherError(
+            f"WordPress category resolve/create failed: HTTP {create.status_code} ({body})"
+        )
+    category_id = body.get("id")
+    if not category_id:
+        raise WordPressPublisherError("WordPress category create returned no id")
+    return {"apiCalled": True, "id": int(category_id), "slug": slug, "created": True}

@@ -41,7 +41,12 @@ def is_live_blogspot_draft_enabled(env: Optional[Mapping[str, str]] = None) -> b
     )
 
 
-def _exchange_refresh_token(*, client_id: str, client_secret: str, refresh_token: str) -> str:
+def exchange_blogger_access_token(*, client_id: str, client_secret: str, refresh_token: str) -> str:
+    """Exchange the long-lived Blogger OAuth refresh token for a short-lived
+    access token. Public (promoted from the former ``_exchange_refresh_token``)
+    so ``publish_on_approval.py`` can call it once to fetch same-category
+    internal-link candidates via ``fetch_blogspot_internal_candidates`` before
+    ``create_blogspot_draft`` does its own independent exchange."""
     response = httpx.post(
         "https://oauth2.googleapis.com/token",
         headers={"content-type": "application/x-www-form-urlencoded"},
@@ -62,26 +67,38 @@ def _exchange_refresh_token(*, client_id: str, client_secret: str, refresh_token
     return data["access_token"]
 
 
-def build_blogger_post(markdown: str, *, title: str, labels: Optional[List[str]] = None) -> Dict[str, Any]:
+def build_blogger_post(markdown: str, *, title: str, labels: Optional[List[str]] = None,
+                        extra_content_html: str = "") -> Dict[str, Any]:
     """``labels`` should be extracted from the RAW pre-strip blog content by
     the caller and passed in explicitly — by the time ``markdown`` reaches
     here it's already had frontmatter/SEO-meta stripped (same reason
     ``title`` is passed in rather than re-extracted, see
     ``publish_on_approval.py``'s blogspot branch). Falls back to
     ``extract_labels(markdown)`` when the caller doesn't pass any, so this
-    stays backward compatible for any other caller."""
+    stays backward compatible for any other caller.
+
+    ``extra_content_html`` (e.g. JSON-LD ``<script>`` tags — see
+    ``agent/content/structured_data.py``) is appended AFTER
+    ``markdown_to_html()`` runs, never mixed into the markdown itself: any
+    line that doesn't match a structural markdown pattern gets HTML-escaped
+    by the converter's fallback paragraph handler, which would mangle raw
+    ``<script>`` tags if they were embedded in the markdown source instead.
+    """
+    content_html = markdown_to_html(markdown)
+    if extra_content_html:
+        content_html = f"{content_html}\n{extra_content_html}"
     return {
         "kind": "blogger#post",
         "title": title,
-        "content": markdown_to_html(markdown),
+        "content": content_html,
         "labels": labels if labels is not None else extract_labels(markdown),
     }
 
 
 def create_blogspot_draft(*, markdown: str, title: str, blog_id: Optional[str], client_id: Optional[str],
                            client_secret: Optional[str], refresh_token: Optional[str], live: bool,
-                           labels: Optional[List[str]] = None) -> Dict[str, Any]:
-    post = build_blogger_post(markdown, title=title, labels=labels)
+                           labels: Optional[List[str]] = None, extra_content_html: str = "") -> Dict[str, Any]:
+    post = build_blogger_post(markdown, title=title, labels=labels, extra_content_html=extra_content_html)
 
     if not live:
         return {"apiCalled": False, "dryRun": True, "postPreview": post}
@@ -91,7 +108,7 @@ def create_blogspot_draft(*, markdown: str, title: str, blog_id: Optional[str], 
     if not client_id or not client_secret or not refresh_token:
         raise BlogspotPublisherError("Blogger OAuth client_id/client_secret/refresh_token missing")
 
-    access_token = _exchange_refresh_token(
+    access_token = exchange_blogger_access_token(
         client_id=client_id, client_secret=client_secret, refresh_token=refresh_token
     )
     url = f"https://www.googleapis.com/blogger/v3/blogs/{blog_id}/posts?isDraft=true"
@@ -134,6 +151,7 @@ def update_blogspot_draft(
     refresh_token: Optional[str],
     live: bool,
     labels: Optional[List[str]] = None,
+    extra_content_html: str = "",
 ) -> Dict[str, Any]:
     """Overwrite an existing Blogger draft body (keeps isDraft).
 
@@ -143,7 +161,7 @@ def update_blogspot_draft(
     real call. Unused by any current call site (caught while fixing the
     labels bug alongside it), so this was never actually exercised.
     """
-    post = build_blogger_post(markdown, title=title, labels=labels)
+    post = build_blogger_post(markdown, title=title, labels=labels, extra_content_html=extra_content_html)
     if not live:
         return {"apiCalled": False, "dryRun": True, "postPreview": post, "postId": post_id}
 
@@ -154,7 +172,7 @@ def update_blogspot_draft(
     if not post_id:
         raise BlogspotPublisherError("post_id missing")
 
-    access_token = _exchange_refresh_token(
+    access_token = exchange_blogger_access_token(
         client_id=client_id, client_secret=client_secret, refresh_token=refresh_token
     )
     url = f"https://www.googleapis.com/blogger/v3/blogs/{blog_id}/posts/{post_id}"

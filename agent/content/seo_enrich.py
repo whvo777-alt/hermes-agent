@@ -376,13 +376,22 @@ def fetch_wordpress_internal_candidates(
     site_url: str,
     auth_header: str,
     exclude_post_id: Optional[int] = None,
-    limit: int = 8,
+    categories: Optional[int] = None,
+    limit: int = 20,
 ) -> List[Dict[str, str]]:
-    """Load recent published posts for internal linking."""
+    """Load recent published posts for internal linking.
+
+    ``categories`` (a WordPress category term ID) scopes the query to posts
+    in the same category when provided, so the scorer in
+    ``append_internal_links`` ranks within a same-category pool instead of
+    the whole site.
+    """
     endpoint = (
         f"{str(site_url).rstrip('/')}/wp-json/wp/v2/posts"
         f"?per_page={limit}&status=publish&_fields=id,title,link"
     )
+    if categories:
+        endpoint += f"&categories={categories}"
     response = httpx.get(endpoint, headers={"Authorization": auth_header}, timeout=_TIMEOUT)
     if response.status_code >= 400:
         return []
@@ -402,12 +411,53 @@ def fetch_wordpress_internal_candidates(
     return results
 
 
+def fetch_blogspot_internal_candidates(
+    *,
+    blog_id: str,
+    access_token: str,
+    label: str,
+    exclude_post_id: Optional[str] = None,
+    limit: int = 20,
+) -> List[Dict[str, str]]:
+    """Load recent live Blogger posts sharing ``label`` for internal linking.
+
+    ``label`` is normally ``item.category_name`` — ``extract_labels()``
+    already sends the category name as a Blogger label on every post, so
+    this reuses that existing label rather than adding a new one.
+    """
+    if not blog_id or not access_token or not label:
+        return []
+    endpoint = f"https://www.googleapis.com/blogger/v3/blogs/{blog_id}/posts"
+    response = httpx.get(
+        endpoint,
+        headers={"Authorization": f"Bearer {access_token}"},
+        params={"status": "live", "labels": label, "maxResults": limit, "fetchBodies": "false"},
+        timeout=_TIMEOUT,
+    )
+    if response.status_code >= 400:
+        return []
+    body = response.json() if response.content else {}
+    items = body.get("items") or []
+    if not isinstance(items, list):
+        return []
+    results: List[Dict[str, str]] = []
+    for item in items:
+        post_id = item.get("id")
+        if exclude_post_id and post_id == exclude_post_id:
+            continue
+        title = str(item.get("title") or "").strip()
+        link = str(item.get("url") or "").strip()
+        if title and link:
+            results.append({"id": str(post_id), "title": title, "link": link})
+    return results
+
+
 def append_internal_links(
     markdown: str,
     *,
     site_url: str,
     candidates: Sequence[Dict[str, str]],
-    max_links: int = 2,
+    max_links: int = 3,
     preferred_terms: Optional[Sequence[str]] = None,
 ) -> str:
     """Insert up to N internal links near the end of the article."""
@@ -431,6 +481,11 @@ def append_internal_links(
     if terms:
         ranked = sorted(ranked, key=_score, reverse=True)
     picks = [item for item in ranked if _score(item) >= 0][:max_links]
+    if picks and len(picks) < max_links:
+        logger.info(
+            "Internal links: only %d/%d same-category candidates available",
+            len(picks), max_links,
+        )
     if not picks:
         # Site has no related posts yet — still satisfy Rank Math with real
         # internal URLs (home + a category archive when available).
@@ -439,6 +494,7 @@ def append_internal_links(
         if any("category/it" in (c.get("link") or "") for c in candidates):
             picks.append({"title": "IT 관련 글 모음", "link": f"{host}/category/it/"})
         picks = picks[:max_links]
+        logger.info("Internal links: no same-category candidates, using fallback links")
     if not picks:
         return markdown
     block_lines = [
@@ -468,6 +524,8 @@ def enrich_wordpress_markdown_for_seo(
     exclude_post_id: Optional[int] = None,
     live: bool = False,
     topic_title: str = "",
+    wp_category_term_id: Optional[int] = None,
+    internal_link_target: int = 3,
 ) -> Dict[str, Any]:
     """Apply density thinning + external/internal link enrichment."""
     original = markdown
@@ -487,16 +545,18 @@ def enrich_wordpress_markdown_for_seo(
             site_url=site_url,
             auth_header=auth_header,
             exclude_post_id=exclude_post_id,
+            categories=wp_category_term_id,
         )
         before_internal = content
         content = append_internal_links(
             content,
             site_url=site_url,
             candidates=internal,
+            max_links=internal_link_target,
             preferred_terms=[focus_keyword],
         )
         if content != before_internal:
-            internal_added = min(2, len(internal))
+            internal_added = min(internal_link_target, len(internal))
 
     return {
         "markdown": content,

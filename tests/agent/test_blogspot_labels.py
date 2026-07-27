@@ -70,3 +70,30 @@ def test_update_blogspot_draft_no_longer_raises_missing_title():
     )
     assert result["postPreview"]["title"] == "테스트"
     assert result["postPreview"]["labels"] == ["자기계발"]
+
+
+def test_build_blogger_post_appends_extra_html_after_markdown_conversion():
+    """extra_content_html (e.g. JSON-LD <script> tags, see
+    agent/content/structured_data.py) must land after markdown_to_html()
+    runs, never mixed into the markdown source -- a <script> tag embedded
+    in raw markdown gets HTML-escaped by the fallback paragraph handler."""
+    post = build_blogger_post(
+        _STRIPPED_MARKDOWN, title="테스트",
+        extra_content_html='<script type="application/ld+json">{"a":1}</script>',
+    )
+    assert post["content"].endswith('<script type="application/ld+json">{"a":1}</script>')
+    assert "&lt;script" not in post["content"]
+
+
+def test_build_blogger_post_no_extra_html_is_backward_compatible():
+    post = build_blogger_post(_STRIPPED_MARKDOWN, title="테스트")
+    assert "<script" not in post["content"]
+
+
+def test_create_blogspot_draft_dry_run_carries_extra_content_html():
+    result = create_blogspot_draft(
+        markdown=_STRIPPED_MARKDOWN, title="테스트",
+        blog_id=None, client_id=None, client_secret=None, refresh_token=None, live=False,
+        extra_content_html="<script>x</script>",
+    )
+    assert result["postPreview"]["content"].endswith("<script>x</script>")
