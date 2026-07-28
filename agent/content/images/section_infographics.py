@@ -37,6 +37,7 @@ from typing import Dict, List, Optional, Tuple
 from agent.content.images.card_icons import pick_icon_for_text, draw_icon
 from agent.content.images.hero_image import _korean_font  # shared font lookup
 from agent.content.images.style_rotation import choose_card_skin, choose_style
+from agent.content.images.text_fit import wrap_text as _wrap
 
 _PALETTES: Dict[str, Tuple[str, str, str]] = {
     # (accent/main, deep header, light tint)
@@ -59,6 +60,7 @@ _STYLE_LABELS: Dict[str, str] = {
     "timeline": "단계",
     "gauge": "기준",
     "quote": "핵심",
+    "quote_keyword": "포인트",
     "before_after": "비교 전/후",
     "qa": "Q&A",
     "ox_quiz": "통념 깨기",
@@ -135,8 +137,9 @@ class InfographicSpec:
     _checklist_items: List[str] = field(default_factory=list)
     _checklist_ranges: List[Tuple[int, int]] = field(default_factory=list)
     # Set by build_section_infographics right before rendering (never by
-    # extraction) -- skin C's common "page N" chip decoration is the only
-    # consumer today.
+    # extraction). Currently unused -- their only consumer, skin C's
+    # decorative "page N" chip, was removed; kept on the dataclass in case
+    # a future skin wants per-card position/count again.
     card_index: int = 0
     card_total: int = 0
 
@@ -437,9 +440,13 @@ def _build_spec_for_section(heading: str, section_lines: List[str], *, base: int
     quote_text = _extract_quote(section_lines)
     if quote_text:
         # Pull-quote convention: intentionally not stripped from the body.
+        # Two eligible styles ("quote" pull-quote vs. "quote_keyword"
+        # keyword-highlight, same underlying quote_text) so _allocate_styles'
+        # existing repeat-avoidance makes multiple quote-shaped sections in
+        # one document alternate layouts instead of all rendering identically.
         return InfographicSpec(
             heading=heading, display_title=display_title, shape="quote",
-            eligible_styles=("quote",), quote_text=quote_text, strip_ranges=[],
+            eligible_styles=("quote", "quote_keyword"), quote_text=quote_text, strip_ranges=[],
         )
     return None
 
@@ -494,6 +501,7 @@ def _style_has_renderer(style: str, skin: Optional[str]) -> bool:
 
 def extract_infographic_specs(
     markdown: str, *, max_count: int = 5, style_seed: str = "", skin: Optional[str] = None,
+    quote_cap: int = 2,
 ) -> List[InfographicSpec]:
     """Pick H2 sections that tell a visual story, preferring variety.
 
@@ -505,6 +513,12 @@ def extract_infographic_specs(
     unrenderable under this skin (e.g. a Q&A-shaped section when the
     document's skin doesn't have a "qa" renderer) are dropped here rather
     than risking a broken/empty card later.
+
+    ``quote_cap`` bounds how many of the final picks can be the generic
+    "quote" fallback (a plain paragraph with no structured data) -- if a
+    post has few/no structured sections, remaining slots up to
+    ``max_count`` are simply left UNFILLED (fewer total in-body images)
+    rather than padded with more repetitive quote cards.
     """
     lines_all = (markdown or "").split("\n")
     sections: List[Tuple[str, int, int]] = []
@@ -566,8 +580,10 @@ def extract_infographic_specs(
             used_ids.add(id(picked[-1]))
     if len(picked) < max_count:
         quote_leftovers = [s for s in specs if id(s) not in used_ids and s.shape == "quote"]
-        while len(picked) < max_count and quote_leftovers:
+        quote_budget = quote_cap
+        while len(picked) < max_count and quote_leftovers and quote_budget > 0:
             picked.append(quote_leftovers.pop(0))
+            quote_budget -= 1
     picked = picked[:max_count]
 
     # Allocate concrete styles last, in original document order (not the
@@ -586,27 +602,6 @@ def _rgb(hex_color: str) -> Tuple[int, int, int]:
 
 def _mix(color_a, color_b, ratio: float):
     return tuple(round(a + (b - a) * ratio) for a, b in zip(color_a, color_b))
-
-
-def _wrap(draw, text: str, font, max_width: int, max_lines: int) -> List[str]:
-    lines: List[str] = []
-    current = ""
-    for word in (text or "").split():
-        candidate = f"{current} {word}".strip()
-        if draw.textlength(candidate, font=font) <= max_width or not current:
-            current = candidate
-        else:
-            lines.append(current)
-            current = word
-        if len(lines) == max_lines:
-            break
-    if current and len(lines) < max_lines:
-        lines.append(current)
-    if len(lines) == max_lines and lines and draw.textlength(lines[-1], font=font) > max_width:
-        while lines[-1] and draw.textlength(lines[-1] + "…", font=font) > max_width:
-            lines[-1] = lines[-1][:-1]
-        lines[-1] += "…"
-    return lines
 
 
 def _draw_label_strip(draw, *, category_id: str, style: str) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
@@ -738,6 +733,31 @@ def _render_gauge_card(spec: InfographicSpec, output_path: str, *, category_id: 
     return _save_png(img, output_path)
 
 
+def _split_keyword_phrase(text: str, *, max_phrase_chars: int = 16) -> Tuple[str, str]:
+    """Split ``text`` into a short word-boundary-safe leading phrase (for a
+    big headline callout) plus the remaining text (shown smaller as
+    context). Used by the "quote_keyword" layout so it visually differs
+    from the plain quote card's full-sentence-in-quote-marks treatment
+    while reusing the exact same ``quote_text`` data."""
+    text = (text or "").strip()
+    if not text:
+        return "", ""
+    if len(text) <= max_phrase_chars:
+        return text, ""
+    words = text.split()
+    phrase_words: List[str] = []
+    running = ""
+    for w in words:
+        candidate = f"{running} {w}".strip()
+        if len(candidate) > max_phrase_chars and phrase_words:
+            break
+        phrase_words.append(w)
+        running = candidate
+    phrase = " ".join(phrase_words) or words[0]
+    rest = text[len(phrase):].strip()
+    return phrase, rest
+
+
 def _render_quote_card(spec: InfographicSpec, output_path: str, *, category_id: str) -> str:
     from PIL import Image, ImageDraw
 
@@ -764,6 +784,57 @@ def _render_quote_card(spec: InfographicSpec, output_path: str, *, category_id: 
     return _save_png(img, output_path)
 
 
+def _render_quote_keyword_card(spec: InfographicSpec, output_path: str, *, category_id: str) -> str:
+    """"핵심 단어/구 하이라이트형" -- the second quote-shape layout. Same
+    quote_text data as _render_quote_card, but shown as a big highlighted
+    leading phrase (light tint background block) with the rest of the
+    sentence as smaller supporting context below, instead of a full
+    sentence in pull-quote styling. Registered as an alternate eligible
+    style so _allocate_styles picks this instead of _render_quote_card when
+    a document has more than one quote-shaped section (see
+    _build_spec_for_section's quote branch)."""
+    from PIL import Image, ImageDraw
+
+    accent, deep, tint = _PALETTES.get(category_id, _DEFAULT_PALETTE)
+    accent_rgb, deep_rgb, tint_rgb = _rgb(accent), _rgb(deep), _rgb(tint)
+    width = 1200
+
+    keyword_phrase, rest = _split_keyword_phrase(spec.quote_text)
+    measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    keyword_font = _korean_font(52)
+    kw_lines = _wrap(measure_draw, keyword_phrase, keyword_font, width - 160, 2)
+    rest_font = _korean_font(27)
+    rest_lines = _wrap(measure_draw, rest, rest_font, width - 160, 3) if rest else []
+
+    height = 140 + len(kw_lines) * 70 + (24 + len(rest_lines) * 38 if rest_lines else 0) + 40
+
+    img = Image.new("RGB", (width, height), "#ffffff")
+    draw = ImageDraw.Draw(img)
+
+    label = _STYLE_LABELS.get("quote_keyword", "포인트")
+    label_font = _korean_font(22)
+    label_w = draw.textlength(label, font=label_font)
+    draw.rounded_rectangle((48, 34, 48 + label_w + 52, 74), radius=20, outline=accent_rgb, width=2)
+    draw.text((74, 44), label, font=label_font, fill=deep_rgb)
+
+    y = 108
+    for line in kw_lines:
+        line_w = draw.textlength(line, font=keyword_font)
+        draw.rounded_rectangle((72, y + 6, 88 + line_w, y + 62), radius=10, fill=tint_rgb)
+        draw.text((80, y), line, font=keyword_font, fill=deep_rgb)
+        y += 70
+
+    if rest_lines:
+        y += 16
+        draw.line((80, y, width - 80, y), fill="#e2e5e9", width=2)
+        y += 24
+        for line in rest_lines:
+            draw.text((80, y), line, font=rest_font, fill="#555b63")
+            y += 38
+
+    return _save_png(img, output_path)
+
+
 def _render_quote_card_skin_c(spec: InfographicSpec, output_path: str, *, category_id: str) -> str:
     """"섹션 타이틀 강조형" -- skin C's title-emphasis card. Reuses the same
     quote_text extraction as the plain quote card (a representative sentence,
@@ -783,9 +854,8 @@ def _render_quote_card_skin_c(spec: InfographicSpec, output_path: str, *, catego
     img = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(img, "RGBA")
     _draw_skin_c_gradient_bg(img, draw, category_id=category_id)
-    _draw_skin_c_page_chip(draw, width, spec, category_id=category_id)
 
-    pill_label = "이번 섹션"
+    pill_label = "중요"
     pill_font = _korean_font(20)
     pw = draw.textlength(pill_label, font=pill_font) + 32
     draw.rounded_rectangle((80, 50, 80 + pw, 50 + 34), radius=17, fill=accent_rgb)
@@ -801,6 +871,58 @@ def _render_quote_card_skin_c(spec: InfographicSpec, output_path: str, *, catego
     if heading_icon not in icon_ids:
         icon_ids.append(heading_icon)
     icon_x = 80
+    for icon_id in icon_ids[:3]:
+        draw_icon(draw, icon_id, (icon_x, ty + 10, icon_x + 34, ty + 44), color=accent_rgb, width=3)
+        icon_x += 50
+
+    return _save_png(img, output_path)
+
+
+def _render_quote_keyword_card_skin_c(spec: InfographicSpec, output_path: str, *, category_id: str) -> str:
+    """Skin C's variant of the "핵심 단어/구 하이라이트형" layout -- same
+    gradient background / accent pill convention as _render_quote_card_skin_c,
+    but the big-keyword-phrase treatment instead of a full-sentence title."""
+    from PIL import Image, ImageDraw
+
+    accent, deep, _tint = _PALETTES.get(category_id, _DEFAULT_PALETTE)
+    accent_rgb, deep_rgb = _rgb(accent), _rgb(deep)
+    width = 1200
+
+    keyword_phrase, rest = _split_keyword_phrase(spec.quote_text)
+    measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    keyword_font = _korean_font(48)
+    kw_lines = _wrap(measure_draw, keyword_phrase, keyword_font, width - 160, 2)
+    rest_font = _korean_font(26)
+    rest_lines = _wrap(measure_draw, rest, rest_font, width - 160, 2) if rest else []
+    height = 150 + len(kw_lines) * 62 + (20 + len(rest_lines) * 36 if rest_lines else 0) + 90
+
+    img = Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(img, "RGBA")
+    _draw_skin_c_gradient_bg(img, draw, category_id=category_id)
+
+    pill_label = "포인트"
+    pill_font = _korean_font(20)
+    pw = draw.textlength(pill_label, font=pill_font) + 32
+    draw.rounded_rectangle((80, 50, 80 + pw, 50 + 34), radius=17, fill=accent_rgb)
+    draw.text((80 + 16, 50 + 7), pill_label, font=pill_font, fill="white")
+
+    ty = 110
+    for line in kw_lines:
+        draw.text((80, ty), line, font=keyword_font, fill=deep_rgb)
+        ty += 62
+
+    if rest_lines:
+        ty += 12
+        for line in rest_lines:
+            draw.text((80, ty), line, font=rest_font, fill=deep_rgb)
+            ty += 36
+
+    icon_ids = [pick_icon_for_text(spec.quote_text)]
+    heading_icon = pick_icon_for_text(spec.heading)
+    if heading_icon not in icon_ids:
+        icon_ids.append(heading_icon)
+    icon_x = 80
+    ty += 14
     for icon_id in icon_ids[:3]:
         draw_icon(draw, icon_id, (icon_x, ty + 10, icon_x + 34, ty + 44), color=accent_rgb, width=3)
         icon_x += 50
@@ -846,7 +968,6 @@ def _render_ox_quiz_card_skin_c(spec: InfographicSpec, output_path: str, *, cate
     img = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(img, "RGBA")
     _draw_skin_c_gradient_bg(img, draw, category_id=category_id)
-    _draw_skin_c_page_chip(draw, width, spec, category_id=category_id)
 
     accent, deep, _tint = _PALETTES.get(category_id, _DEFAULT_PALETTE)
     ty = 60
@@ -900,7 +1021,6 @@ def _render_risk_tier_card_skin_c(spec: InfographicSpec, output_path: str, *, ca
     img = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(img, "RGBA")
     _draw_skin_c_gradient_bg(img, draw, category_id=category_id)
-    _draw_skin_c_page_chip(draw, width, spec, category_id=category_id)
 
     label_font = _korean_font(24)
     draw.text((80, 50), spec.display_title, font=label_font, fill=(40, 40, 40))
@@ -1016,7 +1136,6 @@ def _render_before_after_card_skin_c(spec: InfographicSpec, output_path: str, *,
     img = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(img, "RGBA")
     _draw_skin_c_gradient_bg(img, draw, category_id=category_id)
-    _draw_skin_c_page_chip(draw, width, spec, category_id=category_id)
 
     ty = 50
     # Quote glyph: reuse the curly-quote character already confirmed to
@@ -1156,19 +1275,6 @@ def _draw_skin_c_gradient_bg(img, draw, *, category_id: str) -> None:
     for y in range(height):
         t = y / max(1, height - 1)
         draw.line((0, y, width, y), fill=_mix(top_c, bottom_c, t))
-
-
-def _draw_skin_c_page_chip(draw, width: int, spec: "InfographicSpec", *, category_id: str) -> None:
-    if not spec.card_total:
-        return
-    accent, deep, _tint = _PALETTES.get(category_id, _DEFAULT_PALETTE)
-    label = f"{spec.card_index:02d}"
-    font = _korean_font(20)
-    tw = draw.textlength(label, font=font)
-    pad = 12
-    box = (width - 18 - tw - pad * 2, 16, width - 18, 16 + 30)
-    draw.rounded_rectangle(box, radius=15, fill=(255, 255, 255, 160))
-    draw.text((box[0] + pad, box[1] + 5), label, font=font, fill=_rgb(deep))
 
 
 def _draw_skin_a_ribbon(draw, width: int, *, size: int = 70) -> None:
@@ -1456,7 +1562,6 @@ def _render_timeline_card_skin_c_linear(spec: InfographicSpec, output_path: str,
     img = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(img, "RGBA")
     _draw_skin_c_gradient_bg(img, draw, category_id=category_id)
-    _draw_skin_c_page_chip(draw, width, spec, category_id=category_id)
 
     colors = [(138, 147, 166), accent_rgb, deep_rgb]
     x = margin
@@ -1589,6 +1694,7 @@ _RENDERERS = {
     "timeline": _render_timeline_card,
     "gauge": _render_gauge_card,
     "quote": _render_quote_card,
+    "quote_keyword": _render_quote_keyword_card,
     "before_after": _render_before_after_card,
 }
 
@@ -1606,6 +1712,7 @@ _SKIN_RENDERERS: Dict[str, Dict[str, object]] = {
     "timeline": {"A": _render_timeline_card_skin_a, "B": _render_timeline_card_skin_b},
     "qa": {"A": _render_qa_card_skin_a, "B": _render_qa_card_skin_b},
     "quote": {"C": _render_quote_card_skin_c},
+    "quote_keyword": {"C": _render_quote_keyword_card_skin_c},
     "before_after": {"C": _render_before_after_card_skin_c},
     "ox_quiz": {"C": _render_ox_quiz_card_skin_c},
     "risk_tier": {"C": _render_risk_tier_card_skin_c},
@@ -1634,7 +1741,8 @@ def render_section_infographic(
 
 
 def build_section_infographics(*, markdown: str, category_id: str, output_dir: str,
-                               max_count: int = 5, style_seed: str = "") -> List[Dict[str, object]]:
+                               max_count: int = 5, style_seed: str = "",
+                               quote_cap: int = 2) -> List[Dict[str, object]]:
     """Render infographics for the strongest sections of the markdown.
 
     Returns [{"file", "heading", "alt", "style", "skin", "strip_ranges"}]
@@ -1644,9 +1752,15 @@ def build_section_infographics(*, markdown: str, category_id: str, output_dir: s
     (None/"A"/"B"/"C"), and "strip_ranges" are the absolute source-markdown
     line ranges the caller should remove before HTML conversion so the
     visualized data isn't left duplicated as plain text.
+
+    ``quote_cap`` (see extract_infographic_specs) bounds repetitive generic
+    "quote" fallback cards -- a post short on structured sections may end
+    up with fewer than ``max_count`` images rather than padded with quotes.
     """
     skin = choose_card_skin(seed_parts=(style_seed,)) if style_seed else None
-    specs = extract_infographic_specs(markdown, max_count=max_count, style_seed=style_seed, skin=skin)
+    specs = extract_infographic_specs(
+        markdown, max_count=max_count, style_seed=style_seed, skin=skin, quote_cap=quote_cap,
+    )
     total = len(specs)
     results: List[Dict[str, object]] = []
     for i, spec in enumerate(specs, start=1):

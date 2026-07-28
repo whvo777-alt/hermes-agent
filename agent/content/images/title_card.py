@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from agent.content.images.hero_image import HeroImage, extract_blog_title
+from agent.content.images.text_fit import ellipsize, fit_font_and_wrap, wrap_text
 from agent.content.visual_accents import _seed_int
 
 W, H = 1280, 720
@@ -129,13 +130,28 @@ def _select_keyword(title: str, category_keywords: Optional[Sequence[str]]) -> s
 _META_DESC_RE = re.compile(r"(?:메타\s*설명|Meta\s*description)\s*[:：]\s*(.+)", re.I)
 
 
-def _extract_subtitle(blog_content: str, *, fallback: str, max_len: int = 42) -> str:
+def _word_safe_truncate(text: str, max_len: int) -> str:
+    """Cut at the last full word boundary within max_len, not mid-word —
+    unlike a plain text[:max_len] slice. This is only a sanity cap on how
+    much raw text gets handed to the renderer; the actual visible line
+    fitting (2 lines, real pixel width, ellipsis) happens at draw time via
+    text_fit.wrap_text, so this cap can be generous."""
+    text = (text or "").strip()
+    if len(text) <= max_len:
+        return text
+    truncated = text[:max_len]
+    if " " in truncated:
+        truncated = truncated.rsplit(" ", 1)[0]
+    return truncated.rstrip() + "…"
+
+
+def _extract_subtitle(blog_content: str, *, fallback: str, max_len: int = 80) -> str:
     match = _META_DESC_RE.search(blog_content or "")
     if match:
         text = re.sub(r"[*`]", "", match.group(1)).strip()
         if text:
-            return text[:max_len]
-    return fallback[:max_len]
+            return _word_safe_truncate(text, max_len)
+    return _word_safe_truncate(fallback, max_len)
 
 
 def _pick_hashtags(title: str, category_id: str, category_keywords: Optional[Sequence[str]], *, count: int = 4) -> List[str]:
@@ -153,38 +169,28 @@ def _pick_hashtags(title: str, category_id: str, category_keywords: Optional[Seq
     return [f"#{k}" for k in pool[:count]]
 
 
-def _wrap_lines(draw, text: str, f, max_width: int, max_lines: int) -> List[str]:
-    words = (text or "").split()
-    lines: List[str] = []
-    cur = ""
-    for w in words:
-        cand = f"{cur} {w}".strip() if cur else w
-        if draw.textlength(cand, font=f) <= max_width or not cur:
-            cur = cand
-        else:
-            lines.append(cur)
-            cur = w
-        if len(lines) == max_lines:
-            break
-    if cur and len(lines) < max_lines:
-        lines.append(cur)
-    return lines[:max_lines] or [text[:1]]
-
-
 def _wrap_with_highlight(
-    title: str, keyword: str, *, target_line: int, max_chars: int, max_lines: int,
-) -> Tuple[List[str], int]:
-    """Wrap ``title`` into <= max_lines char-budget lines so ``keyword`` (if
-    present) lands on line ``target_line`` — that's the template's fixed
-    "which line gets the accent color" slot. Falls back to a plain wrap with
-    the same target index when the keyword isn't a literal substring."""
+    draw, title: str, keyword: str, *, target_line: int, font, max_width: int, max_lines: int,
+) -> Tuple[List[str], int, bool]:
+    """Wrap ``title`` into <= max_lines lines, measured by REAL rendered
+    pixel width (not a character-count budget), so ``keyword`` (if present)
+    lands on line ``target_line`` — that's the template's fixed "which line
+    gets the accent color" slot. Falls back to a plain wrap with the same
+    target index when the keyword isn't a literal substring.
+
+    Returns ``(lines, accent_index, fits_cleanly)`` — ``fits_cleanly`` is
+    False if any word had to be dropped (title too long for ``max_lines`` at
+    this font size) or any line still overflows ``max_width`` (a single word
+    wider than the box); callers should treat that as "try a smaller font"
+    rather than accepting the result as-is (see ``_fit_title_with_highlight``).
+    """
 
     def greedy(words: Sequence[str], budget_lines: int) -> List[str]:
         lines: List[str] = []
         cur = ""
         for w in words:
             cand = f"{cur} {w}".strip() if cur else w
-            if len(cand) <= max_chars or not cur:
+            if draw.textlength(cand, font=font) <= max_width or not cur:
                 cur = cand
             else:
                 lines.append(cur)
@@ -211,7 +217,7 @@ def _wrap_with_highlight(
 
     if keyword:
         highlight_line = keyword
-        if after_words and len(f"{highlight_line} {after_words[0]}") <= max_chars:
+        if after_words and draw.textlength(f"{highlight_line} {after_words[0]}", font=font) <= max_width:
             highlight_line = f"{highlight_line} {after_words[0]}"
             after_words = after_words[1:]
     elif after_words:
@@ -220,16 +226,61 @@ def _wrap_with_highlight(
     elif before_words:
         highlight_line = lines_before.pop() if lines_before else before_words[-1]
     else:
-        highlight_line = title[:max_chars] or "가이드"
+        highlight_line = title or "가이드"
 
     remaining_budget = max(max_lines - len(lines_before) - 1, 0)
     lines_after = greedy(after_words, remaining_budget)
 
+    before_consumed = sum(len(l.split()) for l in lines_before)
+    after_consumed = sum(len(l.split()) for l in lines_after)
+    dropped_words = before_consumed < len(before_words) or after_consumed < len(after_words)
+
     lines = [l for l in (lines_before + [highlight_line] + lines_after) if l][:max_lines]
     if not lines:
-        lines = [title[:max_chars] or "가이드"]
+        lines = [title or "가이드"]
     accent_index = min(target_line, len(lines) - 1)
-    return lines, accent_index
+    fits_cleanly = not dropped_words and all(draw.textlength(l, font=font) <= max_width for l in lines)
+    return lines, accent_index, fits_cleanly
+
+
+def _fit_title_with_highlight(
+    draw, title: str, keyword: str, *, target_line: int, max_lines: int, max_width: int,
+    font_path: Path, base_size: int, min_size: int, step: int = 6,
+):
+    """Step the font size down from ``base_size`` (by ``step``, floored at
+    ``min_size``) until the title wraps cleanly within ``max_lines``/
+    ``max_width`` at real measured width — box/font size adapts to the
+    actual text instead of a fixed size that can clip. Only once
+    ``min_size`` is reached and it still doesn't fit does the last attempt's
+    ellipsis fallback (already applied by ``_wrap_with_highlight``'s
+    per-line ellipsize... handled below) get accepted.
+
+    Returns ``(lines, accent_index, font)``.
+    """
+    size = base_size
+    last: Optional[Tuple[List[str], int, bool]] = None
+    last_font = None
+    while True:
+        font = _font(font_path, size)
+        lines, accent_index, fits_cleanly = _wrap_with_highlight(
+            draw, title, keyword, target_line=target_line, font=font,
+            max_width=max_width, max_lines=max_lines,
+        )
+        last, last_font = (lines, accent_index, fits_cleanly), font
+        if fits_cleanly or size <= min_size:
+            break
+        size -= step
+    lines, accent_index, fits_cleanly = last
+    if not fits_cleanly:
+        # Last resort at the smallest font tried: ellipsize any line that
+        # still overflows max_width (a too-wide single word), AND force an
+        # ellipsis onto the last line even if ITS width is fine -- dropped
+        # trailing words (title needed more than max_lines) would otherwise
+        # render as a clean-looking line that silently cuts the sentence.
+        lines = [ellipsize(draw, l, last_font, max_width) for l in lines]
+        if lines and not lines[-1].endswith("…"):
+            lines[-1] = ellipsize(draw, lines[-1] + "…", last_font, max_width)
+    return lines, accent_index, last_font
 
 
 def _quote_glyph(draw, cx, cy, size, color, opening: bool = True):
@@ -290,31 +341,36 @@ def _soft_blob(img, cx, cy, r, color, opacity):
 def _render_frame_quote(*, colors, blog_title, keyword, category_name, subtitle, hashtags):
     from PIL import Image, ImageDraw
 
-    lines, accent_idx = _wrap_with_highlight(blog_title, keyword, target_line=1, max_chars=11, max_lines=3)
     img = Image.new("RGB", (W, H), colors["bg"])
     draw = ImageDraw.Draw(img)
     card = (160, 90, W - 160, H - 90)
     draw.rounded_rectangle(card, radius=32, fill="#ffffff", outline=_hx(colors["accent"]), width=5)
     _quote_glyph(draw, card[0] + 90, card[1] + 66, 130, "#1a1a1a", opening=True)
 
-    tf = _font(_F_BOLD, 54)
+    text_max_width = (card[2] - 70) - (card[0] + 70)
+    lines, accent_idx, tf = _fit_title_with_highlight(
+        draw, blog_title, keyword, target_line=1, max_lines=3, max_width=text_max_width,
+        font_path=_F_BOLD, base_size=54, min_size=36,
+    )
     ty = card[1] + 128
     for i, line in enumerate(lines):
         color = colors["accent"] if i == accent_idx else "#1a1a1a"
         draw.text((card[0] + 70, ty), line, font=tf, fill=color)
-        ty += 70
+        ty += int(tf.size * 1.3)
 
     ty += 10
     draw.line((card[0] + 70, ty, card[2] - 70, ty), fill="#d8dce0", width=2)
     ty += 26
-    draw.text((card[0] + 70, ty), subtitle, font=_font(_F_REGULAR, 26), fill="#78828c")
+    sub_font = _font(_F_REGULAR, 26)
+    for line in wrap_text(draw, subtitle, sub_font, text_max_width, 2):
+        draw.text((card[0] + 70, ty), line, font=sub_font, fill="#78828c")
+        ty += 34
     return img
 
 
 def _render_badge_quotes(*, colors, blog_title, keyword, category_name, subtitle, hashtags):
     from PIL import Image, ImageDraw
 
-    lines, accent_idx = _wrap_with_highlight(blog_title, keyword, target_line=2, max_chars=11, max_lines=3)
     img = _gradient_bg((W, H), colors["accent"], _mix(colors["accent"], colors["bg"], 0.7), vertical=True)
     draw = ImageDraw.Draw(img)
 
@@ -326,17 +382,24 @@ def _render_badge_quotes(*, colors, blog_title, keyword, category_name, subtitle
     draw.ellipse((top_c[0] - badge_r, top_c[1] - badge_r, top_c[0] + badge_r, top_c[1] + badge_r), fill=_hx(colors["soft"]), outline=_hx(colors["accent"]), width=4)
     _quote_glyph(draw, top_c[0], top_c[1] - 4, 60, colors["accent"], opening=True)
 
-    tf = _font(_F_BOLD, 50)
+    text_max_width = (card[2] - card[0]) - 160
+    lines, accent_idx, tf = _fit_title_with_highlight(
+        draw, blog_title, keyword, target_line=2, max_lines=3, max_width=text_max_width,
+        font_path=_F_BOLD, base_size=50, min_size=32,
+    )
     ty = card[1] + 96
     for i, line in enumerate(lines):
         color = colors["accent"] if i == accent_idx else "#1a1a1a"
         w = draw.textlength(line, font=tf)
         draw.text((W / 2 - w / 2, ty), line, font=tf, fill=color)
-        ty += 66
+        ty += int(tf.size * 1.32)
 
     ty += 16
-    sub_w = draw.textlength(subtitle, font=_font(_F_REGULAR, 25))
-    draw.text((W / 2 - sub_w / 2, ty), subtitle, font=_font(_F_REGULAR, 25), fill="#78828c")
+    sub_font = _font(_F_REGULAR, 25)
+    for line in wrap_text(draw, subtitle, sub_font, text_max_width, 2):
+        sub_w = draw.textlength(line, font=sub_font)
+        draw.text((W / 2 - sub_w / 2, ty), line, font=sub_font, fill="#78828c")
+        ty += 32
 
     bot_c = (W // 2, card[3])
     draw.ellipse((bot_c[0] - badge_r, bot_c[1] - badge_r, bot_c[0] + badge_r, bot_c[1] + badge_r), fill=_hx(colors["soft"]), outline=_hx(colors["accent"]), width=4)
@@ -347,7 +410,6 @@ def _render_badge_quotes(*, colors, blog_title, keyword, category_name, subtitle
 def _render_illustration(*, colors, blog_title, keyword, category_name, subtitle, hashtags):
     from PIL import Image, ImageDraw
 
-    lines, underline_idx = _wrap_with_highlight(blog_title, keyword, target_line=1, max_chars=13, max_lines=2)
     img = _gradient_bg((W, H), colors["bg"], _mix(colors["bg"], "#ffffff", 0.5), vertical=False)
     draw = ImageDraw.Draw(img)
 
@@ -364,14 +426,18 @@ def _render_illustration(*, colors, blog_title, keyword, category_name, subtitle
     draw.rounded_rectangle((bx, by, bx + 34, by + 46), radius=4, fill=_hx(colors["accent"]))
     draw.line((bx + 17, by, bx + 17, by + 46), fill="#ffffff", width=2)
 
-    tf = _font(_F_BOLD, 58)
+    text_max_width = (lx - 20) - 110
+    lines, underline_idx, tf = _fit_title_with_highlight(
+        draw, blog_title, keyword, target_line=1, max_lines=2, max_width=text_max_width,
+        font_path=_F_BOLD, base_size=58, min_size=38,
+    )
     ty = 190
     line_boxes = []
     for line in lines:
         w = draw.textlength(line, font=tf)
         draw.text((110, ty), line, font=tf, fill=colors["ink"])
-        line_boxes.append((110, ty, 110 + w, ty + 58))
-        ty += 76
+        line_boxes.append((110, ty, 110 + w, ty + tf.size))
+        ty += int(tf.size * 1.31)
     ux0, _uy0, ux1, uy1 = line_boxes[underline_idx]
     draw.rounded_rectangle((ux0, uy1 + 6, ux1, uy1 + 18), radius=6, fill=_MINT)
 
@@ -394,22 +460,25 @@ def _render_illustration(*, colors, blog_title, keyword, category_name, subtitle
 def _render_topbar_hashtags(*, colors, blog_title, keyword, category_name, subtitle, hashtags):
     from PIL import Image, ImageDraw
 
-    lines, accent_idx = _wrap_with_highlight(blog_title, keyword, target_line=0, max_chars=11, max_lines=3)
     img = Image.new("RGB", (W, H), colors["bg"])
     draw = ImageDraw.Draw(img)
 
     card = (150, 80, W - 150, H - 80)
     draw.rounded_rectangle(card, radius=28, fill="#ffffff", outline=(20, 20, 20), width=4)
 
-    tf = _font(_F_BOLD, 52)
+    text_max_width = (card[2] - 56) - (card[0] + 56)
+    lines, accent_idx, tf = _fit_title_with_highlight(
+        draw, blog_title, keyword, target_line=0, max_lines=3, max_width=text_max_width,
+        font_path=_F_BOLD, base_size=52, min_size=34,
+    )
     ty = card[1] + 72
     for i, line in enumerate(lines):
         color = colors["accent"] if i == accent_idx else "#1a1a1a"
         draw.text((card[0] + 56, ty), line, font=tf, fill=color)
-        ty += 68
+        ty += int(tf.size * 1.31)
 
     ty += 8
-    for line in _wrap_lines(draw, subtitle, _font(_F_REGULAR, 24), card[2] - card[0] - 112, 2):
+    for line in wrap_text(draw, subtitle, _font(_F_REGULAR, 24), text_max_width, 2):
         draw.text((card[0] + 56, ty), line, font=_font(_F_REGULAR, 24), fill="#7a838c")
         ty += 34
 
@@ -437,12 +506,14 @@ def _render_minimal_icons(*, colors, blog_title, keyword, category_name, subtitl
     bx = W - 130
     draw.polygon([(bx, icon_y), (bx + 32, icon_y), (bx + 32, icon_y + 44), (bx + 16, icon_y + 30), (bx, icon_y + 44)], outline=_hx(colors["ink"]), width=3)
 
-    tf = _font(_F_BOLD, 58)
-    lines = _wrap_lines(draw, blog_title, tf, 720, 2)
+    lines, tf = fit_font_and_wrap(
+        draw, blog_title, font_loader=lambda size: _font(_F_BOLD, size),
+        base_size=58, min_size=38, step=6, max_width=720, max_lines=2,
+    )
     ty = 210
     for line in lines:
         draw.text((120, ty), line, font=tf, fill=colors["ink"])
-        ty += 76
+        ty += int(tf.size * 1.31)
 
     ty += 24
     x = 120
@@ -453,15 +524,15 @@ def _render_minimal_icons(*, colors, blog_title, keyword, category_name, subtitl
 
     draw.line((120, ty, W - 120, ty), fill="#e6ddc0", width=2)
     ty += 24
-    draw.text((120, ty), subtitle, font=_font(_F_REGULAR, 24), fill="#8a8264")
+    sub_font = _font(_F_REGULAR, 24)
+    for line in wrap_text(draw, subtitle, sub_font, W - 240, 2):
+        draw.text((120, ty), line, font=sub_font, fill="#8a8264")
+        ty += 32
     return img
 
 
 def _render_photo_overlay(*, colors, blog_title, keyword, category_name, subtitle, hashtags):
     from PIL import Image, ImageDraw
-
-    lines, accent_idx = _wrap_with_highlight(blog_title, keyword, target_line=1, max_chars=13, max_lines=3)
-    title_runs = [(line, i == accent_idx) for i, line in enumerate(lines)]
 
     # Fake "photo" -- gradient + soft blobs standing in for a real photograph
     # (matches hero_image.py's existing mood-art convention for "photo" mode).
@@ -478,16 +549,24 @@ def _render_photo_overlay(*, colors, blog_title, keyword, category_name, subtitl
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    tf = _font(_F_BOLD, 56)
+    text_max_width = W - 200
+    lines, accent_idx, tf = _fit_title_with_highlight(
+        draw, blog_title, keyword, target_line=1, max_lines=3, max_width=text_max_width,
+        font_path=_F_BOLD, base_size=56, min_size=36,
+    )
+    title_runs = [(line, i == accent_idx) for i, line in enumerate(lines)]
     ty = 190
     for text, is_accent in title_runs:
         color = _mix(colors["accent"], "#ffffff", 0.25) if is_accent else "#ffffff"
         draw.text((100, ty), text, font=tf, fill=color)
-        ty += 74
+        ty += int(tf.size * 1.32)
 
     ty += 10
-    draw.text((100, ty), subtitle, font=_font(_F_REGULAR, 25), fill="#d8dce0")
-    ty += 56
+    sub_font = _font(_F_REGULAR, 25)
+    for line in wrap_text(draw, subtitle, sub_font, text_max_width, 2):
+        draw.text((100, ty), line, font=sub_font, fill="#d8dce0")
+        ty += 32
+    ty += 24
 
     x = 100
     for tag in hashtags[:2]:
