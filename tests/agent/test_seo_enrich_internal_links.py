@@ -50,7 +50,7 @@ def test_no_candidates_falls_back_to_home_link_not_a_crash():
 
 
 def test_fetch_wordpress_internal_candidates_adds_categories_filter():
-    captured = {}
+    captured = []
 
     class _FakeResponse:
         status_code = 200
@@ -60,14 +60,80 @@ def test_fetch_wordpress_internal_candidates_adds_categories_filter():
             return []
 
     def _fake_get(url, headers=None, timeout=None):
-        captured["url"] = url
+        captured.append(url)
         return _FakeResponse()
 
     with patch("agent.content.seo_enrich.httpx.get", side_effect=_fake_get):
         fetch_wordpress_internal_candidates(
             site_url="https://x.com", auth_header="Basic xyz", categories=42,
         )
-    assert "categories=42" in captured["url"]
+    # An empty categorized result also triggers the site-wide top-up fetch
+    # (see the next test), so at least one call -- not necessarily the last
+    # -- must carry the categories filter.
+    assert any("categories=42" in u for u in captured)
+
+
+def test_fetch_wordpress_internal_candidates_tops_up_from_site_wide_when_category_thin():
+    """Regression for a real published-post bug: a thin/new category
+    returned 0 same-category posts, so the caller fell all the way to the
+    "블로그 홈"-only placeholder and the SEO checker flagged "내부 링크가 3개
+    미만입니다". A same-category pool under ``min_results`` must now top up
+    with an unscoped site-wide fetch instead of returning early."""
+    same_category = []  # thin category: nothing published there yet
+    site_wide = [
+        {"id": 1, "title": {"rendered": "요가 초보 확인 기준"}, "link": "https://x.com/a"},
+        {"id": 2, "title": {"rendered": "스트레칭 루틴 만들기"}, "link": "https://x.com/b"},
+        {"id": 3, "title": {"rendered": "수면 자세 체크 포인트"}, "link": "https://x.com/c"},
+    ]
+
+    def _fake_get(url, headers=None, timeout=None):
+        body = same_category if "categories=42" in url else site_wide
+
+        class _FakeResponse:
+            status_code = 200
+            content = b"x"
+
+            def json(self):
+                return body
+
+        return _FakeResponse()
+
+    with patch("agent.content.seo_enrich.httpx.get", side_effect=_fake_get):
+        results = fetch_wordpress_internal_candidates(
+            site_url="https://x.com", auth_header="Basic xyz", categories=42,
+        )
+    assert len(results) == 3
+    assert {r["link"] for r in results} == {"https://x.com/a", "https://x.com/b", "https://x.com/c"}
+
+
+def test_fetch_wordpress_internal_candidates_no_top_up_when_category_has_enough():
+    """The site-wide fetch must not fire at all once the categorized pool
+    already meets ``min_results`` -- otherwise every call doubles its
+    request volume for no reason."""
+    call_count = {"n": 0}
+    same_category = [
+        {"id": i, "title": {"rendered": f"글 {i}"}, "link": f"https://x.com/{i}"}
+        for i in range(1, 4)
+    ]
+
+    def _fake_get(url, headers=None, timeout=None):
+        call_count["n"] += 1
+
+        class _FakeResponse:
+            status_code = 200
+            content = b"x"
+
+            def json(self):
+                return same_category
+
+        return _FakeResponse()
+
+    with patch("agent.content.seo_enrich.httpx.get", side_effect=_fake_get):
+        results = fetch_wordpress_internal_candidates(
+            site_url="https://x.com", auth_header="Basic xyz", categories=42,
+        )
+    assert len(results) == 3
+    assert call_count["n"] == 1
 
 
 def test_fetch_wordpress_internal_candidates_omits_filter_when_no_category():
@@ -107,6 +173,45 @@ def test_fetch_blogspot_internal_candidates_filters_by_label_and_maps_url_field(
 
 def test_fetch_blogspot_internal_candidates_missing_inputs_returns_empty():
     assert fetch_blogspot_internal_candidates(blog_id="", access_token="", label="") == []
+
+
+def test_enrich_wordpress_markdown_flags_fallback_only_internal_links():
+    """Regression: a fallback-only publish ("블로그 홈" placeholder, 0 real
+    candidates) must be surfaced via internalLinksFallbackOnly so it can be
+    logged/reviewed, not silently indistinguishable from a healthy publish
+    that legitimately added 0 links for some other reason."""
+    with patch(
+        "agent.content.seo_enrich.fetch_wordpress_internal_candidates",
+        return_value=[],
+    ):
+        result = enrich_wordpress_markdown_for_seo(
+            "## 마무리\n끝.",
+            focus_keyword="요가",
+            category_id="health",
+            site_url="https://x.com",
+            auth_header="Basic xyz",
+            live=True,
+            wp_category_term_id=7,
+        )
+    assert result["internalLinksFallbackOnly"] is True
+    assert "블로그 홈" in result["markdown"]
+
+
+def test_enrich_wordpress_markdown_no_fallback_flag_with_real_candidates():
+    with patch(
+        "agent.content.seo_enrich.fetch_wordpress_internal_candidates",
+        return_value=_CANDIDATES,
+    ):
+        result = enrich_wordpress_markdown_for_seo(
+            "## 마무리\n끝.",
+            focus_keyword="요가",
+            category_id="health",
+            site_url="https://x.com",
+            auth_header="Basic xyz",
+            live=True,
+            wp_category_term_id=7,
+        )
+    assert result["internalLinksFallbackOnly"] is False
 
 
 def test_enrich_wordpress_markdown_internal_added_matches_actual_target():

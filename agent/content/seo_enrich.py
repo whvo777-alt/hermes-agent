@@ -92,14 +92,49 @@ _TOPIC_EXTERNAL_LINKS: List[Tuple[re.Pattern, List[Tuple[str, str]]]] = [
 _OFFICIAL_DOMAIN_RE = re.compile(r"\.go\.kr(?:/|$)|\.or\.kr(?:/|$)", re.I)
 
 
+def _is_root_level_url(url: str) -> bool:
+    """Prefer institution homepages / shallow top-level pages over deep
+    notice-board or sub-pages. Real published-post bug: the domain filter
+    alone let through a prosecutor's-office notice-board page (totally
+    unrelated to the post's health topic) and a nifds.go.kr sub-path that
+    turned out to be a dead link -- both multi-segment or query-string-heavy
+    deep links. Every curated entry in ``_EXTERNAL_LINKS``/
+    ``_TOPIC_EXTERNAL_LINKS`` is a bare domain root, so this just enforces
+    the same shape on search-sourced results instead of accepting any depth.
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.query:
+        return False
+    segments = [s for s in parts.path.split("/") if s]
+    return len(segments) <= 1
+
+
+def _is_reachable(url: str, *, timeout: float = 5.0) -> bool:
+    """Best-effort liveness check before a search-sourced URL gets published
+    as an "official reference" link. Never raises -- any failure (timeout,
+    connection error, 4xx/5xx) just means the caller drops the candidate and
+    moves on to the next one / the category pool, same fail-open posture as
+    the rest of this fallback path."""
+    try:
+        response = httpx.head(url, timeout=timeout, follow_redirects=True)
+        if response.status_code >= 400:
+            response = httpx.get(url, timeout=timeout, follow_redirects=True)
+        return response.status_code < 400
+    except Exception:  # noqa: BLE001 — a network hiccup must not block publish
+        return False
+
+
 def _search_fallback_links(query: str) -> List[Tuple[str, str]]:
     """Best-effort: ask the active web-search provider (whichever backend
     ``web.search_backend`` resolves to — Tavily or otherwise) for an
     official page when the topic doesn't match anything in
-    ``_TOPIC_EXTERNAL_LINKS``. Results are filtered to .go.kr/.or.kr domains
-    only. Never raises — any failure (no provider configured, network
-    error, empty results) just returns [] and the caller falls back to the
-    category pool, same as before this existed.
+    ``_TOPIC_EXTERNAL_LINKS``. Results are filtered to .go.kr/.or.kr domains,
+    shallow/root-level URLs (see ``_is_root_level_url``), and must actually
+    resolve (see ``_is_reachable``). Never raises — any failure (no provider
+    configured, network error, empty results) just returns [] and the caller
+    falls back to the category pool, same as before this existed.
     """
     query = (query or "").strip()
     if not query:
@@ -122,6 +157,10 @@ def _search_fallback_links(query: str) -> List[Tuple[str, str]]:
         url = str((item or {}).get("url") or "").strip()
         title = str((item or {}).get("title") or "").strip()
         if not url or not title or not _OFFICIAL_DOMAIN_RE.search(url):
+            continue
+        if not _is_root_level_url(url):
+            continue
+        if not _is_reachable(url):
             continue
         picked.append((title[:40], url))
         if len(picked) >= 2:
@@ -378,36 +417,59 @@ def fetch_wordpress_internal_candidates(
     exclude_post_id: Optional[int] = None,
     categories: Optional[int] = None,
     limit: int = 20,
+    min_results: int = 3,
 ) -> List[Dict[str, str]]:
     """Load recent published posts for internal linking.
 
     ``categories`` (a WordPress category term ID) scopes the query to posts
     in the same category when provided, so the scorer in
     ``append_internal_links`` ranks within a same-category pool instead of
-    the whole site.
+    the whole site. When that scoped pool comes up short of ``min_results``
+    (a brand-new or thin category — real published-post bug: a post got 0
+    same-category candidates and published with just the single "블로그 홈"
+    placeholder, tripping the SEO checker's "내부 링크가 3개 미만입니다"
+    warning), tops up with a second, unscoped site-wide fetch instead of
+    handing back a near-empty pool. ``append_internal_links``'s
+    ``preferred_terms`` scoring still ranks the combined pool afterward, so
+    off-category posts only surface when the same-category pool can't fill
+    the quota on its own.
     """
-    endpoint = (
-        f"{str(site_url).rstrip('/')}/wp-json/wp/v2/posts"
-        f"?per_page={limit}&status=publish&_fields=id,title,link"
-    )
-    if categories:
-        endpoint += f"&categories={categories}"
-    response = httpx.get(endpoint, headers={"Authorization": auth_header}, timeout=_TIMEOUT)
-    if response.status_code >= 400:
-        return []
-    body = response.json() if response.content else []
-    if not isinstance(body, list):
-        return []
-    results: List[Dict[str, str]] = []
-    for item in body:
-        post_id = item.get("id")
-        if exclude_post_id and post_id == exclude_post_id:
-            continue
-        title = ((item.get("title") or {}).get("rendered") or "").strip()
-        title = re.sub(r"<[^>]+>", "", title)
-        link = str(item.get("link") or "").strip()
-        if title and link:
-            results.append({"id": str(post_id), "title": title, "link": link})
+
+    def _fetch(category_filter: Optional[int]) -> List[Dict[str, str]]:
+        endpoint = (
+            f"{str(site_url).rstrip('/')}/wp-json/wp/v2/posts"
+            f"?per_page={limit}&status=publish&_fields=id,title,link"
+        )
+        if category_filter:
+            endpoint += f"&categories={category_filter}"
+        response = httpx.get(endpoint, headers={"Authorization": auth_header}, timeout=_TIMEOUT)
+        if response.status_code >= 400:
+            return []
+        body = response.json() if response.content else []
+        if not isinstance(body, list):
+            return []
+        fetched: List[Dict[str, str]] = []
+        for item in body:
+            post_id = item.get("id")
+            if exclude_post_id and post_id == exclude_post_id:
+                continue
+            title = ((item.get("title") or {}).get("rendered") or "").strip()
+            title = re.sub(r"<[^>]+>", "", title)
+            link = str(item.get("link") or "").strip()
+            if title and link:
+                fetched.append({"id": str(post_id), "title": title, "link": link})
+        return fetched
+
+    results = _fetch(categories)
+    if categories and len(results) < min_results:
+        seen_ids = {r["id"] for r in results}
+        for item in _fetch(None):
+            if item["id"] in seen_ids:
+                continue
+            results.append(item)
+            seen_ids.add(item["id"])
+            if len(results) >= min_results:
+                break
     return results
 
 
@@ -540,6 +602,7 @@ def enrich_wordpress_markdown_for_seo(
 
     internal: List[Dict[str, str]] = []
     internal_added = 0
+    internal_fallback_only = False
     if live and site_url and auth_header:
         internal = fetch_wordpress_internal_candidates(
             site_url=site_url,
@@ -557,12 +620,26 @@ def enrich_wordpress_markdown_for_seo(
         )
         if content != before_internal:
             internal_added = min(internal_link_target, len(internal))
+            # No real candidates at all (even after fetch_wordpress_internal_
+            # candidates' own site-wide top-up) -- append_internal_links()
+            # fell back to the "블로그 홈"-only placeholder. Not an error (the
+            # placeholder keeps Rank Math's presence-check happy), but a real
+            # published post shipped with just 1 internal link this way and
+            # tripped a separate SEO checker's "내부 링크가 3개 미만입니다"
+            # warning, so this is worth surfacing rather than staying silent.
+            internal_fallback_only = len(internal) == 0
+            if internal_fallback_only:
+                logger.warning(
+                    "Internal links: published with fallback-only links "
+                    "(no real same-category or site-wide candidates found)"
+                )
 
     return {
         "markdown": content,
         "keywordThinned": thinned,
         "externalAdded": external_added,
         "internalCount": internal_added,
+        "internalLinksFallbackOnly": internal_fallback_only,
         "focusKeywordCount": (
             len(re.findall(re.escape(focus_keyword), content)) if focus_keyword else 0
         ),

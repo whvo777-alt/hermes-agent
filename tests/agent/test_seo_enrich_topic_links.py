@@ -84,7 +84,11 @@ def test_search_fallback_filters_to_official_domains_only():
         def search(self, query, limit=5):
             return fake_result
 
-    with patch("agent.web_search_registry.get_active_search_provider", return_value=_FakeProvider()):
+    class _FakeResponse:
+        status_code = 200
+
+    with patch("agent.web_search_registry.get_active_search_provider", return_value=_FakeProvider()), \
+         patch("agent.content.seo_enrich.httpx.head", return_value=_FakeResponse()):
         links = _search_fallback_links("아무 주제")
     assert links == [("국민건강보험공단", "https://www.nhis.or.kr/main.do")]
 
@@ -92,6 +96,74 @@ def test_search_fallback_filters_to_official_domains_only():
 def test_search_fallback_never_raises_when_provider_missing():
     with patch("agent.web_search_registry.get_active_search_provider", return_value=None):
         assert _search_fallback_links("아무 주제") == []
+
+
+def test_search_fallback_rejects_deep_notice_board_style_urls():
+    """Regression for a real published-post bug: a health-category post got
+    a completely unrelated prosecutor's-office notice-board link
+    ("홈 > 알림소식 > 공지사항 — 창원지방검찰청 마산지청") because the only
+    filter was the .go.kr TLD — deep/query-string pages like this must be
+    rejected before the liveness check even runs, regardless of reachability."""
+    fake_result = {
+        "success": True,
+        "data": {
+            "web": [
+                {
+                    "title": "홈 > 알림소식 > 공지사항 – 창원지방검찰청 마산지청",
+                    "url": "https://www.spo.go.kr/site/changwon/ex/bbs/View.do?cbIdx=123&bcIdx=456",
+                },
+            ]
+        },
+    }
+
+    class _FakeProvider:
+        def supports_search(self):
+            return True
+
+        def is_available(self):
+            return True
+
+        def search(self, query, limit=5):
+            return fake_result
+
+    with patch("agent.web_search_registry.get_active_search_provider", return_value=_FakeProvider()), \
+         patch("agent.content.seo_enrich.httpx.head", return_value=type("R", (), {"status_code": 200})()):
+        links = _search_fallback_links("일어회화 학습법")
+    assert links == []
+
+
+def test_search_fallback_rejects_dead_links():
+    """Regression for a real published-post bug: a search result URL
+    (nifds.go.kr sub-path) 404'd once published — the domain was real and
+    on-topic (식약처 산하 식품의약품안전평가원) but the exact page wasn't, and
+    nothing verified reachability before this fix."""
+    fake_result = {
+        "success": True,
+        "data": {
+            "web": [
+                {"title": "식품의약품안전평가원 안내", "url": "https://www.nifds.go.kr/kocvamen"},
+            ]
+        },
+    }
+
+    class _FakeProvider:
+        def supports_search(self):
+            return True
+
+        def is_available(self):
+            return True
+
+        def search(self, query, limit=5):
+            return fake_result
+
+    class _Dead404:
+        status_code = 404
+
+    with patch("agent.web_search_registry.get_active_search_provider", return_value=_FakeProvider()), \
+         patch("agent.content.seo_enrich.httpx.head", return_value=_Dead404()), \
+         patch("agent.content.seo_enrich.httpx.get", return_value=_Dead404()):
+        links = _search_fallback_links("식품 안전")
+    assert links == []
 
 
 def test_append_external_links_uses_topic_matched_institution():

@@ -52,7 +52,12 @@ def _prefer_korean_slug(*, raw_slug: str, title: str, focus_keyword: str) -> str
     title_slug = _slugify(title)
     focus_slug = _slugify(focus_keyword) if focus_keyword else ""
     if re.search(r"[가-힣]", candidate):
-        return candidate[:60]
+        # Route through _slugify() even though the writer already supplied a
+        # slug -- a writer-provided "URL slug" field is free-form Korean
+        # text, not guaranteed to already be hyphenated (real published-post
+        # bug: a space-separated candidate like "한의학 확인 기준 7가지" was
+        # returned verbatim, so the WordPress URL had no hyphens at all).
+        return _slugify(candidate)
     # English-only writer slug → rebuild from Korean title (short, readable).
     if re.search(r"[가-힣]", title_slug):
         return title_slug[:48]
@@ -753,8 +758,14 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
             "keywordThinned": seo_enrichment.get("keywordThinned"),
             "externalAdded": seo_enrichment.get("externalAdded"),
             "internalCount": seo_enrichment.get("internalCount"),
+            "internalLinksFallbackOnly": seo_enrichment.get("internalLinksFallbackOnly"),
             "focusKeywordCount": seo_enrichment.get("focusKeywordCount"),
         }
+        if seo_enrichment.get("internalLinksFallbackOnly"):
+            logging.getLogger(__name__).warning(
+                "WordPress draft published with fallback-only internal links "
+                "(no related-post candidates found) — review recommended, not blocking"
+            )
         result["tags"] = tags_result
 
         _section_images = list(result.get("sectionImages") or [])
