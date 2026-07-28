@@ -19641,6 +19641,58 @@ def _run_planned_stop_watcher(
         stop_event.wait(poll_interval)
 
 
+def _check_and_alert_dead_credentials(
+    adapters,
+    loop,
+    alert_sent_at: Dict[str, float],
+    *,
+    resend_seconds: float,
+) -> None:
+    """Alert on Discord for any credential permanently STATUS_DEAD (needs
+    `hermes auth add <provider>`) — never for STATUS_EXHAUSTED, which
+    self-heals via TTL + the next natural use (see
+    agent.credential_pool.get_dead_credentials's docstring). ``alert_sent_at``
+    is mutated in place (``f"{provider}:{entry_id}"`` -> last-alert epoch) so
+    the same still-dead credential doesn't re-page more than once per
+    ``resend_seconds``. No-ops quietly if there's nothing dead, or no Discord
+    adapter/home channel is configured.
+    """
+    from agent.credential_pool import get_dead_credentials
+
+    dead = get_dead_credentials()
+    if not dead:
+        return
+    discord_adapter = adapters.get(Platform.DISCORD) if adapters else None
+    if discord_adapter is None:
+        return
+    from cron.scheduler import _get_home_target_chat_id
+    chat_id = _get_home_target_chat_id("discord")
+    if not chat_id:
+        return
+
+    now = time.time()
+    for item in dead:
+        key = f"{item['provider']}:{item['entry_id']}"
+        sent_at = alert_sent_at.get(key)
+        if sent_at is not None and now - sent_at < resend_seconds:
+            continue
+        reason = item.get("last_error_reason") or item.get("last_error_message") or "unknown"
+        message = (
+            f"⚠️ Credential pool: `{item['provider']}` (`{item['label']}`) "
+            f"자격증명이 재인증이 필요한 상태입니다 (DEAD).\n"
+            f"사유: {reason}\n"
+            f"`hermes auth add {item['provider']}` 로 재인증해주세요."
+        )
+        fut = safe_schedule_threadsafe(
+            discord_adapter.send(chat_id, message), loop,
+            logger=logger,
+            log_message="Credential health alert send error",
+        )
+        if fut is not None:
+            fut.result(timeout=30)
+        alert_sent_at[key] = now
+
+
 def _start_gateway_housekeeping(stop_event: threading.Event, adapters=None, loop=None, interval: int = 60):
     """Background thread for gateway-only periodic chores (NOT cron).
 
@@ -19662,6 +19714,12 @@ def _start_gateway_housekeeping(stop_event: threading.Event, adapters=None, loop
     CHANNEL_DIR_EVERY = 5    # ticks — every 5 minutes
     PASTE_SWEEP_EVERY = 60   # ticks — once per hour
     CURATOR_EVERY = 60       # ticks — poll hourly (inner gate handles the real cadence)
+    CREDENTIAL_HEALTH_EVERY = 5  # ticks — every 5 minutes, same grain as the 401 exhaustion TTL
+
+    # Per-credential last-alert timestamp, so a DEAD credential left
+    # unattended for days doesn't re-page every 5 minutes.
+    _credential_alert_sent_at: Dict[str, float] = {}
+    CREDENTIAL_ALERT_RESEND_SECONDS = 6 * 60 * 60  # 6 hours
 
     logger.info("Gateway housekeeping started (interval=%ds)", interval)
     tick_count = 0
@@ -19725,6 +19783,15 @@ def _start_gateway_housekeeping(stop_event: threading.Event, adapters=None, loop
                 )
             except Exception as e:
                 logger.debug("Curator tick error: %s", e)
+
+        if tick_count % CREDENTIAL_HEALTH_EVERY == 0:
+            try:
+                _check_and_alert_dead_credentials(
+                    adapters, loop, _credential_alert_sent_at,
+                    resend_seconds=CREDENTIAL_ALERT_RESEND_SECONDS,
+                )
+            except Exception as e:
+                logger.debug("Credential health check error: %s", e)
 
         stop_event.wait(timeout=interval)
     logger.info("Gateway housekeeping stopped")

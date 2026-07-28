@@ -2370,3 +2370,35 @@ def load_pool(provider: str) -> CredentialPool:
             removed_ids=disk_ids - new_ids,
         )
     return CredentialPool(provider, entries)
+
+
+def get_dead_credentials() -> List[Dict[str, Any]]:
+    """Enumerate every provider's pool and return only entries stuck in
+    ``STATUS_DEAD`` — a permanent failure that needs a human to re-auth
+    (``hermes auth add <provider>``), unlike ``STATUS_EXHAUSTED`` which
+    self-heals via TTL + the next natural use. Reuses the same
+    all-providers enumeration pattern as
+    ``hermes_cli.auth_commands.auth_list_command``. Intended for a periodic
+    health-check (see gateway housekeeping) that alerts only on the states
+    that actually require action, not on transient/self-recovering ones.
+    """
+    providers = sorted({
+        *auth_mod.PROVIDER_REGISTRY.keys(),
+        "openrouter",
+        *list_custom_pool_providers(),
+    })
+    dead: List[Dict[str, Any]] = []
+    for provider in providers:
+        pool = load_pool(provider)
+        for entry in pool.entries():
+            if entry.last_status != STATUS_DEAD:
+                continue
+            dead.append({
+                "provider": provider,
+                "label": entry.label,
+                "entry_id": entry.id,
+                "last_error_reason": entry.last_error_reason,
+                "last_error_message": entry.last_error_message,
+                "last_status_at": entry.last_status_at,
+            })
+    return dead
