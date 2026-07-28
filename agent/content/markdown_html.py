@@ -101,8 +101,7 @@ def h2_inner_html(heading: str, *, seed: str = "") -> str:
     accent = accent_for(h2_display_text(heading), seed=seed)
     return (
         f'<span style="color:{accent["ink"]};margin-right:6px;">▶</span>'
-        f'<span style="{highlighter_style(h2_display_text(heading), seed=seed)}'
-        f'padding:0 4px 3px;">{text}</span>'
+        f'<span style="{highlighter_style(h2_display_text(heading), seed=seed, padding="0 4px 3px")}">{text}</span>'
     )
 
 
@@ -189,8 +188,8 @@ def markdown_to_html(markdown: str) -> str:
                     html.append(
                         '<h1 style="margin:0 0 1.1em;line-height:1.35;font-weight:800;'
                         f'color:{accent["ink"]};">'
-                        f'<span style="{highlighter_style(heading_text, seed=doc_seed)}'
-                        f'padding:0 4px 3px;">{escape_html(heading_text)}</span></h1>'
+                        f'<span style="{highlighter_style(heading_text, seed=doc_seed, padding="0 4px 3px")}">'
+                        f'{escape_html(heading_text)}</span></h1>'
                     )
                 elif level == 2:
                     html.append(

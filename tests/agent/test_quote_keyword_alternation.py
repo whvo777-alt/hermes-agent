@@ -11,6 +11,9 @@ get picked at all.
 from __future__ import annotations
 
 from agent.content.images.section_infographics import (
+    InfographicSpec,
+    _render_quote_card_skin_c,
+    _render_quote_keyword_card_skin_c,
     _split_keyword_phrase,
     extract_infographic_specs,
 )
@@ -70,3 +73,46 @@ def test_split_keyword_phrase_long_text_splits_at_word_boundary():
 
 def test_split_keyword_phrase_empty_text():
     assert _split_keyword_phrase("") == ("", "")
+
+
+def test_skin_c_quote_and_quote_keyword_remain_visually_distinct_for_short_text(tmp_path):
+    """Regression for a real published-post bug: with the SHORT quote_text
+    _extract_quote() commonly produces (leaving _split_keyword_phrase's
+    ``rest`` empty), the two skin-C cards used to collapse to "gradient bg +
+    pill + one bold line + icon" for both, differing only in the pill's
+    label text -- easy to miss at a glance. The keyword card must always
+    carry its own highlight-block background behind the text and an
+    outlined (not solid-filled) pill, so the two remain structurally
+    distinct regardless of text length.
+    """
+    from PIL import Image
+
+    short_text = "같은 시간표도 사람마다"  # short enough that rest == ""
+    assert _split_keyword_phrase(short_text)[1] == ""  # confirms this reproduces the bug condition
+
+    spec = InfographicSpec(
+        heading="테스트 섹션", display_title="테스트 섹션",
+        shape="quote", quote_text=short_text,
+    )
+    quote_path = str(tmp_path / "quote.png")
+    keyword_path = str(tmp_path / "quote_keyword.png")
+    _render_quote_card_skin_c(spec, quote_path, category_id="self-dev")
+    _render_quote_keyword_card_skin_c(spec, keyword_path, category_id="self-dev")
+
+    quote_img = Image.open(quote_path).convert("RGB")
+    keyword_img = Image.open(keyword_path).convert("RGB")
+
+    def _has_near_white_pixel(img, box) -> bool:
+        region = img.crop(box)
+        return any(all(c >= 230 for c in px) for px in region.getdata())
+
+    # The keyword card's text must sit on its own near-white highlight block
+    # (the fix); the plain quote card's text sits directly on the gradient
+    # background and must NOT have any such block at the same region.
+    text_region = (72, 100, 700, 180)
+    assert _has_near_white_pixel(keyword_img, text_region), (
+        "quote_keyword card is missing its highlight-block background for short text"
+    )
+    assert not _has_near_white_pixel(quote_img, text_region), (
+        "quote card unexpectedly has a near-white block -- test region assumption may be stale"
+    )

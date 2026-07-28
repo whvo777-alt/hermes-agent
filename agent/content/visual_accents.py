@@ -113,11 +113,11 @@ def accent_for(text: str, *, seed: str = "") -> Dict[str, str]:
     return base
 
 
-def highlighter_style(text: str, *, seed: str = "") -> str:
+def highlighter_style(text: str, *, seed: str = "", padding: str = "0 3px") -> str:
     accent = accent_for(text, seed=seed)
     return (
         f"background:linear-gradient(transparent 55%, {accent['mark']} 55%);"
-        f"color:{accent['ink']};font-weight:800;padding:0 3px;"
+        f"color:{accent['ink']};font-weight:800;padding:{padding};"
     )
 
 

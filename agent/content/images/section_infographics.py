@@ -879,9 +879,18 @@ def _render_quote_card_skin_c(spec: InfographicSpec, output_path: str, *, catego
 
 
 def _render_quote_keyword_card_skin_c(spec: InfographicSpec, output_path: str, *, category_id: str) -> str:
-    """Skin C's variant of the "핵심 단어/구 하이라이트형" layout -- same
-    gradient background / accent pill convention as _render_quote_card_skin_c,
-    but the big-keyword-phrase treatment instead of a full-sentence title."""
+    """Skin C's variant of the "핵심 단어/구 하이라이트형" layout.
+
+    Must stay visually distinct from _render_quote_card_skin_c EVEN when
+    quote_text is already short (common -- _extract_quote() often returns a
+    short bold span or short sentence, leaving _split_keyword_phrase's
+    ``rest`` empty). Relying on the phrase/rest split alone collapsed both
+    cards to "gradient bg + pill + one bold line + icon" in that case (real
+    published-post bug: the two looked near-identical apart from the pill
+    label). Fixed by always giving the phrase its own solid highlight-block
+    background and an outlined (not filled) pill, so the structural
+    difference from the plain-text quote card holds regardless of length.
+    """
     from PIL import Image, ImageDraw
 
     accent, deep, _tint = _PALETTES.get(category_id, _DEFAULT_PALETTE)
@@ -894,7 +903,7 @@ def _render_quote_keyword_card_skin_c(spec: InfographicSpec, output_path: str, *
     kw_lines = _wrap(measure_draw, keyword_phrase, keyword_font, width - 160, 2)
     rest_font = _korean_font(26)
     rest_lines = _wrap(measure_draw, rest, rest_font, width - 160, 2) if rest else []
-    height = 150 + len(kw_lines) * 62 + (20 + len(rest_lines) * 36 if rest_lines else 0) + 90
+    height = 150 + len(kw_lines) * 70 + (20 + len(rest_lines) * 36 if rest_lines else 0) + 90
 
     img = Image.new("RGB", (width, height))
     draw = ImageDraw.Draw(img, "RGBA")
@@ -903,13 +912,15 @@ def _render_quote_keyword_card_skin_c(spec: InfographicSpec, output_path: str, *
     pill_label = "포인트"
     pill_font = _korean_font(20)
     pw = draw.textlength(pill_label, font=pill_font) + 32
-    draw.rounded_rectangle((80, 50, 80 + pw, 50 + 34), radius=17, fill=accent_rgb)
-    draw.text((80 + 16, 50 + 7), pill_label, font=pill_font, fill="white")
+    draw.rounded_rectangle((80, 50, 80 + pw, 50 + 34), radius=17, outline=accent_rgb, width=2)
+    draw.text((80 + 16, 50 + 7), pill_label, font=pill_font, fill=deep_rgb)
 
     ty = 110
     for line in kw_lines:
+        line_w = draw.textlength(line, font=keyword_font)
+        draw.rounded_rectangle((72, ty + 6, 92 + line_w, ty + 62), radius=10, fill=(255, 255, 255, 190))
         draw.text((80, ty), line, font=keyword_font, fill=deep_rgb)
-        ty += 62
+        ty += 70
 
     if rest_lines:
         ty += 12
