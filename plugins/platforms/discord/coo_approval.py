@@ -2072,7 +2072,7 @@ def _make_daily_blog_approval_button_callback(
                     _daily_blog_result_message(result, parsed["action"]),
                 )
         except Exception as exc:
-            logger.warning("Daily blog approval action failed: %s", exc)
+            logger.exception("Daily blog approval action failed: %s", exc)
             await _respond_coo_approval_ephemeral(
                 interaction,
                 f"원고 승인 작업을 처리하지 못했습니다: {exc}",

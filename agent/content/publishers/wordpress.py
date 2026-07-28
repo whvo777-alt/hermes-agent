@@ -25,6 +25,32 @@ class WordPressPublisherError(RuntimeError):
     pass
 
 
+def _parse_json_response(response: "httpx.Response", *, context: str, empty_default: Any = None) -> Any:
+    """Safely parse a WordPress/Rank Math REST API JSON response.
+
+    An empty body returns ``empty_default`` (matching each call site's prior
+    ``response.json() if response.content else {}``/``[]`` behavior). A
+    non-empty but non-JSON body — e.g. a security-plugin challenge page, a
+    reverse-proxy timeout page, or any other HTML returned instead of the
+    expected REST payload — used to bubble up as a bare, unhelpful
+    ``json.JSONDecodeError`` ("Expecting value: line 1 column 1 (char 0)").
+    That's now caught here and re-raised as a ``WordPressPublisherError``
+    that includes the HTTP status, content-type, and a body snippet, so a
+    future occurrence is self-diagnosing from the logs alone.
+    """
+    if not response.content:
+        return {} if empty_default is None else empty_default
+    try:
+        return response.json()
+    except ValueError as exc:  # json.JSONDecodeError is a ValueError subclass
+        content_type = response.headers.get("content-type", "unknown")
+        snippet = response.text[:200].replace("\n", " ")
+        raise WordPressPublisherError(
+            f"{context}: non-JSON response (HTTP {response.status_code}, "
+            f"content-type={content_type}): {snippet!r}"
+        ) from exc
+
+
 def _normalize_site_url(site_url: str) -> str:
     return str(site_url or "").rstrip("/")
 
@@ -57,7 +83,7 @@ def check_slug_availability(*, site_url: str, slug: str, auth_header: str, live:
 
     endpoint = f"{_require_site_url(site_url)}/wp-json/wp/v2/posts?slug={slug}"
     response = httpx.get(endpoint, headers={"Authorization": auth_header}, timeout=_TIMEOUT)
-    body = response.json() if response.headers.get("content-type", "").startswith("application/json") else []
+    body = _parse_json_response(response, context="WordPress slug check", empty_default=[])
     if response.status_code >= 400:
         raise WordPressPublisherError(f"WordPress slug check failed: HTTP {response.status_code}")
     return {"available": not isinstance(body, list) or len(body) == 0, "checked": True, "slug": slug}
@@ -102,7 +128,7 @@ def upload_wordpress_media(*, site_url: Optional[str], username: Optional[str], 
         content=path.read_bytes(),
         timeout=_TIMEOUT,
     )
-    body = response.json() if response.content else {}
+    body = _parse_json_response(response, context="WordPress media upload")
     if response.status_code >= 400 or not body.get("id"):
         raise WordPressPublisherError(f"WordPress media upload failed: HTTP {response.status_code}")
     media_id = body["id"]
@@ -145,7 +171,7 @@ def create_wordpress_draft(*, site_url: Optional[str], username: Optional[str], 
         json=payload,
         timeout=_TIMEOUT,
     )
-    body = response.json() if response.content else {}
+    body = _parse_json_response(response, context="WordPress draft create")
     if response.status_code >= 400:
         raise WordPressPublisherError(f"WordPress draft create failed: HTTP {response.status_code}")
     post_id = body.get("id")
@@ -160,7 +186,7 @@ def create_wordpress_draft(*, site_url: Optional[str], username: Optional[str], 
         headers={"Authorization": auth_header},
         timeout=_TIMEOUT,
     )
-    verify_body = verify_response.json() if verify_response.content else {}
+    verify_body = _parse_json_response(verify_response, context="WordPress draft verification")
     if verify_response.status_code >= 400:
         raise WordPressPublisherError(
             f"WordPress draft verification failed: HTTP {verify_response.status_code}"
@@ -258,7 +284,7 @@ def update_rank_math_seo(
         json={"objectType": "post", "objectID": int(post_id), "meta": meta},
         timeout=_TIMEOUT,
     )
-    body = response.json() if response.content else {}
+    body = _parse_json_response(response, context="Rank Math meta update")
     if response.status_code >= 400:
         raise WordPressPublisherError(
             f"Rank Math meta update failed: HTTP {response.status_code} {body}"
@@ -320,7 +346,7 @@ def ensure_wordpress_tags(
         )
         found_id = None
         if search.status_code < 400:
-            for item in search.json() if search.content else []:
+            for item in _parse_json_response(search, context="WordPress tag search", empty_default=[]):
                 if str(item.get("name") or "").strip().lower() == name.lower():
                     found_id = item.get("id")
                     break
@@ -337,7 +363,7 @@ def ensure_wordpress_tags(
             json={"name": name},
             timeout=_TIMEOUT,
         )
-        body = create.json() if create.content else {}
+        body = _parse_json_response(create, context="WordPress tag create")
         if create.status_code >= 400:
             # Tag may already exist under a different slug — try slug lookup.
             existing = body.get("data", {}).get("term_id") if isinstance(body, dict) else None
@@ -390,7 +416,7 @@ def resolve_or_create_wordpress_category(*, site_url: Optional[str], username: O
         timeout=_TIMEOUT,
     )
     if search.status_code < 400:
-        for item in search.json() if search.content else []:
+        for item in _parse_json_response(search, context="WordPress category search", empty_default=[]):
             if str(item.get("slug") or "").strip().lower() == slug.lower():
                 return {"apiCalled": True, "id": int(item["id"]), "slug": slug, "created": False}
 
@@ -400,7 +426,7 @@ def resolve_or_create_wordpress_category(*, site_url: Optional[str], username: O
         json={"name": name or slug, "slug": slug},
         timeout=_TIMEOUT,
     )
-    body = create.json() if create.content else {}
+    body = _parse_json_response(create, context="WordPress category create")
     if create.status_code >= 400:
         # Category may already exist under this slug but the create call
         # raced with another process — try a term_id hint if present.
