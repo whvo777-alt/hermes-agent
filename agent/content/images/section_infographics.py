@@ -733,17 +733,36 @@ def _render_gauge_card(spec: InfographicSpec, output_path: str, *, category_id: 
     return _save_png(img, output_path)
 
 
-def _split_keyword_phrase(text: str, *, max_phrase_chars: int = 16) -> Tuple[str, str]:
-    """Split ``text`` into a short word-boundary-safe leading phrase (for a
-    big headline callout) plus the remaining text (shown smaller as
-    context). Used by the "quote_keyword" layout so it visually differs
-    from the plain quote card's full-sentence-in-quote-marks treatment
-    while reusing the exact same ``quote_text`` data."""
+def _split_keyword_phrase(
+    text: str, *, max_phrase_chars: int = 16, comma_slack: int = 10,
+) -> Tuple[str, str]:
+    """Split ``text`` into a short leading phrase (for a big headline
+    callout) plus the remaining text (shown smaller as context). Used by
+    the "quote_keyword" layout so it visually differs from the plain quote
+    card's full-sentence-in-quote-marks treatment while reusing the exact
+    same ``quote_text`` data.
+
+    Prefers cutting at a comma just past ``max_phrase_chars`` (within
+    ``comma_slack`` extra characters) over the strict word-boundary limit:
+    a hard character budget with no notion of clause structure can land
+    mid-construction, e.g. splitting "OO가 아니라, XX" (not OO, but XX)
+    right between the negated noun and "아니라" -- real published-post bug,
+    since Korean contrastive/connective clauses ("~가 아니라", "~지만",
+    "~면서") almost always end at a comma. Falls back to the word-boundary
+    fill when no comma falls in that window (e.g. a single long clause).
+    """
     text = (text or "").strip()
     if not text:
         return "", ""
     if len(text) <= max_phrase_chars:
         return text, ""
+
+    comma_idx = text.find(",", 0, max_phrase_chars + comma_slack)
+    if comma_idx >= 5:
+        phrase = text[: comma_idx + 1].strip()
+        rest = text[comma_idx + 1 :].strip()
+        return phrase, rest
+
     words = text.split()
     phrase_words: List[str] = []
     running = ""

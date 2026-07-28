@@ -200,6 +200,49 @@ def _strip_ops_checklist_sections(markdown: str) -> str:
     )
 
 
+_HTML_BLOCK_START_RE = re.compile(r"^<([a-zA-Z][\w-]*)\b[^>]*>")
+_VOID_HTML_TAGS = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+}
+
+
+def _strip_raw_html_blocks(markdown: str) -> str:
+    """Drop stray raw-HTML blocks the writer sometimes hand-writes inline
+    (e.g. a styled "hook card" div opened right under the H1). Blogspot's
+    ``markdown_to_html()`` has no raw-HTML passthrough -- every line falls
+    through to the plain-paragraph branch, gets ``escape_html()``'d, and
+    the tags show up as literal broken text on the published page (real
+    published-post bug). The two supported ways to get real HTML into a
+    Blogspot post are ``![]()`` image syntax (becomes a real ``<img>``) and
+    ``extra_content_html`` appended after ``markdown_to_html()`` runs --
+    never hand-written tags mixed into the markdown body, so any such block
+    found here is unsupported and safest removed rather than left to render
+    as broken text.
+    """
+    lines = str(markdown or "").split("\n")
+    out: List[str] = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        start_match = _HTML_BLOCK_START_RE.match(stripped)
+        tag = start_match.group(1).lower() if start_match else None
+        if start_match and tag not in _VOID_HTML_TAGS and not stripped.endswith("/>"):
+            open_re = re.compile(rf"<{tag}\b[^>]*(?<!/)>", re.I)
+            close_re = re.compile(rf"</{tag}\s*>", re.I)
+            depth = len(open_re.findall(lines[i])) - len(close_re.findall(lines[i]))
+            j = i + 1
+            while depth > 0 and j < len(lines):
+                depth += len(open_re.findall(lines[j])) - len(close_re.findall(lines[j]))
+                j += 1
+            if depth <= 0:
+                i = j
+                continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out)
+
+
 def _strip_hero_caption(markdown: str) -> str:
     """Remove hero image caption quotes like '발행용 … 대표 이미지입니다'."""
     value = str(markdown or "")
@@ -252,6 +295,7 @@ def _blogspot_publishable_markdown(markdown: str) -> str:
     value = _strip_hero_caption(value)
     value = _strip_seo_meta_block(value)
     value = _strip_ops_checklist_sections(value)
+    value = _strip_raw_html_blocks(value)
     value = _embed_blogspot_hero_png(value)
     value = re.sub(r"\n{3,}", "\n\n", value)
     return value.strip()

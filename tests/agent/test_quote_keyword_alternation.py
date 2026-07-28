@@ -71,6 +71,31 @@ def test_split_keyword_phrase_long_text_splits_at_word_boundary():
     assert text[len(phrase):].strip() == rest
 
 
+def test_split_keyword_phrase_prefers_comma_over_mid_construction_word_cut():
+    """Regression for a real published-post bug: the strict word-boundary
+    fill cut this sentence at exactly 16 chars, landing right between the
+    negated noun and "아니라" ("OO가 아니라, XX" -- "not OO, but XX") and
+    splitting a single contrastive clause across the highlight/body divide.
+    A comma sits just 5 chars past the limit and is the actual clause
+    boundary, so it must be preferred over the raw character budget."""
+    text = "다음은 성과를 보장하는 후기가 아니라, 기록을 어떻게 해석할 수 있는지 보여주는 두 가지 상황이다."
+    phrase, rest = _split_keyword_phrase(text, max_phrase_chars=16)
+    assert phrase == "다음은 성과를 보장하는 후기가 아니라,"
+    assert rest == "기록을 어떻게 해석할 수 있는지 보여주는 두 가지 상황이다."
+    assert not phrase.endswith("가")  # the mid-construction cut this regresses
+
+
+def test_split_keyword_phrase_ignores_far_comma_and_falls_back_to_word_boundary():
+    """A comma well beyond the slack window must not be used -- otherwise
+    the "big headline callout" could grow arbitrarily long for any sentence
+    that happens to contain a comma somewhere later on."""
+    text = "아침에 일어나서 물 한 잔을 마시는 습관은 몸에 좋다고 알려져 있지만, 사람마다 다르다"
+    assert text.find(",") > 16 + 10  # comma must actually sit outside the window
+    phrase, rest = _split_keyword_phrase(text, max_phrase_chars=16, comma_slack=10)
+    assert "," not in phrase
+    assert len(phrase) <= 16 or " " not in phrase
+
+
 def test_split_keyword_phrase_empty_text():
     assert _split_keyword_phrase("") == ("", "")
 
