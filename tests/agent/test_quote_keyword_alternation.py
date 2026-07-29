@@ -60,7 +60,7 @@ def test_split_keyword_phrase_short_text_returned_whole():
     assert rest == ""
 
 
-def test_split_keyword_phrase_long_text_splits_at_word_boundary():
+def test_split_keyword_phrase_without_fit_predicate_preserves_legacy_word_boundary():
     text = "아침에 일어나서 물 한 잔을 마시는 습관은 몸에 좋습니다"
     phrase, rest = _split_keyword_phrase(text, max_phrase_chars=16)
     assert len(phrase) <= 16 or " " not in phrase  # single overlong word is the only exception
@@ -69,6 +69,39 @@ def test_split_keyword_phrase_long_text_splits_at_word_boundary():
     # rest must be exactly what's left after it -- no word gets mangled.
     assert text.startswith(phrase)
     assert text[len(phrase):].strip() == rest
+
+
+def test_split_keyword_phrase_keeps_sentence_whole_when_headline_fits():
+    text = "같은 생산성도구라도 사용 환경에 따라 필요한 기준이 달라집니다."
+    phrase, rest = _split_keyword_phrase(
+        text,
+        fits_headline=lambda candidate: len(candidate) <= 40,
+    )
+
+    assert phrase == text
+    assert rest == ""
+
+
+def test_split_keyword_phrase_fit_predicate_applies_to_short_text_too():
+    text = "냉장고 화면"
+    phrase, rest = _split_keyword_phrase(
+        text,
+        fits_headline=lambda candidate: candidate == "냉장고",
+    )
+
+    assert phrase == "냉장고"
+    assert rest == "화면"
+
+
+def test_split_keyword_phrase_prefers_latest_connective_boundary():
+    text = "매일 같은 시간에 충분히 쉬고 균형 잡힌 식사를 유지하면 몸의 회복과 집중력 향상에 도움이 될 수 있습니다."
+    phrase, rest = _split_keyword_phrase(
+        text,
+        fits_headline=lambda candidate: len(candidate) <= 52,
+    )
+
+    assert phrase == "매일 같은 시간에 충분히 쉬고 균형 잡힌 식사를 유지하면"
+    assert rest == "몸의 회복과 집중력 향상에 도움이 될 수 있습니다."
 
 
 def test_split_keyword_phrase_prefers_comma_over_mid_construction_word_cut():
@@ -86,14 +119,35 @@ def test_split_keyword_phrase_prefers_comma_over_mid_construction_word_cut():
 
 
 def test_split_keyword_phrase_ignores_far_comma_and_falls_back_to_word_boundary():
-    """A comma well beyond the slack window must not be used -- otherwise
-    the "big headline callout" could grow arbitrarily long for any sentence
-    that happens to contain a comma somewhere later on."""
+    """A distant comma must not be used as a split boundary or bypass the
+    injected headline-fit predicate."""
     text = "아침에 일어나서 물 한 잔을 마시는 습관은 몸에 좋다고 알려져 있지만, 사람마다 다르다"
     assert text.find(",") > 16 + 10  # comma must actually sit outside the window
-    phrase, rest = _split_keyword_phrase(text, max_phrase_chars=16, comma_slack=10)
+    phrase, rest = _split_keyword_phrase(
+        text,
+        max_phrase_chars=16,
+        comma_slack=10,
+        fits_headline=lambda candidate: len(candidate) <= 32,
+    )
+
     assert "," not in phrase
-    assert len(phrase) <= 16 or " " not in phrase
+    assert text.startswith(phrase)
+    split_at = len(phrase)
+    assert text[split_at] == " "
+    assert text[split_at + 1 :].strip() == rest
+
+
+def test_split_keyword_phrase_suffix_false_positive_still_preserves_word_boundary():
+    text = "냉장고 화면을 정리합니다"
+    phrase, rest = _split_keyword_phrase(
+        text,
+        max_phrase_chars=3,
+        fits_headline=lambda candidate: len(candidate) <= 3,
+    )
+
+    assert phrase == "냉장고"
+    assert rest == "화면을 정리합니다"
+    assert text[len(phrase)] == " "
 
 
 def test_split_keyword_phrase_empty_text():

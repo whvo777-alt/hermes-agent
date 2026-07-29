@@ -32,7 +32,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from agent.content.images.card_icons import pick_icon_for_text, draw_icon
 from agent.content.images.hero_image import _korean_font  # shared font lookup
@@ -735,6 +735,7 @@ def _render_gauge_card(spec: InfographicSpec, output_path: str, *, category_id: 
 
 def _split_keyword_phrase(
     text: str, *, max_phrase_chars: int = 16, comma_slack: int = 10,
+    fits_headline: Optional[Callable[[str], bool]] = None,
 ) -> Tuple[str, str]:
     """Split ``text`` into a short leading phrase (for a big headline
     callout) plus the remaining text (shown smaller as context). Used by
@@ -742,37 +743,66 @@ def _split_keyword_phrase(
     card's full-sentence-in-quote-marks treatment while reusing the exact
     same ``quote_text`` data.
 
-    Prefers cutting at a comma just past ``max_phrase_chars`` (within
-    ``comma_slack`` extra characters) over the strict word-boundary limit:
-    a hard character budget with no notion of clause structure can land
-    mid-construction, e.g. splitting "OO가 아니라, XX" (not OO, but XX)
-    right between the negated noun and "아니라" -- real published-post bug,
-    since Korean contrastive/connective clauses ("~가 아니라", "~지만",
-    "~면서") almost always end at a comma. Falls back to the word-boundary
-    fill when no comma falls in that window (e.g. a single long clause).
+    ``fits_headline`` is the renderer-provided predicate for whether a
+    candidate fits that renderer's actual headline font, width, and line
+    limit. When it is ``None``, this function deliberately preserves the
+    legacy pure-string behavior: ``max_phrase_chars`` remains the hard
+    word-boundary budget, and no font or pixel measurement is performed.
+
+    With a predicate, a nearby comma just past ``max_phrase_chars`` (within
+    ``comma_slack`` extra characters) is still preferred when that comma
+    phrase fits. Otherwise, the complete text is kept when it fits the
+    headline. If it does not, the longest fitting word-boundary prefix is
+    selected, preferring the latest candidate ending in a common connective
+    ending (``-고``, ``-며``, ``-면``, ``-지만``, ``-어서``, or ``-아서``).
+    The suffix check is intentionally a lightweight preference, not Korean
+    morphological analysis; all candidates remain whole whitespace-delimited
+    words.
     """
     text = (text or "").strip()
     if not text:
         return "", ""
     if len(text) <= max_phrase_chars:
-        return text, ""
+        if fits_headline is None or fits_headline(text):
+            return text, ""
 
     comma_idx = text.find(",", 0, max_phrase_chars + comma_slack)
     if comma_idx >= 5:
         phrase = text[: comma_idx + 1].strip()
         rest = text[comma_idx + 1 :].strip()
-        return phrase, rest
+        if fits_headline is None or fits_headline(phrase):
+            return phrase, rest
+
+    if fits_headline is not None and fits_headline(text):
+        return text, ""
 
     words = text.split()
     phrase_words: List[str] = []
+    fitting_phrases: List[str] = []
     running = ""
     for w in words:
         candidate = f"{running} {w}".strip()
-        if len(candidate) > max_phrase_chars and phrase_words:
-            break
+        if fits_headline is None:
+            if len(candidate) > max_phrase_chars and phrase_words:
+                break
+        elif not fits_headline(candidate):
+            if phrase_words:
+                break
+        else:
+            fitting_phrases.append(candidate)
         phrase_words.append(w)
         running = candidate
-    phrase = " ".join(phrase_words) or words[0]
+
+    if fits_headline is not None and fitting_phrases:
+        connective_endings = ("고", "며", "면", "지만", "어서", "아서")
+        connective_phrases = [
+            candidate
+            for candidate in fitting_phrases
+            if candidate.split()[-1].endswith(connective_endings)
+        ]
+        phrase = connective_phrases[-1] if connective_phrases else fitting_phrases[-1]
+    else:
+        phrase = " ".join(phrase_words) or words[0]
     rest = text[len(phrase):].strip()
     return phrase, rest
 
@@ -818,9 +848,17 @@ def _render_quote_keyword_card(spec: InfographicSpec, output_path: str, *, categ
     accent_rgb, deep_rgb, tint_rgb = _rgb(accent), _rgb(deep), _rgb(tint)
     width = 1200
 
-    keyword_phrase, rest = _split_keyword_phrase(spec.quote_text)
     measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     keyword_font = _korean_font(52)
+
+    def fits_headline(candidate: str) -> bool:
+        lines = _wrap(measure_draw, candidate, keyword_font, width - 160, 2)
+        return bool(lines) and all(not line.endswith("…") for line in lines)
+
+    keyword_phrase, rest = _split_keyword_phrase(
+        spec.quote_text,
+        fits_headline=fits_headline,
+    )
     kw_lines = _wrap(measure_draw, keyword_phrase, keyword_font, width - 160, 2)
     rest_font = _korean_font(27)
     rest_lines = _wrap(measure_draw, rest, rest_font, width - 160, 3) if rest else []
@@ -916,9 +954,17 @@ def _render_quote_keyword_card_skin_c(spec: InfographicSpec, output_path: str, *
     accent_rgb, deep_rgb = _rgb(accent), _rgb(deep)
     width = 1200
 
-    keyword_phrase, rest = _split_keyword_phrase(spec.quote_text)
     measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     keyword_font = _korean_font(48)
+
+    def fits_headline(candidate: str) -> bool:
+        lines = _wrap(measure_draw, candidate, keyword_font, width - 160, 2)
+        return bool(lines) and all(not line.endswith("…") for line in lines)
+
+    keyword_phrase, rest = _split_keyword_phrase(
+        spec.quote_text,
+        fits_headline=fits_headline,
+    )
     kw_lines = _wrap(measure_draw, keyword_phrase, keyword_font, width - 160, 2)
     rest_font = _korean_font(26)
     rest_lines = _wrap(measure_draw, rest, rest_font, width - 160, 2) if rest else []
