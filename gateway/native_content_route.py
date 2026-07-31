@@ -180,6 +180,15 @@ def _format_native_report(
     else:
         lines.append("| - | Native bundle 생성 결과를 찾지 못했습니다 | - | 확인 필요 |")
 
+    title_warnings = [
+        f"- {item.get('platform', '')}: {warning}"
+        for item in items
+        for warning in (item.get("quality_warnings") or [])
+        if "TITLE_LENGTH_OUT_OF_RANGE" in warning
+    ]
+    if title_warnings:
+        lines.extend(["", "## 제목 길이 확인", *title_warnings])
+
     lines.extend([
         "",
         "각 카드의 **승인 / 수정 요청 / 폐기** 버튼을 사용해 주세요.",

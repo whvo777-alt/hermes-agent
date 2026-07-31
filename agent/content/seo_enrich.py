@@ -240,16 +240,42 @@ _KEYWORD_PHRASE_REPLACEMENTS: Dict[str, List[Tuple[str, str]]] = {
 }
 
 
-def ensure_number_in_seo_title(title: str, *, fallback_number: int = 7) -> str:
-    """Rank Math title readability wants a digit in the SEO title."""
+SEO_TITLE_MIN_LENGTH = 28
+SEO_TITLE_MAX_LENGTH = 40
+SEO_TITLE_TRUNCATION_MAX_LENGTH = 60
+
+
+def truncate_seo_title(title: str) -> str:
+    """Trim an SEO title to 60 characters without inventing title content.
+
+    When possible, the trim ends at the last whitespace boundary within the
+    limit.  A title containing no whitespace before the limit is hard-cut so
+    the Rank Math title ceiling remains enforceable.
+    """
     value = str(title or "").strip()
-    if re.search(r"\d", value):
-        return value[:60]
-    # Prefer inserting near the front after the focus phrase.
-    if ":" in value:
-        head, tail = value.split(":", 1)
-        return f"{head.strip()} {fallback_number}가지:{tail}"[:60]
-    return f"{value} {fallback_number}가지 체크"[:60]
+    if len(value) <= SEO_TITLE_TRUNCATION_MAX_LENGTH:
+        return value
+
+    limited = value[:SEO_TITLE_TRUNCATION_MAX_LENGTH]
+    boundary = max((index for index, char in enumerate(limited) if char.isspace()), default=-1)
+    if boundary > 0:
+        return limited[:boundary].rstrip()
+    return limited
+
+
+def is_seo_title_length_valid(title: str) -> bool:
+    """Return whether a final SEO title is inside the 28~40 character target."""
+    length = len(str(title or "").strip())
+    return SEO_TITLE_MIN_LENGTH <= length <= SEO_TITLE_MAX_LENGTH
+
+
+def format_seo_title_length_warning(title: str, *, action: str) -> str:
+    """Build the compact, reportable SEO-title length warning."""
+    length = len(str(title or "").strip())
+    return (
+        f"TITLE_LENGTH_OUT_OF_RANGE: SEO title {length}자 "
+        f"(권장 {SEO_TITLE_MIN_LENGTH}~{SEO_TITLE_MAX_LENGTH}자, {action})"
+    )
 
 
 def thin_focus_keyword(markdown: str, focus_keyword: str, *, max_occurrences: int = 14) -> str:

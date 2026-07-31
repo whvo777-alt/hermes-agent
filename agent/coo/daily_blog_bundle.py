@@ -246,12 +246,15 @@ def build_structured_preview(blog_content: str) -> tuple[str, str, List[str]]:
 
 
 def _draft_section(draft: ContentDraft) -> CEOApprovalReportSection:
+    warnings = list(draft.quality.warnings)
+    warning_lines = [f"- warning: {warning}" for warning in warnings] or ["- warning: 없음"]
     return CEOApprovalReportSection(
         title=f"{draft.platform.label} ({draft.category.name}) — {draft.topic_title}",
         body_lines=[
             f"- status: `{'quality_passed' if draft.quality.passed else 'quality_failed'}`",
             f"- quality: score {draft.quality.score}, passed={draft.quality.passed}",
-            f"- warnings: {len(draft.quality.warnings)}건",
+            f"- warnings: {len(warnings)}건",
+            *warning_lines,
             f"- file: `{draft.blog_file}`",
             f"- image: `{draft.image.file}`",
         ],

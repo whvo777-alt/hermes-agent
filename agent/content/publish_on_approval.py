@@ -29,6 +29,11 @@ from agent.content.publishers.wordpress import (
     update_rank_math_seo,
     upload_wordpress_media,
 )
+from agent.content.seo_enrich import (
+    format_seo_title_length_warning,
+    is_seo_title_length_valid,
+    truncate_seo_title,
+)
 from agent.content.structured_data import build_structured_data_html
 
 
@@ -121,13 +126,11 @@ def _parse_tag_candidates(
 
 
 def _build_rank_math_title(title: str, focus_keyword: str) -> str:
-    from agent.content.seo_enrich import ensure_number_in_seo_title
-
     if focus_keyword and focus_keyword in title:
         base = title
     else:
         base = f"{focus_keyword} | {title}"
-    return ensure_number_in_seo_title(base)
+    return truncate_seo_title(base)
 
 
 _META_DELIM_RE = re.compile(r"\n-{3,}\s*META\s*-{3,}\s*\n?", re.I)
@@ -793,24 +796,33 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
         try:
             post_id = (result.get("response") or {}).get("id")
             seo_description = seo_meta.get("Meta description") or ""
+            seo_title = _build_rank_math_title(title, focus_keyword)
             if post_id and wp_live:
-                result["rankMath"] = update_rank_math_seo(
+                rank_math_result = update_rank_math_seo(
                     site_url=os.environ.get("WORDPRESS_SITE_URL"),
                     username=os.environ.get("WORDPRESS_USERNAME"),
                     app_password=os.environ.get("WORDPRESS_APP_PASSWORD"),
                     post_id=int(post_id),
                     focus_keyword=focus_keyword,
-                    seo_title=_build_rank_math_title(title, focus_keyword),
+                    seo_title=seo_title,
                     seo_description=seo_description[:160],
                     live=True,
                 )
             else:
-                result["rankMath"] = {
+                rank_math_result = {
                     "apiCalled": False,
                     "focusKeyword": focus_keyword,
-                    "seoTitle": _build_rank_math_title(title, focus_keyword),
+                    "seoTitle": seo_title,
                     "seoDescription": seo_description[:160],
                 }
+            if not is_seo_title_length_valid(seo_title):
+                rank_math_result.setdefault("warnings", []).append(
+                    format_seo_title_length_warning(
+                        seo_title,
+                        action="자동 수정 없이 발행",
+                    )
+                )
+            result["rankMath"] = rank_math_result
         except Exception as exc:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "Rank Math meta update failed: %s", exc

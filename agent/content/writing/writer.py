@@ -328,6 +328,48 @@ def _visual_marker_hint() -> str:
 이 마커를 추가로 넣지 않는다 — 한 섹션은 한 형식만 쓴다."""
 
 
+def _extract_rewritten_title(response: str) -> str:
+    """Keep only the title line from a title-only LLM response."""
+    value = str(response or "").strip()
+    h1_match = re.search(r"^#\s+(.+)$", value, flags=re.M)
+    if h1_match:
+        value = h1_match.group(1).strip()
+    else:
+        lines = [line.strip() for line in value.splitlines() if line.strip()]
+        value = lines[0] if lines else ""
+    value = re.sub(r"^(?:제목|title)\s*:\s*", "", value, flags=re.I).strip()
+    value = value.strip("`*_\"'“”‘’")
+    return value.strip()
+
+
+def rewrite_title_for_seo_length(
+    *,
+    title: str,
+    focus_keyword: str,
+    current_seo_title: str,
+    prefixed_seo_title: str,
+) -> str:
+    """Rewrite only H1 so the final SEO title can fit the target range."""
+    system = """당신은 블로그 H1 제목만 수정하는 SEO 편집자입니다.
+본문에 없는 사실을 만들지 말고, 응답에는 수정된 제목 한 줄만 반환하세요.
+마크다운 설명, 번호 목록, 따옴표, 해설은 반환하지 마세요."""
+    user = f"""현재 H1: {title}
+focus keyword: {focus_keyword or '없음'}
+현재 최종 SEO title 후보: {current_seo_title}
+현재 최종 SEO title 글자 수: {len(current_seo_title)}자
+focus keyword를 제목에 자연스럽게 포함하면 시스템의 "focus_keyword | H1" 접두어가 붙지 않습니다.
+focus keyword가 제목에 포함되지 않으면 "focus_keyword | H1" 접두어가 붙습니다.
+접두어를 붙였을 때의 최종 SEO title 후보: {prefixed_seo_title}
+접두어를 붙였을 때의 최종 SEO title 길이: {len(prefixed_seo_title)}자
+
+최종 SEO title이 28~40자가 되도록 H1만 수정하세요.
+focus keyword를 자연스럽게 포함해 접두어를 피할 수 있다면 그렇게 하세요.
+글자 수를 맞추기 위해 본문에 없는 내용, 근거 없는 숫자, 근거 없는 효능·효과, 무의미한 수식어를 추가하지 마세요.
+본문에서 실제로 다루는 대상·상황·판단 기준만 사용하세요.
+수정된 H1 한 줄만 반환하세요."""
+    return _extract_rewritten_title(call_llm(system=system, user=user))
+
+
 def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, category_name: str,
                      target_audience: str, tone: str, topic_title: str, topic_keywords: List[str],
                      category_keywords: List[str], caution_hints: List[str], current_date: str,

@@ -14,6 +14,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from agent.content.seo_enrich import (
+    format_seo_title_length_warning,
+    is_seo_title_length_valid,
+)
+
 # WordPress/Blogspot length target: 5,500~7,500자, H2 6~7개 (see writer.py/prompts).
 # Gate thresholds keep the prompt floor/ceiling's original +200/+500 char buffer
 # and the H2 rule's original ±1 buffer around the ideal range.
@@ -346,6 +351,9 @@ def run_quality_gate(
     content: str,
     image: Optional[Dict[str, Any]],
     sibling_contents: Optional[List[str]] = None,
+    seo_title: Optional[str] = None,
+    seo_title_rewrite_attempted: bool = False,
+    seo_title_rewrite_failed: bool = False,
 ) -> QualityGateResult:
     errors: List[str] = []
     important_warnings: List[str] = []
@@ -403,6 +411,26 @@ def run_quality_gate(
     # 2) IMPORTANT WARNING
     if not _has_h1(content):
         important("H1 제목 누락")
+
+    h1_match = re.search(r"^#\s+(.+)$", content or "", flags=re.M)
+    h1_title = h1_match.group(1).strip() if h1_match else ""
+    title_metadata = {
+        "h1": h1_title,
+        "h1Length": len(h1_title),
+        "seoTitle": str(seo_title or "").strip(),
+        "seoTitleLength": len(str(seo_title or "").strip()),
+    }
+    if seo_title is not None and not is_seo_title_length_valid(seo_title):
+        important(
+            format_seo_title_length_warning(
+                seo_title,
+                action=(
+                    "재작성 실패 후 유지"
+                    if seo_title_rewrite_failed
+                    else ("재작성 1회 후 유지" if seo_title_rewrite_attempted else "재작성하지 않음")
+                ),
+            )
+        )
 
     h2_count = _count_h2_headings(content)
     if h2_count < 2:
@@ -512,6 +540,7 @@ def run_quality_gate(
         errors=errors,
         warnings=warnings,
         metadata={
+            "title": title_metadata,
             "platformChecks": platform_checks,
             "hardFailCount": hard_fail_count,
             "importantWarnings": important_warnings,

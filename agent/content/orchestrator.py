@@ -14,7 +14,9 @@ main keywords are hard-blocked (never repeated on the same platform).
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import date as date_cls
 from pathlib import Path
@@ -25,6 +27,7 @@ from agent.content.config.launch_policy import get_launch_category
 from agent.content.config.platforms import Platform, find_platform
 from agent.content.images.hero_image import HeroImage, insert_hero_image
 from agent.content.images.title_card import create_title_card
+from agent.content.markdown_html import extract_title
 from agent.content.learning.feedback import get_recent_feedback
 from agent.content.memory.content_memory import (
     _normalize_text,
@@ -39,7 +42,8 @@ from agent.content.memory.corpus_sync import sync_written_corpus
 from agent.content.planning.planning import run_planning
 from agent.content.quality.quality_gate import QualityGateResult, run_quality_gate
 from agent.content.research.research import run_research
-from agent.content.writing.writer import write_blog_post
+from agent.content.seo_enrich import is_seo_title_length_valid, truncate_seo_title
+from agent.content.writing.writer import rewrite_title_for_seo_length, write_blog_post
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -129,6 +133,72 @@ class ContentDraft:
         }
 
 
+def _replace_h1_title(markdown: str, title: str) -> str:
+    """Replace only the first Markdown H1, preserving frontmatter and body."""
+    replacement = f"# {title.strip()}"
+    return re.sub(r"^#\s+.+$", replacement, str(markdown or ""), count=1, flags=re.M)
+
+
+def _prepare_title_for_image_and_quality(
+    blog_content: str,
+    *,
+    topic_title: str,
+) -> Dict[str, Any]:
+    """Make the final H1/SEO title decision before rendering the title card."""
+    # These helpers live in publish_on_approval.py because the same title
+    # construction must be used at Rank Math publish time. Import locally to
+    # avoid the orchestrator -> bundle -> orchestrator import cycle.
+    from agent.content.publish_on_approval import (
+        _build_rank_math_title,
+        _pick_focus_keyword,
+        extract_seo_meta,
+    )
+
+    content = str(blog_content or "")
+    title = extract_title(content, topic_title)
+    seo_meta = extract_seo_meta(content)
+    focus_keyword = _pick_focus_keyword(
+        seo_meta,
+        topic_title=topic_title,
+        title=title,
+    )
+    seo_title = _build_rank_math_title(title, focus_keyword)
+    rewrite_attempted = not is_seo_title_length_valid(seo_title)
+    rewrite_failed = False
+
+    if rewrite_attempted:
+        prefixed_seo_title = truncate_seo_title(f"{focus_keyword} | {title}")
+        try:
+            rewritten_title = rewrite_title_for_seo_length(
+                title=title,
+                focus_keyword=focus_keyword,
+                current_seo_title=seo_title,
+                prefixed_seo_title=prefixed_seo_title,
+            )
+        except Exception as exc:  # noqa: BLE001 — retain draft and report the final range
+            logging.getLogger(__name__).warning(
+                "SEO title rewrite failed; retaining original H1: %s",
+                exc,
+            )
+            rewritten_title = ""
+        if rewritten_title:
+            content = _replace_h1_title(content, rewritten_title)
+            title = extract_title(content, topic_title)
+            seo_title = _build_rank_math_title(title, focus_keyword)
+        else:
+            rewrite_failed = True
+
+    return {
+        "blog_content": content,
+        "h1_title": title,
+        "h1_length": len(title),
+        "focus_keyword": focus_keyword,
+        "seo_title": seo_title,
+        "rewrite_attempted": rewrite_attempted,
+        "rewrite_failed": rewrite_failed,
+    }
+
+
 def generate_platform_draft(
     *, platform_id: str, run_date: Optional[str] = None, prior_feedback: Optional[List[str]] = None,
 ) -> ContentDraft:
@@ -182,6 +252,11 @@ def generate_platform_draft(
         current_date=resolved_date, research_content=research_content, planning_content=planning_content,
         prior_feedback=prior_feedback,
     )
+    prepared_title = _prepare_title_for_image_and_quality(
+        blog_content,
+        topic_title=topic["topic_title"],
+    )
+    blog_content = prepared_title["blog_content"]
 
     platform_dir = _drafts_dir(resolved_date) / platform_id
     # Featured image is always a title card (seeded rotation across
@@ -190,7 +265,7 @@ def generate_platform_draft(
     image = create_title_card(
         out_dir=platform_dir / "images", platform_id=platform.id, platform_label=platform.label,
         category_id=category.id, category_name=category.name, category_keywords=category.keywords,
-        topic_title=topic["topic_title"], blog_content=blog_content,
+        topic_title=prepared_title["h1_title"], blog_content=blog_content,
         style_seed=topic["topic_id"],
     )
     blog_content = insert_hero_image(platform_id=platform.id, blog_content=blog_content, image=image)
@@ -198,6 +273,9 @@ def generate_platform_draft(
     quality = run_quality_gate(
         topic_title=topic["topic_title"], category_id=category.id, platform_id=platform.id,
         content_type="blog", content=blog_content, image=image.to_dict(),
+        seo_title=prepared_title["seo_title"],
+        seo_title_rewrite_attempted=prepared_title["rewrite_attempted"],
+        seo_title_rewrite_failed=prepared_title["rewrite_failed"],
     )
 
     platform_dir.mkdir(parents=True, exist_ok=True)
