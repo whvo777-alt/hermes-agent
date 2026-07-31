@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from agent.content.images.hero_image import HeroImage, extract_blog_title
-from agent.content.images.text_fit import ellipsize, fit_font_and_wrap, wrap_text
+from agent.content.images.text_fit import fit_font_and_wrap, wrap_text
 from agent.content.visual_accents import _seed_int
 
 W, H = 1280, 720
@@ -171,15 +171,16 @@ def _pick_hashtags(title: str, category_id: str, category_keywords: Optional[Seq
 
 def _wrap_with_highlight(
     draw, title: str, keyword: str, *, target_line: int, font, max_width: int, max_lines: int,
-) -> Tuple[List[str], int, bool]:
+) -> Tuple[List[str], Optional[int], bool]:
     """Wrap ``title`` into <= max_lines lines, measured by REAL rendered
     pixel width (not a character-count budget), so ``keyword`` (if present)
     lands on line ``target_line`` — that's the template's fixed "which line
     gets the accent color" slot. Falls back to a plain wrap with the same
     target index when the keyword isn't a literal substring.
 
-    Returns ``(lines, accent_index, fits_cleanly)`` — ``fits_cleanly`` is
-    False if any word had to be dropped (title too long for ``max_lines`` at
+    Returns ``(lines, accent_index, fits_cleanly)``. A failed highlighted
+    placement is explicit: ``fits_cleanly`` is False and ``accent_index`` is
+    None if any word had to be dropped (title too long for ``max_lines`` at
     this font size) or any line still overflows ``max_width`` (a single word
     wider than the box); callers should treat that as "try a smaller font"
     rather than accepting the result as-is (see ``_fit_title_with_highlight``).
@@ -238,8 +239,8 @@ def _wrap_with_highlight(
     lines = [l for l in (lines_before + [highlight_line] + lines_after) if l][:max_lines]
     if not lines:
         lines = [title or "가이드"]
-    accent_index = min(target_line, len(lines) - 1)
     fits_cleanly = not dropped_words and all(draw.textlength(l, font=font) <= max_width for l in lines)
+    accent_index = min(target_line, len(lines) - 1) if fits_cleanly else None
     return lines, accent_index, fits_cleanly
 
 
@@ -250,15 +251,16 @@ def _fit_title_with_highlight(
     """Step the font size down from ``base_size`` (by ``step``, floored at
     ``min_size``) until the title wraps cleanly within ``max_lines``/
     ``max_width`` at real measured width — box/font size adapts to the
-    actual text instead of a fixed size that can clip. Only once
-    ``min_size`` is reached and it still doesn't fit does the last attempt's
-    ellipsis fallback (already applied by ``_wrap_with_highlight``'s
-    per-line ellipsize... handled below) get accepted.
+    actual text instead of a fixed size that can clip. If the highlighted
+    arrangement still drops words at ``min_size``, the complete title is
+    retried with ordinary measured wrapping and highlighting disabled.
 
-    Returns ``(lines, accent_index, font)``.
+    Returns ``(lines, accent_index, font, highlight_enabled)``. If the
+    highlighted arrangement cannot preserve the title, the result falls back
+    to ordinary measured wrapping with highlighting disabled.
     """
     size = base_size
-    last: Optional[Tuple[List[str], int, bool]] = None
+    last: Optional[Tuple[List[str], Optional[int], bool]] = None
     last_font = None
     while True:
         font = _font(font_path, size)
@@ -269,18 +271,27 @@ def _fit_title_with_highlight(
         last, last_font = (lines, accent_index, fits_cleanly), font
         if fits_cleanly or size <= min_size:
             break
-        size -= step
+        size = max(size - step, min_size)
     lines, accent_index, fits_cleanly = last
     if not fits_cleanly:
-        # Last resort at the smallest font tried: ellipsize any line that
-        # still overflows max_width (a too-wide single word), AND force an
-        # ellipsis onto the last line even if ITS width is fine -- dropped
-        # trailing words (title needed more than max_lines) would otherwise
-        # render as a clean-looking line that silently cuts the sentence.
-        lines = [ellipsize(draw, l, last_font, max_width) for l in lines]
-        if lines and not lines[-1].endswith("…"):
-            lines[-1] = ellipsize(draw, lines[-1] + "…", last_font, max_width)
-    return lines, accent_index, last_font
+        # Highlight placement consumed the available line budget. Re-wrap
+        # the complete title normally before accepting any truncation.
+        lines, fallback_font = fit_font_and_wrap(
+            draw, title,
+            font_loader=lambda candidate_size: _font(font_path, candidate_size),
+            base_size=base_size,
+            min_size=min_size,
+            step=step,
+            max_width=max_width,
+            max_lines=max_lines,
+        )
+        # Keep this title path clamped even if the shared legacy helper
+        # overshoots min_size while stepping down.
+        if getattr(fallback_font, "size", min_size) < min_size:
+            fallback_font = _font(font_path, min_size)
+            lines = wrap_text(draw, title, fallback_font, max_width, max_lines)
+        return lines, None, fallback_font, False
+    return lines, accent_index, last_font, True
 
 
 def _quote_glyph(draw, cx, cy, size, color, opening: bool = True):
@@ -348,13 +359,13 @@ def _render_frame_quote(*, colors, blog_title, keyword, category_name, subtitle,
     _quote_glyph(draw, card[0] + 90, card[1] + 66, 130, "#1a1a1a", opening=True)
 
     text_max_width = (card[2] - 70) - (card[0] + 70)
-    lines, accent_idx, tf = _fit_title_with_highlight(
+    lines, accent_idx, tf, highlight_enabled = _fit_title_with_highlight(
         draw, blog_title, keyword, target_line=1, max_lines=3, max_width=text_max_width,
         font_path=_F_BOLD, base_size=54, min_size=36,
     )
     ty = card[1] + 128
     for i, line in enumerate(lines):
-        color = colors["accent"] if i == accent_idx else "#1a1a1a"
+        color = colors["accent"] if highlight_enabled and i == accent_idx else "#1a1a1a"
         draw.text((card[0] + 70, ty), line, font=tf, fill=color)
         ty += int(tf.size * 1.3)
 
@@ -383,13 +394,13 @@ def _render_badge_quotes(*, colors, blog_title, keyword, category_name, subtitle
     _quote_glyph(draw, top_c[0], top_c[1] - 4, 60, colors["accent"], opening=True)
 
     text_max_width = (card[2] - card[0]) - 160
-    lines, accent_idx, tf = _fit_title_with_highlight(
+    lines, accent_idx, tf, highlight_enabled = _fit_title_with_highlight(
         draw, blog_title, keyword, target_line=2, max_lines=3, max_width=text_max_width,
         font_path=_F_BOLD, base_size=50, min_size=32,
     )
     ty = card[1] + 96
     for i, line in enumerate(lines):
-        color = colors["accent"] if i == accent_idx else "#1a1a1a"
+        color = colors["accent"] if highlight_enabled and i == accent_idx else "#1a1a1a"
         w = draw.textlength(line, font=tf)
         draw.text((W / 2 - w / 2, ty), line, font=tf, fill=color)
         ty += int(tf.size * 1.32)
@@ -427,7 +438,7 @@ def _render_illustration(*, colors, blog_title, keyword, category_name, subtitle
     draw.line((bx + 17, by, bx + 17, by + 46), fill="#ffffff", width=2)
 
     text_max_width = (lx - 20) - 110
-    lines, underline_idx, tf = _fit_title_with_highlight(
+    lines, underline_idx, tf, highlight_enabled = _fit_title_with_highlight(
         draw, blog_title, keyword, target_line=1, max_lines=2, max_width=text_max_width,
         font_path=_F_BOLD, base_size=58, min_size=38,
     )
@@ -438,8 +449,9 @@ def _render_illustration(*, colors, blog_title, keyword, category_name, subtitle
         draw.text((110, ty), line, font=tf, fill=colors["ink"])
         line_boxes.append((110, ty, 110 + w, ty + tf.size))
         ty += int(tf.size * 1.31)
-    ux0, _uy0, ux1, uy1 = line_boxes[underline_idx]
-    draw.rounded_rectangle((ux0, uy1 + 6, ux1, uy1 + 18), radius=6, fill=_MINT)
+    if highlight_enabled and underline_idx is not None:
+        ux0, _uy0, ux1, uy1 = line_boxes[underline_idx]
+        draw.rounded_rectangle((ux0, uy1 + 6, ux1, uy1 + 18), radius=6, fill=_MINT)
 
     badge_text = f"{category_name} 꿀팁" if category_name else "블로그 꿀팁"
     badge_y, badge_x, bh = ty + 20, 110, 48
@@ -467,13 +479,13 @@ def _render_topbar_hashtags(*, colors, blog_title, keyword, category_name, subti
     draw.rounded_rectangle(card, radius=28, fill="#ffffff", outline=(20, 20, 20), width=4)
 
     text_max_width = (card[2] - 56) - (card[0] + 56)
-    lines, accent_idx, tf = _fit_title_with_highlight(
+    lines, accent_idx, tf, highlight_enabled = _fit_title_with_highlight(
         draw, blog_title, keyword, target_line=0, max_lines=3, max_width=text_max_width,
         font_path=_F_BOLD, base_size=52, min_size=34,
     )
     ty = card[1] + 72
     for i, line in enumerate(lines):
-        color = colors["accent"] if i == accent_idx else "#1a1a1a"
+        color = colors["accent"] if highlight_enabled and i == accent_idx else "#1a1a1a"
         draw.text((card[0] + 56, ty), line, font=tf, fill=color)
         ty += int(tf.size * 1.31)
 
@@ -550,11 +562,11 @@ def _render_photo_overlay(*, colors, blog_title, keyword, category_name, subtitl
     draw = ImageDraw.Draw(img)
 
     text_max_width = W - 200
-    lines, accent_idx, tf = _fit_title_with_highlight(
+    lines, accent_idx, tf, highlight_enabled = _fit_title_with_highlight(
         draw, blog_title, keyword, target_line=1, max_lines=3, max_width=text_max_width,
         font_path=_F_BOLD, base_size=56, min_size=36,
     )
-    title_runs = [(line, i == accent_idx) for i, line in enumerate(lines)]
+    title_runs = [(line, highlight_enabled and i == accent_idx) for i, line in enumerate(lines)]
     ty = 190
     for text, is_accent in title_runs:
         color = _mix(colors["accent"], "#ffffff", 0.25) if is_accent else "#ffffff"
