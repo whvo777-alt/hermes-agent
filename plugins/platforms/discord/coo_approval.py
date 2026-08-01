@@ -858,6 +858,7 @@ def build_daily_blog_approval_embed_payload(
     score = item_payload.get("quality_score", "-")
     passed = "통과" if item_payload.get("quality_passed") else "확인 필요"
     warnings = list(item_payload.get("quality_warnings") or [])
+    warnings.sort(key=lambda warning: "TITLE_TEMPLATE_REPEATED" not in str(warning))
     human_review_items = list(item_payload.get("human_review_items") or [])
     warning_text = (
         "\n".join(f"- {_truncate(warning, 240)}" for warning in warnings[:5])

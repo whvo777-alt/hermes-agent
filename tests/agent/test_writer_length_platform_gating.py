@@ -96,3 +96,9 @@ def test_write_blog_post_title_prompt_uses_internal_topic_label_and_positive_cri
     assert "운동 확인할 때 알아야 할 5가지 기준" in user_prompt
     assert "이것만 알면 무조건 살 빠지는 7가지 비밀" in user_prompt
     assert "건강에 관한 모든 것을 완벽하게 정리한 최고의 필독 가이드" in user_prompt
+    assert "구체적인 대상이나 상황을 반드시 넣는다" in user_prompt
+    assert "\"이 제품\", \"이것\", \"그 방법\"처럼 지시어로 대신하지 않는다" in user_prompt
+    assert "주제 키워드를 문장에 자연스럽게 녹여 쓴다" in user_prompt
+    assert "문장을 그대로 베끼라는 것이지 키워드를 빼라는 뜻이 아니다" in user_prompt
+    assert "이 제품, 건강식품일까? 성분표와 섭취 기준부터 읽는 법" in user_prompt
+    assert "무엇에 관한 글인지 제목만으로 알 수 없음" in user_prompt

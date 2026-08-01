@@ -957,6 +957,25 @@ class TestDiscordDailyBlogApproval(unittest.TestCase):
 
         assert "TITLE_TEMPLATE_REPEATED" in confirmation_field["value"]
 
+    def test_template_warning_is_prioritized_within_first_five_warnings(self) -> None:
+        item = self._item_payload(
+            quality_warnings=[
+                "URL 슬러그 없음",
+                "WordPress 개인차 안내 문구 확인 필요",
+                "WordPress 건강 정보 출처/참고 근거 확인 필요",
+                "Schema/구조화 데이터 없음",
+                "author byline 없음",
+                "TITLE_TEMPLATE_REPEATED: 최근 제목과 공통 문장 틀이 반복됩니다.",
+            ]
+        )
+
+        embed = coo_approval.build_daily_blog_approval_embed_payload(item)
+        confirmation_field = next(field for field in embed["fields"] if field["name"] == "확인할 내용")
+        warning_lines = confirmation_field["value"].splitlines()
+
+        assert "TITLE_TEMPLATE_REPEATED" in warning_lines[0]
+        assert len(warning_lines) == 5
+
     def test_structured_preview_samples_intro_sections_and_conclusion(self) -> None:
         from agent.coo.daily_blog_bundle import build_structured_preview
 
