@@ -947,6 +947,16 @@ class TestDiscordDailyBlogApproval(unittest.TestCase):
             ["approve", "revise", "reject"],
         )
 
+    def test_quality_warning_is_visible_in_confirmation_field(self) -> None:
+        item = self._item_payload(
+            quality_warnings=["TITLE_TEMPLATE_REPEATED: 최근 제목과 공통 문장 틀이 반복됩니다."]
+        )
+
+        embed = coo_approval.build_daily_blog_approval_embed_payload(item)
+        confirmation_field = next(field for field in embed["fields"] if field["name"] == "확인할 내용")
+
+        assert "TITLE_TEMPLATE_REPEATED" in confirmation_field["value"]
+
     def test_structured_preview_samples_intro_sections_and_conclusion(self) -> None:
         from agent.coo.daily_blog_bundle import build_structured_preview
 

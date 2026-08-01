@@ -11,6 +11,7 @@ Pure/deterministic — no LLM, no network calls.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -64,6 +65,42 @@ def _count_image_slots(content: str) -> int:
 
 def _count_inline_images(content: str) -> int:
     return len(re.findall(r"!\[[^\]]*\]\([^)]+\)", content or ""))
+
+
+def _title_tokens(title: str) -> List[str]:
+    normalized = unicodedata.normalize("NFKC", str(title or "")).lower()
+    normalized = re.sub(r"\d+", "N", normalized)
+    normalized = re.sub(r"[^0-9a-z가-힣]+", " ", normalized)
+    return [token for token in normalized.split() if token]
+
+
+def _title_ngrams(tokens: List[str], size: int = 3) -> set:
+    return {tuple(tokens[index:index + size]) for index in range(len(tokens) - size + 1)}
+
+
+def _repeated_title_template(title: str, recent_titles: Optional[List[str]]) -> Optional[str]:
+    if not title or not recent_titles:
+        return None
+
+    current_ngrams = _title_ngrams(_title_tokens(title))
+    if not current_ngrams:
+        return None
+
+    matched_in_titles: Dict[tuple, int] = {}
+    seen_titles = set()
+    for recent_title in recent_titles:
+        normalized_title = " ".join(_title_tokens(recent_title))
+        if not normalized_title or normalized_title in seen_titles:
+            continue
+        seen_titles.add(normalized_title)
+        shared = current_ngrams & _title_ngrams(_title_tokens(recent_title))
+        for frame in shared:
+            matched_in_titles[frame] = matched_in_titles.get(frame, 0) + 1
+
+    repeated = [frame for frame, count in matched_in_titles.items() if count >= 2]
+    if not repeated:
+        return None
+    return " ".join(max(repeated, key=len))
 
 
 def _has_broken_image_markup(content: str) -> bool:
@@ -351,6 +388,7 @@ def run_quality_gate(
     content: str,
     image: Optional[Dict[str, Any]],
     sibling_contents: Optional[List[str]] = None,
+    recent_titles: Optional[List[str]] = None,
     seo_title: Optional[str] = None,
     seo_title_rewrite_attempted: bool = False,
     seo_title_rewrite_failed: bool = False,
@@ -420,6 +458,12 @@ def run_quality_gate(
         "seoTitle": str(seo_title or "").strip(),
         "seoTitleLength": len(str(seo_title or "").strip()),
     }
+    repeated_template = _repeated_title_template(h1_title, recent_titles)
+    if repeated_template:
+        important(
+            "TITLE_TEMPLATE_REPEATED: 최근 제목과 공통 문장 틀이 반복됩니다 "
+            f"({repeated_template})"
+        )
     if seo_title is not None and not is_seo_title_length_valid(seo_title):
         important(
             format_seo_title_length_warning(

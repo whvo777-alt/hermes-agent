@@ -80,3 +80,19 @@ def test_write_blog_post_final_line_naver_unchanged():
 def test_write_blog_post_final_line_wordpress_updated():
     user_prompt = _write_and_capture_user_prompt(platform_id="wordpress", category_id="health")
     assert "H1 1개, H2 6~7개(실전 사례·FAQ 섹션 포함), 본문 5,500~7,500자. 개인차 안내를 포함한다." in user_prompt
+
+
+def test_write_blog_post_title_prompt_uses_internal_topic_label_and_positive_criteria():
+    user_prompt = _write_and_capture_user_prompt(platform_id="wordpress", category_id="health")
+
+    assert "오늘의 주제:" not in user_prompt
+    assert "주제 키워드(내부 식별용, 제목으로 사용하지 말 것): 테스트 주제" in user_prompt
+    assert "독자가 실제로 검색창에 칠 법한 말" in user_prompt
+    assert "본문이 실제로 답하는 질문 하나" in user_prompt
+    assert "질문형·서술형·비교형·상황 제시형" in user_prompt
+    assert "운동 후 심장이 너무 빨리 뛰면 강도를 낮춰야 할까?" in user_prompt
+    assert "초보자 HIIT는 운동 시간보다 회복 간격이 먼저입니다" in user_prompt
+    assert "집에서 하는 HIIT, 무릎 통증이 있을 때 달라지는 선택 기준" in user_prompt
+    assert "운동 확인할 때 알아야 할 5가지 기준" in user_prompt
+    assert "이것만 알면 무조건 살 빠지는 7가지 비밀" in user_prompt
+    assert "건강에 관한 모든 것을 완벽하게 정리한 최고의 필독 가이드" in user_prompt

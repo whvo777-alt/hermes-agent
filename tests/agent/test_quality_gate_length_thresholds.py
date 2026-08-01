@@ -85,3 +85,41 @@ def test_naver_platform_is_unaffected_by_wordpress_blogspot_thresholds():
         content_type="blog", content=content, image=None,
     )
     assert not any("너무 짧거나" in w or "과도하게 깁니다" in w for w in result.warnings)
+
+
+def test_repeated_title_template_is_an_important_warning():
+    content = (
+        "# 수면 확인할 때 알아야 할 5가지 기준\n\n"
+        "수면 주제의 판단 기준을 설명합니다.\n\n"
+        "본문은 수면 습관과 회복 상황을 실제로 다룹니다.\n\n"
+        "마지막으로 오늘 적용할 점검 방법을 정리합니다."
+    )
+    result = run_quality_gate(
+        topic_title="수면",
+        category_id="health",
+        platform_id="naver",
+        content_type="blog",
+        content=content,
+        image=None,
+        recent_titles=[
+            "운동 확인할 때 알아야 할 5가지 기준",
+            "다이어트 확인할 때 알아야 할 7가지 기준",
+        ],
+    )
+
+    assert any("TITLE_TEMPLATE_REPEATED" in warning for warning in result.warnings)
+    assert any("TITLE_TEMPLATE_REPEATED" in warning for warning in result.metadata["importantWarnings"])
+
+
+def test_one_matching_recent_title_does_not_trigger_template_warning():
+    result = run_quality_gate(
+        topic_title="수면",
+        category_id="health",
+        platform_id="naver",
+        content_type="blog",
+        content="# 수면 확인할 때 알아야 할 5가지 기준\n\n수면 기준을 설명합니다. " * 5,
+        image=None,
+        recent_titles=["운동 확인할 때 알아야 할 5가지 기준"],
+    )
+
+    assert not any("TITLE_TEMPLATE_REPEATED" in warning for warning in result.warnings)

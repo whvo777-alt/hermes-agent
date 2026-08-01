@@ -33,6 +33,7 @@ from agent.content.memory.content_memory import (
     _normalize_text,
     add_content,
     build_memory_check,
+    find_recent_topics,
     is_topic_blocked,
     load_memory,
     save_memory,
@@ -75,7 +76,7 @@ def _pick_daily_topic(
     # Rotate from the date seed, then walk the full keyword list until free.
     for offset in range(len(keywords)):
         keyword = keywords[(seed + offset) % len(keywords)]
-        topic_title = f"{keyword} 확인할 때 알아야 할 기준"
+        topic_title = keyword
         topic_id = f"{run_date}-{platform_id}-{category.id}-{(seed + offset) % 10000}"
         query = {
             "date": run_date,
@@ -270,9 +271,22 @@ def generate_platform_draft(
     )
     blog_content = insert_hero_image(platform_id=platform.id, blog_content=blog_content, image=image)
 
+    recent_title_items = find_recent_topics(
+        memory,
+        date=resolved_date,
+        category=category.id,
+        platform=platform.id,
+    )
+    recent_titles = [
+        str(item.get("title") or "").strip()
+        for item in recent_title_items
+        if str(item.get("title") or "").strip()
+    ]
+
     quality = run_quality_gate(
         topic_title=topic["topic_title"], category_id=category.id, platform_id=platform.id,
         content_type="blog", content=blog_content, image=image.to_dict(),
+        recent_titles=recent_titles,
         seo_title=prepared_title["seo_title"],
         seo_title_rewrite_attempted=prepared_title["rewrite_attempted"],
         seo_title_rewrite_failed=prepared_title["rewrite_failed"],
@@ -286,7 +300,7 @@ def generate_platform_draft(
         memory,
         {
             "date": resolved_date, "platform": platform.id, "category": category.id,
-            "topic": topic["topic_title"], "title": topic["topic_title"],
+            "topic": topic["topic_title"], "title": prepared_title["h1_title"],
             "mainKeyword": topic["topic_keywords"][0] if topic["topic_keywords"] else "",
             "subKeywords": topic["topic_keywords"][1:], "slug": topic["topic_id"],
             "qualityScore": quality.score, "filePath": str(blog_file),

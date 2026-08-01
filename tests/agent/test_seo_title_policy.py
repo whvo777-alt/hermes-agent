@@ -101,6 +101,29 @@ def test_rewrite_prompt_contains_focus_keyword_prefix_rule_and_lengths(monkeypat
     assert "focus_keyword | H1" in captured["user"]
     assert "접두어를 붙였을 때의 최종 SEO title 길이" in captured["user"]
     assert "글자 수를 맞추기 위해 본문에 없는 내용" in captured["user"]
+    assert "원래 제목의 문형과 어투를 최대한 유지" in captured["user"]
+
+
+def test_representative_title_examples_stay_in_seo_range_without_rewrite(monkeypatch):
+    examples = [
+        ("운동 후 심장이 너무 빨리 뛰면 강도를 낮춰야 할까?", "운동"),
+        ("초보자 HIIT는 운동 시간보다 회복 간격이 먼저입니다", "HIIT"),
+        ("집에서 하는 HIIT, 무릎 통증이 있을 때 달라지는 선택 기준", "HIIT"),
+    ]
+    rewrite_calls = []
+    monkeypatch.setattr(writer, "call_llm", lambda **kwargs: rewrite_calls.append(kwargs) or "# 재작성 제목")
+
+    for title, topic_keyword in examples:
+        prepared = _prepare_title_for_image_and_quality(
+            f"# {title}\n\n본문은 제목의 주제를 실제로 설명합니다.",
+            topic_title=topic_keyword,
+        )
+
+        assert 28 <= len(title) <= 40
+        assert 28 <= len(prepared["seo_title"]) <= 40
+        assert prepared["rewrite_attempted"] is False
+
+    assert rewrite_calls == []
 
 
 def test_rewritten_h1_is_the_title_card_title_input(monkeypatch):
