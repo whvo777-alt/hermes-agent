@@ -254,51 +254,68 @@ def test_short_english_purchase_terms_require_alpha_boundaries() -> None:
     assert all(ke._is_purchase_intent_blocked(keyword) for keyword in blocked)
 
 
-def test_root_overlap_cap_keeps_at_most_eight_candidates_per_two_char_fragment() -> None:
+def test_root_overlap_cap_keeps_at_most_twelve_candidates_per_two_char_fragment() -> None:
     candidates = [
-        _candidate("이유식", 0.9, 900, "2026-08-01T00:00:00+00:00"),
-        _candidate("초기이유식", 0.8, 800, "2026-08-01T00:00:01+00:00"),
-        _candidate("이유식식단", 0.7, 700, "2026-08-01T00:00:02+00:00"),
-        _candidate("이유식배달", 0.6, 600, "2026-08-01T00:00:03+00:00"),
-        _candidate("이유식레시피", 0.5, 500, "2026-08-01T00:00:04+00:00"),
-        _candidate("이유식책", 0.4, 400, "2026-08-01T00:00:05+00:00"),
-        _candidate("이유식큐브", 0.3, 300, "2026-08-01T00:00:06+00:00"),
-        _candidate("이유식단계", 0.2, 200, "2026-08-01T00:00:07+00:00"),
-        _candidate("이유식용기", 0.1, 100, "2026-08-01T00:00:08+00:00"),
+        _candidate(f"이유식{suffix}", 0.9 - index / 20, 900, f"2026-08-01T00:00:{index:02d}+00:00")
+        for index, suffix in enumerate(
+            [
+                "",
+                "초기",
+                "식단",
+                "배달",
+                "레시피",
+                "책",
+                "큐브",
+                "단계",
+                "용기",
+                "보관",
+                "간식",
+                "추천",
+                "브랜드",
+            ]
+        )
     ]
 
     audit = {}
-    limited = ke._limit_root_overlap(candidates, audit=audit)
+    limited, reserve = ke._limit_root_overlap(candidates, audit=audit)
 
     assert [candidate["keyword"] for candidate in limited] == [
         "이유식",
-        "초기이유식",
+        "이유식초기",
         "이유식식단",
         "이유식배달",
         "이유식레시피",
         "이유식책",
         "이유식큐브",
         "이유식단계",
+        "이유식용기",
+        "이유식보관",
+        "이유식간식",
+        "이유식추천",
     ]
-    assert audit["root_overlap_removed"] == ["이유식용기"]
+    assert [candidate["keyword"] for candidate in reserve] == ["이유식브랜드"]
+    assert audit["root_overlap_removed"] == ["이유식브랜드"]
 
 
 def test_root_overlap_cap_limits_english_examples_by_two_char_fragment() -> None:
     candidates = [
         _candidate(
             f"영어{suffix}",
-            0.9 - index / 10,
-            900 - index * 10,
-            f"2026-08-01T00:00:0{index}+00:00",
+            0.9 - index / 20,
+            1200 - index * 10,
+            f"2026-08-01T00:00:{index:02d}+00:00",
         )
         for index, suffix in enumerate(
-            ["단어", "발음", "사전", "회화", "문법", "공부", "읽기", "쓰기", "듣기"]
+            [
+                "단어", "발음", "사전", "회화", "문법", "공부", "읽기", "쓰기",
+                "듣기", "유치원", "도서관", "문장", "학습지",
+            ]
         )
     ]
 
-    limited = ke._limit_root_overlap(candidates)
+    limited, reserve = ke._limit_root_overlap(candidates)
 
-    assert len(limited) == 8
+    assert len(limited) == 12
     assert [candidate["keyword"] for candidate in limited] == [
         "영어단어",
         "영어발음",
@@ -308,7 +325,12 @@ def test_root_overlap_cap_limits_english_examples_by_two_char_fragment() -> None
         "영어공부",
         "영어읽기",
         "영어쓰기",
+        "영어듣기",
+        "영어유치원",
+        "영어도서관",
+        "영어문장",
     ]
+    assert [candidate["keyword"] for candidate in reserve] == ["영어학습지"]
 
 
 def test_default_top_n_is_30_and_merge_cap_remains_30() -> None:
@@ -316,16 +338,67 @@ def test_default_top_n_is_30_and_merge_cap_remains_30() -> None:
     assert ke._MAX_CACHED_CANDIDATES == 30
 
 
-def test_raw_candidates_are_deduplicated_and_total_volume_floor_is_20() -> None:
+def test_raw_candidates_are_deduplicated_and_total_volume_floor_is_1000() -> None:
     scored = ke._score_candidates(
         [
-            _row("주제A", pc=10, mobile=10),
-            _row("주제 A", pc=10, mobile=10),
-            _row("주제B", pc=9, mobile=10),
+            _row("주제A", pc=500, mobile=500),
+            _row("주제 A", pc=500, mobile=500),
+            _row("주제B", pc=499, mobile=500),
         ]
     )
 
     assert [candidate["keyword"] for candidate in scored] == ["주제A"]
+
+
+def test_total_search_volume_floor_excludes_low_volume_from_final_cache(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(ke, "_CACHE_DIR", tmp_path)
+
+    class FakeClient:
+        def related_keywords(self, seeds):
+            return [
+                _row("검색량999", pc=499, mobile=500),
+                _row("검색량1000", pc=500, mobile=500),
+            ]
+
+    monkeypatch.setattr("agent.content.keywords.naver_ad_client.NaverAdClient", FakeClient)
+    monkeypatch.setattr(
+        ke,
+        "_filter_relevant_keywords",
+        lambda _category_id, _name, candidates, **kwargs: candidates,
+    )
+
+    result = ke.expand_category("health", force=True)
+    saved = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
+    keywords = [candidate["keyword"] for candidate in saved["candidates"]]
+
+    assert result["status"] == "ok"
+    assert result["filter_audit"]["volume_eligible_candidates"] == 1
+    assert keywords == ["검색량1000"]
+
+
+def test_root_overlap_backfills_shortfall_from_score_ordered_reserve(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(ke, "_CACHE_DIR", tmp_path)
+
+    class FakeClient:
+        def related_keywords(self, seeds):
+            return [_row(f"영어{index:02d}", pc=1000, mobile=1000) for index in range(15)]
+
+    monkeypatch.setattr("agent.content.keywords.naver_ad_client.NaverAdClient", FakeClient)
+    monkeypatch.setattr(
+        ke,
+        "_filter_relevant_keywords",
+        lambda _category_id, _name, candidates, **kwargs: candidates,
+    )
+
+    result = ke.expand_category("parenting", force=True, top_n=15)
+    saved = json.loads((tmp_path / "parenting.json").read_text(encoding="utf-8"))
+    keywords = [candidate["keyword"] for candidate in saved["candidates"]]
+
+    expected = [f"영어{index:02d}" for index in range(15)]
+    assert result["status"] == "ok"
+    assert keywords == expected
+    assert result["filter_audit"]["root_overlap_removed"] == expected[12:]
+    assert result["filter_audit"]["root_overlap_backfilled"] == expected[12:]
 
 
 def test_llm_filter_failure_does_not_write_or_replace_existing_cache(tmp_path, monkeypatch) -> None:
@@ -473,7 +546,7 @@ def test_llm_prompt_contains_category_profile_and_requested_relevance_rules(monk
 
 def test_expand_scores_and_caps_before_and_after_llm_in_the_requested_order(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(ke, "_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(ke, "_limit_root_overlap", lambda candidates, **kwargs: candidates)
+    monkeypatch.setattr(ke, "_limit_root_overlap", lambda candidates, **kwargs: (candidates, []))
     raw = [
         _row(f"주{i:03d}어", pc=1000 + i, mobile=1000 + i)
         for i in range(120)
@@ -505,9 +578,9 @@ def test_expand_scores_and_caps_before_and_after_llm_in_the_requested_order(tmp_
     assert result["llm_filter"]["status"] == "ok"
 
 
-def test_root_cap_is_eight_after_llm_filter(tmp_path, monkeypatch) -> None:
+def test_root_cap_is_twelve_after_llm_filter(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(ke, "_CACHE_DIR", tmp_path)
-    raw = [_row(f"다이어트{i}운동", pc=1000 - i, mobile=1000 - i) for i in range(10)]
+    raw = [_row(f"다이어트{i}운동", pc=1500 - i, mobile=1500 - i) for i in range(15)]
 
     class FakeClient:
         def related_keywords(self, seeds):
@@ -516,10 +589,10 @@ def test_root_cap_is_eight_after_llm_filter(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("agent.content.keywords.naver_ad_client.NaverAdClient", FakeClient)
     monkeypatch.setattr(ke, "_filter_relevant_keywords", lambda *args, **kwargs: args[2])
 
-    ke.expand_category("health", force=True, top_n=30)
+    ke.expand_category("health", force=True, top_n=12)
     saved = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
 
-    assert len(saved["candidates"]) == 8
+    assert len(saved["candidates"]) == 12
 
 
 def test_merge_tie_breaks_by_volume_then_oldest_added_at() -> None:
@@ -547,7 +620,7 @@ def test_merge_is_rescored_and_capped_at_30_with_tie_breakers(tmp_path, monkeypa
         "fetched_at": old,
         "seeds": ke.SEED_KEYWORDS_BY_CATEGORY["health"],
         "candidates": [
-            _candidate("기존키워드", 0.7, 700, old),
+            _candidate("기존키워드", 0.7, 1200, old),
         ],
     }
     (tmp_path / "health.json").write_text(
@@ -558,9 +631,9 @@ def test_merge_is_rescored_and_capped_at_30_with_tie_breakers(tmp_path, monkeypa
     class FakeClient:
         def related_keywords(self, seeds):
             return [
-                _row("신규낮은검색량", 10, 10),
-                _row("신규높은검색량", 500, 500),
-                _row("신규중간검색량", 200, 200),
+                _row("신규낮은검색량", 500, 500),
+                _row("신규높은검색량", 750, 750),
+                _row("신규중간검색량", 550, 550),
             ]
 
     monkeypatch.setattr(
@@ -588,7 +661,7 @@ def test_existing_cache_revalidation_drops_blocked_and_incomplete_candidates(tmp
         "fetched_at": old,
         "seeds": ke.SEED_KEYWORDS_BY_CATEGORY["health"],
         "candidates": [
-            _candidate("기존안전키워드", 0.01, 600, old),
+            _candidate("기존안전키워드", 0.01, 1200, old),
             _candidate("도시락", 0.99, 900, old),
             {"keyword": "누락검색량", "score": 0.99, "added_at": old},
             _candidate("다이어트약", 0.99, 900, old),
@@ -638,7 +711,7 @@ def test_existing_cache_score_is_recomputed_before_merge(tmp_path, monkeypatch) 
 
     class FakeClient:
         def related_keywords(self, seeds):
-            return [_row("신규저검색량", 100, 100, "낮음")]
+            return [_row("신규저검색량", 500, 500, "낮음")]
 
     monkeypatch.setattr("agent.content.keywords.naver_ad_client.NaverAdClient", FakeClient)
     monkeypatch.setattr(
@@ -677,8 +750,8 @@ def test_added_counts_only_new_candidates_remaining_after_merge(tmp_path, monkey
         def related_keywords(self, seeds):
             return [
                 _row("신규A", 1000, 0),
-                _row("신규B", 900, 0),
-                _row("신규C", 800, 0),
+                _row("신규B", 1100, 0),
+                _row("신규C", 1000, 0),
             ]
 
     monkeypatch.setattr("agent.content.keywords.naver_ad_client.NaverAdClient", FakeClient)

@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 _CACHE_DIR = Path(__file__).resolve().parent / "cache"
 _DEFAULT_CACHE_TTL_DAYS = 7
 _DEFAULT_TOP_N = 30
-_MIN_TOTAL_SEARCH_VOLUME = 20
+_MIN_TOTAL_SEARCH_VOLUME = 1000
 _MAX_CACHED_CANDIDATES = 30
 _LLM_BATCH_SIZE = 100
 _LLM_PREFILTER_SIZE = 100
-_ROOT_MAX_PER_GROUP = 8
+_ROOT_MAX_PER_GROUP = 12
 
 _CATEGORY_PROFILES = {
     "self-dev": "직장인·취준생의 생산성, 습관, 시간관리, 집중력과 실행 루틴을 다루는 자기계발 정보",
@@ -547,31 +547,46 @@ def _limit_root_overlap(
     *,
     max_per_fragment: int = _ROOT_MAX_PER_GROUP,
     audit: Optional[dict] = None,
-) -> List[dict]:
-    """Keep score-ordered candidates while capping each 2-char fragment."""
+    protected_keys: Optional[set[str]] = None,
+) -> tuple[List[dict], List[dict]]:
+    """Keep score-ordered candidates while capping each 2-char fragment.
+
+    Candidates rejected by the cap are returned in score order as a reserve
+    so callers can fill a shortfall without losing their identity in audit.
+    ``protected_keys`` is used only for candidates selected from that reserve
+    during the final merge; those candidates are allowed to survive the
+    second cap pass without consuming another fragment slot.
+    """
     fragment_counts: Dict[str, int] = {}
     limited = []
+    reserve = []
+    protected = protected_keys or set()
     if audit is not None:
         audit.setdefault("root_overlap_removed", [])
     for candidate in candidates:
         keyword = str(candidate.get("keyword", ""))
+        keyword_key = _keyword_key(keyword)
         fragments = _two_char_fragments(keyword)
         saturated = [
             fragment
             for fragment in sorted(fragments)
             if fragment_counts.get(fragment, 0) >= max_per_fragment
         ]
-        if saturated:
+        if saturated and keyword_key not in protected:
             if audit is not None:
                 audit["root_overlap_removed"].append(keyword)
+            reserve.append(candidate)
             continue
         limited.append(candidate)
-        for fragment in fragments:
-            fragment_counts[fragment] = fragment_counts.get(fragment, 0) + 1
-    return limited
+        if keyword_key not in protected:
+            for fragment in fragments:
+                fragment_counts[fragment] = fragment_counts.get(fragment, 0) + 1
+    return limited, reserve
 
 
-def _sort_and_cap_candidates(candidates: List[dict]) -> List[dict]:
+def _sort_and_cap_candidates(
+    candidates: List[dict], *, protected_keys: Optional[set[str]] = None
+) -> List[dict]:
     ordered = sorted(
         _deduplicate_records(candidates),
         key=lambda candidate: (
@@ -580,7 +595,8 @@ def _sort_and_cap_candidates(candidates: List[dict]) -> List[dict]:
             candidate.get("added_at", ""),
         ),
     )
-    return _limit_root_overlap(ordered)[:_MAX_CACHED_CANDIDATES]
+    limited, _ = _limit_root_overlap(ordered, protected_keys=protected_keys)
+    return limited[:_MAX_CACHED_CANDIDATES]
 
 
 def _fetch_related_keywords_with_retry(
@@ -658,6 +674,7 @@ def expand_category(
 
     filter_audit: Dict[str, object] = {
         "root_overlap_removed": [],
+        "root_overlap_backfilled": [],
     }
     prepared = _parse_candidates(
         raw,
@@ -702,7 +719,22 @@ def expand_category(
             "llm_filter": llm_audit,
         }
 
-    new_candidates = _limit_root_overlap(relevant, audit=filter_audit)[:top_n]
+    limited_candidates, reserve_candidates = _limit_root_overlap(
+        relevant,
+        audit=filter_audit,
+    )
+    new_candidates = limited_candidates[:top_n]
+    backfilled_keys: set[str] = set()
+    if len(new_candidates) < top_n:
+        backfilled = reserve_candidates[:top_n - len(new_candidates)]
+        new_candidates.extend(backfilled)
+        filter_audit["root_overlap_backfilled"] = [
+            candidate["keyword"] for candidate in backfilled
+        ]
+        backfilled_keys = {
+            _keyword_key(candidate["keyword"]) for candidate in backfilled
+        }
+    protected_backfill_keys = backfilled_keys
     added_before_merge = len(new_candidates)
 
     now = datetime.now(timezone.utc).isoformat()
@@ -720,7 +752,10 @@ def expand_category(
     rescored_merge = _score_parsed_candidates(
         [dict(candidate) for candidate in existing_clean + new_candidates]
     )
-    merged = _sort_and_cap_candidates(rescored_merge)
+    merged = _sort_and_cap_candidates(
+        rescored_merge,
+        protected_keys=protected_backfill_keys,
+    )
     new_keys = {_keyword_key(candidate["keyword"]) for candidate in new_candidates}
     added_after_merge = sum(
         1 for candidate in merged if _keyword_key(candidate["keyword"]) in new_keys
