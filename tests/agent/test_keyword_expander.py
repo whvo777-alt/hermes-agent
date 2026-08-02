@@ -35,13 +35,17 @@ def _candidate(
 
 def test_seed_lists_are_specific_and_include_travel() -> None:
     assert ke.SEED_KEYWORDS_BY_CATEGORY == {
-        "self-dev": ["시간관리", "독서습관", "집중력향상"],
+        "self-dev": ["시간관리", "독서습관", "집중력향상", "아침루틴", "목표설정"],
         "health": ["다이어트식단", "홈트레이닝", "수면부족"],
         "finance": ["적금추천", "신용점수", "ETF추천"],
         "it-tech": ["엑셀함수", "클라우드백업", "사진정리"],
-        "parenting": ["유아영어", "아기놀이", "아기수면교육"],
+        "parenting": ["아기놀이", "아기수면교육", "이유식", "아기발달", "신생아육아"],
         "travel": ["국내여행지", "당일치기여행", "캠핑장추천"],
     }
+
+
+def test_seed_lists_have_at_most_five_per_category() -> None:
+    assert all(len(seeds) <= 5 for seeds in ke.SEED_KEYWORDS_BY_CATEGORY.values())
 
 
 def test_related_keyword_fetch_retries_http_429(monkeypatch) -> None:

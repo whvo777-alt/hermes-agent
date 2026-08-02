@@ -49,11 +49,11 @@ _CATEGORY_PROFILES = {
 # existing core keyword lists. Naver's keywordstool accepts at most 5
 # seeds per call (see naver_ad_client._MAX_SEEDS_PER_CALL).
 SEED_KEYWORDS_BY_CATEGORY: Dict[str, List[str]] = {
-    "self-dev": ["시간관리", "독서습관", "집중력향상"],
+    "self-dev": ["시간관리", "독서습관", "집중력향상", "아침루틴", "목표설정"],
     "health": ["다이어트식단", "홈트레이닝", "수면부족"],
     "finance": ["적금추천", "신용점수", "ETF추천"],
     "it-tech": ["엑셀함수", "클라우드백업", "사진정리"],
-    "parenting": ["유아영어", "아기놀이", "아기수면교육"],
+    "parenting": ["아기놀이", "아기수면교육", "이유식", "아기발달", "신생아육아"],
     "travel": ["국내여행지", "당일치기여행", "캠핑장추천"],
 }
 
