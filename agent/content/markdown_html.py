@@ -34,6 +34,13 @@ def escape_html(value: str) -> str:
     )
 
 
+_TASK_CHECKBOX_RE = re.compile(r"^\[[ xX]\]\s*")
+
+
+def _strip_task_checkbox(text: str) -> str:
+    return _TASK_CHECKBOX_RE.sub("", str(text or "")).strip()
+
+
 def _inline_md(text: str, *, seed: str = "") -> str:
     escaped = escape_html(text)
 
@@ -212,7 +219,7 @@ def markdown_to_html(markdown: str) -> str:
                 break
         else:
             if re.match(r"^[-*]\s+", line):
-                item_text = re.sub(r"^[-*]\s+", "", line)
+                item_text = _strip_task_checkbox(re.sub(r"^[-*]\s+", "", line))
                 if not in_list:
                     html.append(
                         '<ul style="margin:0.8em 0 1.6em;padding-left:1.4em;line-height:1.85;'

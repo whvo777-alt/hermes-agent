@@ -39,6 +39,8 @@ from agent.content.images.hero_image import _korean_font  # shared font lookup
 from agent.content.images.style_rotation import choose_card_skin, choose_style
 from agent.content.images.text_fit import wrap_text as _wrap
 
+_MAX_CHECKLIST_ITEMS = 10
+
 _PALETTES: Dict[str, Tuple[str, str, str]] = {
     # (accent/main, deep header, light tint)
     "health": ("#2e7d32", "#1b4d21", "#f1f8f2"),
@@ -83,6 +85,7 @@ _STEP_RE = re.compile(r"^###\s+(\d+단계\s*[:：]?\s*.+)$")
 _NUMBERED_ITEM_RE = re.compile(r"^(\d+)\.\s+(.+)$")
 _NUMBERED_DESC_RE = re.compile(r"^:\s*(.+)$")
 _BULLET_RE = re.compile(r"^[-*]\s+(.+)$")
+_TASK_CHECKBOX_RE = re.compile(r"^\[[ xX]\]\s*")
 _BAD_EXAMPLE_RE = re.compile(r"^나쁜\s*예\s*(?:→|->|:|：)\s*(.+)$")
 _GOOD_EXAMPLE_RE = re.compile(r"^고친\s*예\s*(?:→|->|:|：)\s*(.+)$")
 # Deliberately requires an explicit Q:/질문:-style marker rather than
@@ -149,6 +152,10 @@ def _clean_inline(text: str) -> str:
     value = re.sub(r"`([^`]*)`", r"\1", value)
     value = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _strip_task_checkbox(text: str) -> str:
+    return _TASK_CHECKBOX_RE.sub("", str(text or "")).strip()
 
 
 def _display_title(heading: str) -> str:
@@ -326,9 +333,17 @@ def _extract_bullets(lines: List[str], *, base: int) -> Tuple[List[str], List[Tu
     for i, line in enumerate(lines):
         m = _BULLET_RE.match(line)
         if m:
-            items.append(_clean_inline(m.group(1)))
+            items.append(_strip_task_checkbox(_clean_inline(m.group(1))))
             ranges.append((base + i, base + i))
     return items, ranges
+
+
+def _contains_task_checkbox(lines: List[str]) -> bool:
+    for line in lines:
+        match = _BULLET_RE.match(line)
+        if match and _TASK_CHECKBOX_RE.match(match.group(1)):
+            return True
+    return False
 
 
 def _find_gauge_stat(items: List[str]) -> Optional[Tuple[str, str, str, List[str]]]:
@@ -412,7 +427,16 @@ def _build_spec_for_section(heading: str, section_lines: List[str], *, base: int
 
     bullet_items, bullet_ranges = _extract_bullets(section_lines, base=base)
     if len(bullet_items) >= 3:
-        checklist_items, checklist_ranges = bullet_items[:5], bullet_ranges[:5]
+        checklist_items, checklist_ranges = (
+            bullet_items[:_MAX_CHECKLIST_ITEMS],
+            bullet_ranges[:_MAX_CHECKLIST_ITEMS],
+        )
+        if _contains_task_checkbox(section_lines):
+            return InfographicSpec(
+                heading=heading, display_title=display_title, shape="bullets",
+                eligible_styles=("checklist",),
+                items=checklist_items, strip_ranges=checklist_ranges,
+            )
         gauge = _find_gauge_stat(bullet_items)
         if gauge is not None:
             number, unit, label, sub_items = gauge
@@ -628,7 +652,7 @@ _HEADER_H = 100  # top margin reserved for the label strip (was 148 for the old 
 def _render_checklist_card(spec: InfographicSpec, output_path: str, *, category_id: str) -> str:
     from PIL import Image, ImageDraw
 
-    items = spec.items[:5]
+    items = spec.items[:_MAX_CHECKLIST_ITEMS]
     width = 1200
     row_h = 96
     height = _HEADER_H + 20 + len(items) * row_h + 40
@@ -1378,7 +1402,7 @@ def _render_checklist_card_skin_a(spec: InfographicSpec, output_path: str, *, ca
 
     accent, _deep, _tint = _PALETTES.get(category_id, _DEFAULT_PALETTE)
     accent_rgb = _rgb(accent)
-    items = spec.items[:5]
+    items = spec.items[:_MAX_CHECKLIST_ITEMS]
     width = 1200
     item_font = _korean_font(28)
 
@@ -1414,7 +1438,7 @@ def _render_checklist_card_skin_a(spec: InfographicSpec, output_path: str, *, ca
 def _render_checklist_card_skin_b(spec: InfographicSpec, output_path: str, *, category_id: str) -> str:
     from PIL import Image, ImageDraw
 
-    items = spec.items[:5]
+    items = spec.items[:_MAX_CHECKLIST_ITEMS]
     width = 1200
     item_font = _korean_font(28)
     rail_w = 26
