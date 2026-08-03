@@ -49,11 +49,11 @@ _CATEGORY_PROFILES = {
 # existing core keyword lists. Naver's keywordstool accepts at most 5
 # seeds per call (see naver_ad_client._MAX_SEEDS_PER_CALL).
 SEED_KEYWORDS_BY_CATEGORY: Dict[str, List[str]] = {
-    "self-dev": ["시간관리", "독서습관", "집중력향상", "아침루틴", "목표설정"],
+    "self-dev": ["시간관리", "목표설정", "습관", "계획표", "생산성"],
     "health": ["다이어트식단", "홈트레이닝", "수면부족"],
     "finance": ["적금추천", "신용점수", "ETF추천"],
     "it-tech": ["엑셀함수", "클라우드백업", "사진정리"],
-    "parenting": ["아기놀이", "아기수면교육", "이유식", "아기발달", "신생아육아"],
+    "parenting": ["이유식", "유아놀이", "육아", "아기수면교육"],
     "travel": ["국내여행지", "당일치기여행", "캠핑장추천"],
 }
 
@@ -197,7 +197,7 @@ _PURCHASE_INTENT_TERMS = frozenset({
     "헬스장", "필라테스", "크로스핏", "요가원", "도시락", "볶음밥", "컵밥",
     "KODEX", "코덱스", "TIGER", "ACE", "PLUS", "SOL", "TQQQ", "SOXL", "QQQ",
     "PLUSETF", "SOLETF", "SOLACTIVE",
-    "주가", "시세", "환율", "증시", "지수", "매수종목", "추천종목", "종목추천",
+    "주가", "시세", "환율", "증시", "지수", "매수종목", "추천종목", "종목추천", "선물",
     "유망주", "투자클럽",
 })
 _PURCHASE_INTENT_ALPHA_BOUNDARY_TERMS = frozenset({"ACE", "SOL", "PLUS"})
@@ -211,6 +211,9 @@ _PURCHASE_INTENT_SANITIZE_PHRASES = (
     "가볼만한곳",
     "수상레저",
     "자격증",
+    "선물거래",
+    "해외선물",
+    "선물옵션",
 )
 _VOLUME_SUFFIX_RE = re.compile(
     r"\d+(?:\.\d+)?\s*(?:mg|g|kg|ml|l|밀리그램|그램|킬로그램|밀리리터|리터)$",

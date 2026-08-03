@@ -35,11 +35,11 @@ def _candidate(
 
 def test_seed_lists_are_specific_and_include_travel() -> None:
     assert ke.SEED_KEYWORDS_BY_CATEGORY == {
-        "self-dev": ["시간관리", "독서습관", "집중력향상", "아침루틴", "목표설정"],
+        "self-dev": ["시간관리", "목표설정", "습관", "계획표", "생산성"],
         "health": ["다이어트식단", "홈트레이닝", "수면부족"],
         "finance": ["적금추천", "신용점수", "ETF추천"],
         "it-tech": ["엑셀함수", "클라우드백업", "사진정리"],
-        "parenting": ["아기놀이", "아기수면교육", "이유식", "아기발달", "신생아육아"],
+        "parenting": ["이유식", "유아놀이", "육아", "아기수면교육"],
         "travel": ["국내여행지", "당일치기여행", "캠핑장추천"],
     }
 
@@ -230,6 +230,22 @@ def test_known_cross_boundary_phrases_are_removed_before_purchase_matching() -> 
 
     assert all(not ke._is_purchase_intent_blocked(keyword) for keyword in kept)
     assert all(ke._is_purchase_intent_blocked(keyword) for keyword in blocked)
+
+
+def test_gift_terms_preserve_finance_and_block_purchase_intent() -> None:
+    expected = {
+        "선물거래": False,
+        "해외선물": False,
+        "선물옵션": False,
+        "출산선물": True,
+        "돌아기선물": True,
+        "아기돌선물": True,
+    }
+
+    assert {
+        keyword: ke._is_purchase_intent_blocked(keyword)
+        for keyword in expected
+    } == expected
 
 
 def test_short_english_purchase_terms_require_alpha_boundaries() -> None:
