@@ -27,7 +27,7 @@ from agent.content.config.launch_policy import get_launch_category
 from agent.content.config.platforms import Platform, find_platform
 from agent.content.images.hero_image import HeroImage, insert_hero_image
 from agent.content.images.title_card import create_title_card
-from agent.content.markdown_html import extract_title
+from agent.content.markdown_html import extract_title, markdown_to_tistory_html
 from agent.content.learning.feedback import get_recent_feedback
 from agent.content.memory.content_memory import (
     _normalize_text,
@@ -57,6 +57,54 @@ def _drafts_dir(date: str) -> Path:
     override = os.environ.get("HERMES_CONTENT_DRAFTS_DIR")
     base = Path(override) if override else _REPO_ROOT / "data" / "content_drafts"
     return base / date
+
+
+_META_DELIM_RE = re.compile(r"\n-{3,}\s*META\s*-{3,}\s*\n?", re.I)
+_FRONTMATTER_RE = re.compile(r"\A(---[^\n]*\n.*?\n---[^\n]*(?:\n|$))", re.S)
+
+
+def _split_meta_block(markdown: str) -> tuple[str, str, bool]:
+    value = str(markdown or "")
+    parts = _META_DELIM_RE.split(value, maxsplit=1)
+    if len(parts) == 2:
+        return parts[0].rstrip(), parts[1].strip(), True
+    return value, "", False
+
+
+def _strip_leading_h1(markdown: str) -> str:
+    value = str(markdown or "")
+    frontmatter_match = _FRONTMATTER_RE.match(value)
+    frontmatter = frontmatter_match.group(1) if frontmatter_match else ""
+    body = value[len(frontmatter):]
+    body = re.sub(r"^#\s+[^\n]*(?:\n|$)", "", body, count=1, flags=re.M)
+    return f"{frontmatter}{body}"
+
+
+def _save_draft_files(
+    platform_dir: Path,
+    markdown: str,
+    *,
+    separate_meta: bool = False,
+    platform_id: Optional[str] = None,
+) -> tuple[Path, Optional[Path], str]:
+    body, notes, has_meta = _split_meta_block(markdown) if separate_meta else (markdown, "", False)
+    if separate_meta:
+        body = _strip_leading_h1(body)
+    platform_dir.mkdir(parents=True, exist_ok=True)
+
+    blog_file = platform_dir / "blog.md"
+    blog_file.write_text(body, encoding="utf-8")
+    if platform_id == "tistory":
+        (platform_dir / "blog.tistory.html").write_text(
+            markdown_to_tistory_html(body),
+            encoding="utf-8",
+        )
+
+    notes_file: Optional[Path] = None
+    if has_meta:
+        notes_file = platform_dir / "notes.md"
+        notes_file.write_text(f"{notes}\n" if notes else "", encoding="utf-8")
+    return blog_file, notes_file, body
 
 
 def _pick_daily_topic(
@@ -292,9 +340,12 @@ def generate_platform_draft(
         seo_title_rewrite_failed=prepared_title["rewrite_failed"],
     )
 
-    platform_dir.mkdir(parents=True, exist_ok=True)
-    blog_file = platform_dir / "blog.md"
-    blog_file.write_text(blog_content, encoding="utf-8")
+    blog_file, _notes_file, blog_content = _save_draft_files(
+        platform_dir,
+        blog_content,
+        separate_meta=platform.id == "tistory",
+        platform_id=platform.id,
+    )
 
     added = add_content(
         memory,

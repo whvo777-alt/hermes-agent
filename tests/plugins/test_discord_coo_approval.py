@@ -1374,6 +1374,139 @@ class TestDiscordDailyBlogRenderWiring(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(kwargs["files"]), 1)
         self.assertEqual(kwargs["files"][0]["filename"], "blog.md")
 
+    async def test_send_tistory_card_attaches_html_image_and_markdown_in_order(self) -> None:
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from gateway.config import PlatformConfig
+        from plugins.platforms.discord.adapter import DiscordAdapter
+
+        with tempfile.TemporaryDirectory() as directory:
+            html_file = Path(directory) / "blog.tistory.html"
+            image_file = Path(directory) / "hero.svg"
+            blog_file = Path(directory) / "blog.md"
+            for path in (html_file, image_file, blog_file):
+                path.write_text(path.name, encoding="utf-8")
+            item = TestDiscordDailyBlogApproval()._item_payload(
+                platform="tistory",
+                platform_label="티스토리",
+                blog_file=str(blog_file),
+                image={"file": str(image_file)},
+            )
+            sent_msg = SimpleNamespace(id=778)
+            channel = SimpleNamespace(send=AsyncMock(return_value=sent_msg))
+            adapter = DiscordAdapter(PlatformConfig(enabled=True, token="token"))
+            adapter._client = SimpleNamespace(
+                get_channel=lambda _cid: channel,
+                fetch_channel=AsyncMock(),
+            )
+            fake_discord = SimpleNamespace(
+                File=lambda path, filename: {"path": path, "filename": filename}
+            )
+            with patch(
+                "plugins.platforms.discord.adapter.DISCORD_AVAILABLE", True
+            ), patch(
+                "plugins.platforms.discord.adapter.discord", fake_discord
+            ), patch.object(
+                coo_approval,
+                "prepare_daily_blog_approval_render_items",
+                return_value=(object(), object()),
+            ):
+                result = await adapter.send_daily_blog_approval("555", item)
+
+        self.assertTrue(result.success)
+        kwargs = channel.send.await_args.kwargs
+        self.assertEqual(
+            [file["filename"] for file in kwargs["files"]],
+            ["blog.tistory.html", "hero.svg", "blog.md"],
+        )
+        self.assertEqual(len(kwargs["files"]), 3)
+
+    async def test_send_tistory_card_skips_missing_files_and_keeps_card_successful(self) -> None:
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from gateway.config import PlatformConfig
+        from plugins.platforms.discord.adapter import DiscordAdapter
+
+        with tempfile.TemporaryDirectory() as directory:
+            blog_file = Path(directory) / "blog.md"
+            blog_file.write_text("# 전체 원고", encoding="utf-8")
+            item = TestDiscordDailyBlogApproval()._item_payload(
+                platform="tistory",
+                platform_label="티스토리",
+                blog_file=str(blog_file),
+                image={"file": str(Path(directory) / "missing.svg")},
+            )
+            sent_msg = SimpleNamespace(id=779)
+            channel = SimpleNamespace(send=AsyncMock(return_value=sent_msg))
+            adapter = DiscordAdapter(PlatformConfig(enabled=True, token="token"))
+            adapter._client = SimpleNamespace(
+                get_channel=lambda _cid: channel,
+                fetch_channel=AsyncMock(),
+            )
+            fake_discord = SimpleNamespace(
+                File=lambda path, filename: {"path": path, "filename": filename}
+            )
+            with patch(
+                "plugins.platforms.discord.adapter.DISCORD_AVAILABLE", True
+            ), patch(
+                "plugins.platforms.discord.adapter.discord", fake_discord
+            ), patch.object(
+                coo_approval,
+                "prepare_daily_blog_approval_render_items",
+                return_value=(object(), object()),
+            ):
+                result = await adapter.send_daily_blog_approval("555", item)
+
+        self.assertTrue(result.success)
+        kwargs = channel.send.await_args.kwargs
+        self.assertEqual([file["filename"] for file in kwargs["files"]], ["blog.md"])
+
+    async def test_send_tistory_card_survives_attachment_preparation_error(self) -> None:
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from gateway.config import PlatformConfig
+        from plugins.platforms.discord.adapter import DiscordAdapter
+
+        with tempfile.TemporaryDirectory() as directory:
+            item = TestDiscordDailyBlogApproval()._item_payload(
+                platform="tistory",
+                platform_label="티스토리",
+                blog_file=str(Path(directory) / "blog.md"),
+                image={"file": str(Path(directory) / "hero.svg")},
+            )
+            sent_msg = SimpleNamespace(id=780)
+            channel = SimpleNamespace(send=AsyncMock(return_value=sent_msg))
+            adapter = DiscordAdapter(PlatformConfig(enabled=True, token="token"))
+            adapter._client = SimpleNamespace(
+                get_channel=lambda _cid: channel,
+                fetch_channel=AsyncMock(),
+            )
+            fake_discord = SimpleNamespace(
+                File=lambda path, filename: {"path": path, "filename": filename}
+            )
+            with patch(
+                "plugins.platforms.discord.adapter.DISCORD_AVAILABLE", True
+            ), patch(
+                "plugins.platforms.discord.adapter.discord", fake_discord
+            ), patch(
+                "plugins.platforms.discord.adapter.os.path.isfile",
+                side_effect=OSError("stat failed"),
+            ), patch.object(
+                coo_approval,
+                "prepare_daily_blog_approval_render_items",
+                return_value=(object(), object()),
+            ):
+                result = await adapter.send_daily_blog_approval("555", item)
+
+        self.assertTrue(result.success)
+        self.assertNotIn("files", channel.send.await_args.kwargs)
+
 
 class TestDiscordCooApprovalInteractionViewRefresh(unittest.IsolatedAsyncioTestCase):
     def _mock_interaction(self, user_id: int = 987654321012345678):

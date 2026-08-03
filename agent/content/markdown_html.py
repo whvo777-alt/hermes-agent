@@ -280,6 +280,191 @@ def markdown_to_html(markdown: str) -> str:
     return "\n".join(html)
 
 
+_TISTORY_H2_STYLE = "border-left:6px solid #2f6fa8;padding-left:14px;margin-top:50px;color:#16324f;"
+_TISTORY_H3_STYLE = "color:#1b4f80;margin-top:34px;"
+_TISTORY_TABLE_STYLE = "width:100%;border-collapse:collapse;margin:22px 0;"
+_TISTORY_TH_STYLE = (
+    "border:1px solid #dde3ea;padding:10px 12px;text-align:left;"
+    "background-color:#eef5fb;color:#1b4f80;"
+)
+_TISTORY_TD_STYLE = "border:1px solid #dde3ea;padding:10px 12px;"
+_TISTORY_BLOCKQUOTE_STYLE = (
+    "background-color:#f5f6f8;border:1px solid #e1e4e8;padding:16px 18px;"
+    "margin:20px 0;border-radius:4px;text-align:center;font-weight:bold;color:#333333;"
+)
+_TISTORY_TOC_STYLE = (
+    "background-color:#f7f9fb;border:1px solid #e3e8ee;padding:18px 24px;"
+    "margin:28px 0;border-radius:6px;"
+)
+_TISTORY_CHECKLIST_STYLE = (
+    "background-color:#f6faf6;border:1px solid #d7e8d7;padding:20px 24px;"
+    "margin:26px 0;border-radius:6px;"
+)
+_TISTORY_CORE_STYLE = (
+    "background-color:#eef5fb;border-left:5px solid #2f6fa8;padding:16px 20px;"
+    "margin:26px 0;border-radius:4px;"
+)
+_TISTORY_CAUTION_STYLE = (
+    "background-color:#fff6e5;border-left:5px solid #e09b2d;padding:16px 20px;"
+    "margin:26px 0;border-radius:4px;"
+)
+_TISTORY_DISCLAIMER_STYLE = (
+    "background-color:#f5f5f5;border:1px dashed #cccccc;padding:14px 18px;"
+    "margin:24px 0;border-radius:4px;color:#666666;font-size:0.95em;"
+)
+
+
+def _replace_tistory_heading_styles(html: str) -> str:
+    h2_number = 0
+
+    def replace_h2(match: re.Match) -> str:
+        nonlocal h2_number
+        inner = match.group(1)
+        plain_text = re.sub(r"<[^>]+>", "", inner).replace("▶", "").strip()
+        number = ""
+        if plain_text != "목차":
+            h2_number += 1
+            number = f'<span style="color:#16324f;">{h2_number}. </span>'
+        inner = re.sub(r"color\s*:[^;\"]+;?", "color:#16324f;", inner)
+        return (
+            f'<h2 style="{_TISTORY_H2_STYLE}">'
+            f"{number}{inner}</h2>"
+        )
+
+    def replace_h3(match: re.Match) -> str:
+        inner = re.sub(r"color\s*:[^;\"]+;?", "color:#1b4f80;", match.group(1))
+        return f'<h3 style="{_TISTORY_H3_STYLE}">{inner}</h3>'
+
+    html = re.sub(r"<h2\b[^>]*>(.*?)</h2>", replace_h2, html, flags=re.S)
+    return re.sub(r"<h3\b[^>]*>(.*?)</h3>", replace_h3, html, flags=re.S)
+
+
+def _replace_tistory_table_styles(html: str) -> str:
+    def style_table(match: re.Match) -> str:
+        table = re.sub(r"<table\b[^>]*>", f'<table style="{_TISTORY_TABLE_STYLE}">', match.group(0), count=1)
+        table = re.sub(r"<th\b[^>]*>", f'<th style="{_TISTORY_TH_STYLE}">', table)
+
+        def style_row(row_match: re.Match) -> str:
+            column = 0
+
+            def style_cell(cell_match: re.Match) -> str:
+                nonlocal column
+                first_column = "font-weight:bold;" if column == 0 else ""
+                column += 1
+                return f'<td style="{_TISTORY_TD_STYLE}{first_column}">'
+
+            return re.sub(r"<td\b[^>]*>", style_cell, row_match.group(0))
+
+        return re.sub(r"<tr\b[^>]*>.*?</tr>", style_row, table, flags=re.S)
+
+    return re.sub(r"<table\b[^>]*>.*?</table>", style_table, html, flags=re.S)
+
+
+def _replace_tistory_callout(html: str, label: str, box_style: str, label_style: str) -> str:
+    pattern = re.compile(
+        rf"<p\b[^>]*><strong\b[^>]*>{re.escape(label)}(.*?)</strong></p>",
+        flags=re.S,
+    )
+    return pattern.sub(
+        lambda match: (
+            f'<div style="{box_style}">'
+            f'<span style="{label_style}">{label}</span>{match.group(1)}</div>'
+        ),
+        html,
+    )
+
+
+def _replace_tistory_sections(html: str) -> str:
+    toc_pattern = re.compile(
+        r"(<h2\b[^>]*>(?:(?!</h2>).)*?목차(?:(?!</h2>).)*?</h2>)"
+        r"(?P<body>(?:(?!<h[12]\b).)*?)(?=<h[12]\b|$)",
+        flags=re.S,
+    )
+
+    def wrap_toc(match: re.Match) -> str:
+        body = match.group("body").strip()
+        return f'<div style="{_TISTORY_TOC_STYLE}">{match.group(1)}{body}</div>\n'
+
+    html = toc_pattern.sub(wrap_toc, html)
+    checklist_pattern = re.compile(
+        r"(<h3\b[^>]*>(?:(?!</h3>).)*?체크리스트(?:(?!</h3>).)*?</h3>\s*<ul\b[^>]*>.*?</ul>)",
+        flags=re.S,
+    )
+    return checklist_pattern.sub(
+        lambda match: f'<div style="{_TISTORY_CHECKLIST_STYLE}">{match.group(1).strip()}</div>',
+        html,
+    )
+
+
+def _remove_leading_h1(html: str) -> str:
+    return re.sub(r"^\s*<h1\b[^>]*>.*?</h1>\s*", "", html, count=1, flags=re.S | re.I)
+
+
+def _remove_leading_representative_image(html: str) -> str:
+    pattern = re.compile(
+        r"^\s*<p\b[^>]*>\s*<img\b[^>]*\bsrc=[\"']data:image/[^\"']+[\"'][^>]*>\s*</p>\s*"
+        r"(?:<p\b[^>]*>.*?</p>|<blockquote\b[^>]*>.*?</blockquote>|<div\b[^>]*>.*?</div>)?",
+        flags=re.S | re.I,
+    )
+    return pattern.sub("", html, count=1)
+
+
+def _remove_platform_metadata_tail(html: str) -> str:
+    metadata_h2 = re.search(
+        r"<h2\b[^>]*>(?:(?!</h2>).)*(?:내부링크 후보|대표 이미지)(?:(?!</h2>).)*</h2>",
+        html,
+        flags=re.S,
+    )
+    return html[: metadata_h2.start()] if metadata_h2 else html
+
+
+def markdown_to_tistory_html(markdown: str) -> str:
+    """Convert Markdown to Tistory paste-ready HTML with inline styles only."""
+    html = markdown_to_html(markdown)
+    html = _remove_leading_h1(html)
+    html = _remove_leading_representative_image(html)
+    html = _remove_platform_metadata_tail(html)
+    html = re.sub(r"<hr\b[^>]*/?>", "", html, flags=re.I)
+    html = re.sub(
+        r"<blockquote\b[^>]*>(.*?)</blockquote>",
+        lambda match: f'<div style="{_TISTORY_BLOCKQUOTE_STYLE}">{match.group(1)}</div>',
+        html,
+        flags=re.S,
+    )
+    html = _replace_tistory_table_styles(html)
+    html = _replace_tistory_heading_styles(html)
+    html = _replace_tistory_callout(
+        html,
+        "핵심:",
+        _TISTORY_CORE_STYLE,
+        "color:#1b4f80;font-weight:bold;",
+    )
+    html = _replace_tistory_callout(
+        html,
+        "주의:",
+        _TISTORY_CAUTION_STYLE,
+        "color:#a86a10;font-weight:bold;",
+    )
+    html = _replace_tistory_callout(
+        html,
+        "면책:",
+        _TISTORY_DISCLAIMER_STYLE,
+        "font-weight:bold;",
+    )
+    html = re.sub(
+        r"<strong\b[^>]*>(.*?)</strong>",
+        r'<strong style="color:#c0392b;">\1</strong>',
+        html,
+        flags=re.S,
+    )
+    html = re.sub(
+        r"==([^=\n]+)==",
+        r'<span style="background-color:#fff3a8;">\1</span>',
+        html,
+    )
+    return _replace_tistory_sections(html)
+
+
 def extract_title(markdown: str, fallback: str = "제목 없음") -> str:
     match = re.search(r"^#\s+(.+)$", markdown or "", flags=re.M) or re.search(
         r"^제목(?: \(H1\))?:\s*(.+)$", markdown or "", flags=re.M

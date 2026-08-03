@@ -181,10 +181,17 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
     if platform_id == "tistory":
         if not re.search(r"목차", enhanced):
             enhanced = f"## 목차\n1. {topic_title} 핵심 요약\n2. 기준과 체크리스트\n3. 실전 적용 방법\n4. 마무리\n\n{enhanced}"
+        meta_lines: List[str] = []
         if not re.search(r"내부링크|관련 글|함께 읽", enhanced):
-            enhanced = _append_to_body(enhanced, f"## 내부링크 후보\n- {category_name} 기본 가이드\n- {topic_title} 체크리스트\n- {category_name} 관련 최신 글")
+            meta_lines.extend([
+                "## 내부링크 후보",
+                f"- {category_name} 기본 가이드",
+                f"- {topic_title} 체크리스트",
+                f"- {category_name} 관련 최신 글",
+            ])
         if not re.search(r"대표 이미지 ALT|이미지 ALT|ALT", enhanced):
-            enhanced = _append_to_body(enhanced, f"대표 이미지 ALT: {topic_title}를 이해하기 쉽게 정리한 {category_name} 카드형 대표 이미지")
+            meta_lines.append(f"대표 이미지 ALT: {topic_title}를 이해하기 쉽게 정리한 {category_name} 카드형 대표 이미지")
+        enhanced = _ensure_meta_block(enhanced, meta_lines)
 
     if platform_id in ("blogspot", "wordpress"):
         # Force Hangul slug lines — replace English-only writer slugs.

@@ -5392,12 +5392,47 @@ class DiscordAdapter(BasePlatformAdapter):
             if not channel:
                 channel = await self._client.fetch_channel(int(target_id))
 
-            # Hero image attachments were noisy in the approval channel — only
-            # the full markdown draft is attached for review.
             files = []
             blog_file = str(item_payload.get("blog_file") or "")
-            if blog_file and os.path.isfile(blog_file):
-                files.append(discord.File(blog_file, filename=os.path.basename(blog_file)))
+            platform_id = str(item_payload.get("platform") or "").lower()
+            if platform_id == "tistory":
+                html_file = ""
+                try:
+                    if blog_file:
+                        html_file = str(_Path(blog_file).with_name("blog.tistory.html"))
+                except Exception as exc:  # pragma: no cover - defensive path handling
+                    logger.warning("[%s] Failed to prepare Tistory HTML attachment: %s", self.name, exc)
+                try:
+                    image_payload = item_payload.get("image") or {}
+                    image_file = (
+                        str(image_payload.get("file") or "")
+                        if isinstance(image_payload, dict)
+                        else ""
+                    )
+                except Exception as exc:  # pragma: no cover - defensive payload handling
+                    logger.warning("[%s] Failed to prepare Tistory image attachment: %s", self.name, exc)
+                    image_file = ""
+                attachment_specs = [
+                    (html_file, "blog.tistory.html"),
+                    (image_file, os.path.basename(image_file) if image_file else ""),
+                    (blog_file, "blog.md"),
+                ]
+            else:
+                attachment_specs = [(blog_file, os.path.basename(blog_file) if blog_file else "")]
+
+            for file_path, filename in attachment_specs:
+                if not file_path:
+                    continue
+                try:
+                    if os.path.isfile(file_path):
+                        files.append(discord.File(file_path, filename=filename))
+                except Exception as exc:  # pragma: no cover - attachment must not block card
+                    logger.warning(
+                        "[%s] Skipping approval attachment %s: %s",
+                        self.name,
+                        file_path,
+                        exc,
+                    )
 
             send_kwargs: Dict[str, Any] = {"embed": embed, "view": view}
             if files:
