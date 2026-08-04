@@ -148,7 +148,7 @@ def test_inline_strong_text_is_red():
 
 
 def test_leading_h1_is_removed(monkeypatch):
-    monkeypatch.setattr(markdown_html, "markdown_to_html", lambda _: "<h1>제목</h1><p>본문</p>")
+    monkeypatch.setattr(markdown_html, "markdown_to_html", lambda _, **kwargs: "<h1>제목</h1><p>본문</p>")
 
     html = markdown_html.markdown_to_tistory_html("무시되는 입력")
 
@@ -163,7 +163,7 @@ def test_leading_base64_image_and_caption_are_removed(monkeypatch):
         '<p>대표 이미지 캡션</p>'
         '<p>본문</p>'
     )
-    monkeypatch.setattr(markdown_html, "markdown_to_html", lambda _: base_html)
+    monkeypatch.setattr(markdown_html, "markdown_to_html", lambda _, **kwargs: base_html)
 
     html = markdown_html.markdown_to_tistory_html("무시되는 입력")
 
@@ -177,7 +177,7 @@ def test_platform_metadata_h2_cuts_the_remaining_html(monkeypatch):
         "<h2>본문 섹션</h2><p>본문</p>"
         "<h2>내부링크 후보</h2><ul><li>제작 메모</li></ul>"
     )
-    monkeypatch.setattr(markdown_html, "markdown_to_html", lambda _: base_html)
+    monkeypatch.setattr(markdown_html, "markdown_to_html", lambda _, **kwargs: base_html)
 
     html = markdown_html.markdown_to_tistory_html("무시되는 입력")
 
@@ -187,10 +187,24 @@ def test_platform_metadata_h2_cuts_the_remaining_html(monkeypatch):
 
 
 def test_converter_uses_base_result_and_never_emits_style_block(monkeypatch):
-    monkeypatch.setattr(markdown_html, "markdown_to_html", lambda _: "<p>기본</p><hr>")
+    monkeypatch.setattr(markdown_html, "markdown_to_html", lambda _, **kwargs: "<p>기본</p><hr>")
 
     html = markdown_html.markdown_to_tistory_html("무시되는 입력")
 
     assert "기본" in html
     assert "<hr" not in html
     assert "<style" not in html.lower()
+
+
+def test_converter_calls_base_renderer_with_plain_true(monkeypatch):
+    calls = []
+
+    def fake_markdown_to_html(markdown, **kwargs):
+        calls.append((markdown, kwargs))
+        return "<p>기본</p>"
+
+    monkeypatch.setattr(markdown_html, "markdown_to_html", fake_markdown_to_html)
+
+    markdown_html.markdown_to_tistory_html("무시되는 입력")
+
+    assert calls == [("무시되는 입력", {"plain": True})]
