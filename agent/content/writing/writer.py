@@ -397,7 +397,7 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
     length_h2_line = (
         "- H1 1개, H2 6~7개(실전 사례·FAQ 섹션 포함), 본문 5,500~7,500자. 개인차 안내를 포함한다."
         if platform_id in ("wordpress", "blogspot")
-        else "- H1 1개, H2 4~5개, 본문 4,000~6,500자. 개인차 안내를 포함한다."
+        else "- H1 1개, H2 5~6개, 본문 4,000~6,500자. 개인차 안내를 포함한다." if platform_id == "tistory" else "- H1 1개, H2 4~5개, 본문 4,000~6,500자. 개인차 안내를 포함한다."
     )
 
     user = f"""카테고리: {category_name}
