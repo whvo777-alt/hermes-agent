@@ -405,7 +405,7 @@ def _replace_tistory_heading_styles(html: str) -> str:
         number = ""
         if plain_text != "목차":
             h2_number += 1
-            number = f'<span style="color:#16324f;">{h2_number}. </span>'
+            number = f"{h2_number}. "
         inner = re.sub(r"color\s*:[^;\"]+;?", "color:#16324f;", inner)
         return (
             f'<h2 style="{_TISTORY_H2_STYLE}">'
@@ -448,33 +448,81 @@ def _replace_tistory_callout(html: str, label: str, box_style: str, label_style:
     )
     return pattern.sub(
         lambda match: (
-            f'<div style="{box_style}">'
-            f'<span style="{label_style}">{label}</span>{match.group(1)}</div>'
+            f'<div style="{box_style}">{match.group(1).strip()}</div>'
+            if label == "면책:"
+            else (
+                f'<div style="{box_style}">'
+                f'<span style="{label_style}">{label[:-1]} &middot; '
+                f'{match.group(1).strip()}</span></div>'
+            )
         ),
         html,
     )
 
 
+def _replace_tistory_image_placeholders(html: str) -> str:
+    pattern = re.compile(
+        r'<p\b[^>]*>::이미지::</p>\s*'
+        r'<p\b[^>]*>설명:\s*(.*?)</p>\s*'
+        r'<p\b[^>]*>프롬프트:\s*(.*?)</p>\s*'
+        r'<p\b[^>]*>::이미지끝::</p>',
+        flags=re.S,
+    )
+    image_number = 0
+
+    def replace_image(match: re.Match) -> str:
+        nonlocal image_number
+        image_number += 1
+        description = match.group(1).strip()
+        prompt = match.group(2).strip()
+        return (
+            '<div style="background-color:#fffbe6;border:2px dashed #d4b95e;'
+            'padding:16px 20px;margin:26px 0;border-radius:6px;">\n'
+            f'<p style="margin:0 0 8px 0;font-weight:bold;color:#8a6d1f;">'
+            f'[이미지 {image_number}] 여기에 이미지를 넣고 이 박스는 지우세요</p>\n'
+            f'<p style="margin:0 0 6px 0;color:#7a6522;">설명 : {description}</p>\n'
+            f'<p style="margin:0;color:#7a6522;">프롬프트 : {prompt}</p>\n'
+            '</div>'
+        )
+
+    return pattern.sub(replace_image, html)
+
+
 def _replace_tistory_sections(html: str) -> str:
     toc_pattern = re.compile(
-        r"(<h2\b[^>]*>(?:(?!</h2>).)*?목차(?:(?!</h2>).)*?</h2>)"
-        r"(?P<body>(?:(?!<h[12]\b).)*?)(?=<h[12]\b|$)",
+        r"<h2\b[^>]*>(?P<title>(?:(?!</h2>).)*?목차(?:(?!</h2>).)*?)</h2>\s*"
+        r"<ol\b[^>]*>(?P<body>.*?)</ol>",
         flags=re.S,
     )
 
     def wrap_toc(match: re.Match) -> str:
         body = match.group("body").strip()
-        return f'<div style="{_TISTORY_TOC_STYLE}">{match.group(1)}{body}</div>\n'
+        return (
+            f'<div style="{_TISTORY_TOC_STYLE}">'
+            '<p style="margin:0 0 10px 0;font-weight:bold;color:#16324f;">'
+            f'{match.group("title")}</p>'
+            '<ol style="margin:0;padding-left:22px;color:#40566b;">'
+            f"{body}</ol></div>\n"
+        )
 
     html = toc_pattern.sub(wrap_toc, html)
     checklist_pattern = re.compile(
-        r"(<h3\b[^>]*>(?:(?!</h3>).)*?체크리스트(?:(?!</h3>).)*?</h3>\s*<ul\b[^>]*>.*?</ul>)",
+        r"<h3\b[^>]*>(?P<title>(?:(?!</h3>).)*?체크리스트(?:(?!</h3>).)*?)</h3>\s*"
+        r"<ul\b[^>]*>(?P<body>.*?)</ul>",
         flags=re.S,
     )
-    return checklist_pattern.sub(
-        lambda match: f'<div style="{_TISTORY_CHECKLIST_STYLE}">{match.group(1).strip()}</div>',
-        html,
-    )
+
+    def wrap_checklist(match: re.Match) -> str:
+        body = match.group("body").strip()
+        return (
+            f'<div style="{_TISTORY_CHECKLIST_STYLE}">'
+            '<p style="margin:0 0 12px 0;font-weight:bold;color:#2b6b3f;">'
+            f'{match.group("title")}</p>'
+            '<ul style="margin:0;padding-left:22px;color:#33553f;">'
+            f"{body}</ul></div>"
+        )
+
+    return checklist_pattern.sub(wrap_checklist, html)
 
 
 def _remove_leading_h1(html: str) -> str:
@@ -499,6 +547,49 @@ def _remove_platform_metadata_tail(html: str) -> str:
     return html[: metadata_h2.start()] if metadata_h2 else html
 
 
+def _replace_tistory_faq_boxes(html: str) -> str:
+    pattern = re.compile(
+        r"<p\b[^>]*>(Q\..*?)</p>\s*<p\b[^>]*>(A\..*?)</p>",
+        flags=re.S,
+    )
+    faq_number = 0
+
+    def replace_faq(match: re.Match) -> str:
+        nonlocal faq_number
+        faq_number += 1
+        border = "2px solid #2f6fa8" if faq_number == 1 else "1px solid #e3e8ee"
+        return (
+            f'<div style="border-top:{border};padding-top:16px;margin-top:16px;">\n'
+            f'<p style="font-weight:bold;color:#16324f;margin-bottom:6px;">'
+            f'{match.group(1).strip()}</p>\n'
+            f'<p style="margin-top:0;color:#444444;">{match.group(2).strip()}</p>\n'
+            '</div>'
+        )
+
+    return pattern.sub(replace_faq, html)
+
+
+def _attach_tistory_editor_attributes(html: str) -> str:
+    attributes = (
+        ("p", 'data-ke-size="size16"'),
+        ("h2", 'data-ke-size="size26"'),
+        ("h3", 'data-ke-size="size23"'),
+        ("ul", 'data-ke-list-type="disc"'),
+        ("ol", 'data-ke-list-type="decimal"'),
+        ("table", 'data-ke-align="alignLeft"'),
+    )
+
+    for tag, attribute in attributes:
+        def add_attribute(match: re.Match, attribute: str = attribute) -> str:
+            opening_tag = match.group(0)
+            if re.search(r"\bdata-ke-[\w-]+\s*=", opening_tag):
+                return opening_tag
+            return f'{opening_tag[:-1]} {attribute}>'
+
+        html = re.sub(rf"<{tag}\b[^>]*>", add_attribute, html)
+    return html
+
+
 def markdown_to_tistory_html(markdown: str) -> str:
     """Convert Markdown to Tistory paste-ready HTML with inline styles only."""
     html = markdown_to_html(markdown, plain=True)
@@ -506,6 +597,7 @@ def markdown_to_tistory_html(markdown: str) -> str:
     html = _remove_leading_representative_image(html)
     html = _remove_platform_metadata_tail(html)
     html = re.sub(r"<hr\b[^>]*/?>", "", html, flags=re.I)
+    html = _replace_tistory_image_placeholders(html)
     html = re.sub(
         r"<blockquote\b[^>]*>(.*?)</blockquote>",
         lambda match: f'<div style="{_TISTORY_BLOCKQUOTE_STYLE}">{match.group(1)}</div>',
@@ -534,7 +626,7 @@ def markdown_to_tistory_html(markdown: str) -> str:
     )
     html = re.sub(
         r"<strong\b[^>]*>(.*?)</strong>",
-        r'<strong style="color:#c0392b;">\1</strong>',
+        r'<strong style="color:#c0392b;font-weight:bold;">\1</strong>',
         html,
         flags=re.S,
     )
@@ -543,7 +635,9 @@ def markdown_to_tistory_html(markdown: str) -> str:
         r'<span style="background-color:#fff3a8;">\1</span>',
         html,
     )
-    return _replace_tistory_sections(html)
+    html = _replace_tistory_faq_boxes(html)
+    html = _replace_tistory_sections(html)
+    return _attach_tistory_editor_attributes(html)
 
 
 def extract_title(markdown: str, fallback: str = "제목 없음") -> str:
