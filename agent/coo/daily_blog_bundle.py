@@ -62,12 +62,16 @@ class DailyBlogApprovalItem:
     image_file: str
     image_alt: str
     session: CEOApprovalSession
+    title: str = ""
+    tags: str = ""
+    slug: str = ""
+    description: str = ""
     revision_requested: bool = False
     revision_note: str = ""
     publish_result: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "platform": self.platform,
             "platform_label": self.platform_label,
             "category_id": self.category_id,
@@ -88,6 +92,14 @@ class DailyBlogApprovalItem:
             "revision_note": self.revision_note,
             "publish_result": self.publish_result,
         }
+        if self.platform == "tistory":
+            payload.update(
+                title=self.title,
+                tags=self.tags,
+                slug=self.slug,
+                description=self.description,
+            )
+        return payload
 
 
 @dataclass
@@ -146,6 +158,17 @@ def _strip_frontmatter(content: str) -> str:
     return re.sub(r"^---[\s\S]*?---\s*", "", content or "").strip()
 
 
+def _frontmatter_value(content: str, key: str) -> str:
+    match = re.match(r"^---\s*\n(?P<header>[\s\S]*?)\n---\s*(?:\n|$)", content or "")
+    if not match:
+        return ""
+    key_prefix = f"{key}:"
+    for line in match.group("header").splitlines():
+        if line.startswith(key_prefix):
+            return line[len(key_prefix) :].strip()
+    return ""
+
+
 def _safe_excerpt(text: str, max_chars: int) -> str:
     """Shorten at a sentence/word boundary without breaking markdown lines."""
     value = re.sub(r"\s+", " ", str(text or "")).strip()
@@ -193,12 +216,14 @@ def build_structured_preview(blog_content: str) -> tuple[str, str, List[str]]:
     and a conclusion section when present. It never slices the raw file at an
     arbitrary character offset.
     """
+    frontmatter_title = _frontmatter_value(blog_content, "title")
     body = _strip_frontmatter(blog_content)
     lines = body.splitlines()
     title = next(
         (re.sub(r"^#\s+", "", line).strip() for line in lines if re.match(r"^#\s+", line)),
         "제목 없음",
     )
+    title = frontmatter_title or title
 
     h2_indexes = [index for index, line in enumerate(lines) if re.match(r"^##\s+", line)]
     intro_end = h2_indexes[0] if h2_indexes else len(lines)
@@ -327,6 +352,10 @@ def create_daily_blog_approval_bundle(
                 image_file=draft.image.file,
                 image_alt=draft.image.alt,
                 session=session,
+                title=draft.title,
+                tags=draft.tags,
+                slug=draft.slug,
+                description=draft.description,
             )
         )
 

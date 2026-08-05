@@ -61,6 +61,69 @@ def _drafts_dir(date: str) -> Path:
 
 _META_DELIM_RE = re.compile(r"\n-{3,}\s*META\s*-{3,}\s*\n?", re.I)
 _FRONTMATTER_RE = re.compile(r"\A(---[^\n]*\n.*?\n---[^\n]*(?:\n|$))", re.S)
+_TISTORY_SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+){2,4}$")
+
+
+def _validate_tistory_metadata(seo_meta: Dict[str, str]) -> Dict[str, str]:
+    """Validate writer-provided Tistory publication fields without fallbacks."""
+    title = str(seo_meta.get("title") or "").strip()
+    raw_tags = str(seo_meta.get("태그 후보") or "")
+    tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+    slug = str(seo_meta.get("URL slug") or "").strip()
+    description = str(seo_meta.get("Meta description") or "").strip()
+
+    return {
+        "title": title if 25 <= len(title) <= 40 else "",
+        "tags": ", ".join(tags) if 5 <= len(tags) <= 8 else "",
+        "slug": slug if _TISTORY_SLUG_RE.fullmatch(slug) else "",
+        "description": description,
+    }
+
+
+def _extract_tistory_seo_meta(markdown: str) -> Dict[str, str]:
+    """Read common SEO metadata plus Tistory's external tag alias."""
+    from agent.content.publish_on_approval import _split_meta_block, extract_seo_meta
+
+    seo_meta = extract_seo_meta(markdown)
+    _, meta_block = _split_meta_block(markdown)
+    scan_target = meta_block or str(markdown or "")
+    legacy_tags = ""
+    prompt_tags = ""
+    for match in re.finditer(
+        r"^\**\s*(태그 후보|태그)\s*:?\**\s*:?\s*(.*)$",
+        scan_target,
+        flags=re.M,
+    ):
+        value = match.group(2).strip().rstrip("*").strip().strip("`")
+        if match.group(1) == "태그":
+            prompt_tags = value
+        elif not legacy_tags:
+            legacy_tags = value
+    if prompt_tags or legacy_tags:
+        seo_meta["태그 후보"] = prompt_tags or legacy_tags
+    return seo_meta
+
+
+def _inject_tistory_frontmatter(markdown: str, metadata: Dict[str, str]) -> str:
+    """Add non-empty Tistory publication fields to the existing frontmatter."""
+    value = str(markdown or "")
+    match = _FRONTMATTER_RE.match(value)
+    if not match:
+        return value
+
+    fields = [
+        f"{key}: {metadata[key]}"
+        for key in ("title", "tags", "slug", "description")
+        if str(metadata.get(key) or "").strip()
+    ]
+    if not fields:
+        return value
+
+    frontmatter = match.group(1)
+    lines = frontmatter.rstrip("\n").splitlines()
+    lines[-1:-1] = fields
+    updated_frontmatter = "\n".join(lines) + "\n"
+    return updated_frontmatter + value[len(frontmatter):]
 
 
 def _split_meta_block(markdown: str) -> tuple[str, str, bool]:
@@ -165,9 +228,13 @@ class ContentDraft:
     image: HeroImage
     quality: QualityGateResult
     blog_file: str
+    title: str = ""
+    tags: str = ""
+    slug: str = ""
+    description: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "platform": self.platform.id,
             "platformLabel": self.platform.label,
             "category": self.category.id,
@@ -180,6 +247,14 @@ class ContentDraft:
             "image": self.image.to_dict(),
             "quality": self.quality.to_dict(),
         }
+        if self.platform.id == "tistory":
+            payload.update(
+                title=self.title,
+                tags=self.tags,
+                slug=self.slug,
+                description=self.description,
+            )
+        return payload
 
 
 def _replace_h1_title(markdown: str, title: str) -> str:
@@ -306,6 +381,9 @@ def generate_platform_draft(
         topic_title=topic["topic_title"],
     )
     blog_content = prepared_title["blog_content"]
+    tistory_metadata = {"title": "", "tags": "", "slug": "", "description": ""}
+    if platform_id == "tistory":
+        tistory_metadata = _validate_tistory_metadata(_extract_tistory_seo_meta(blog_content))
 
     platform_dir = _drafts_dir(resolved_date) / platform_id
     # Featured image is always a title card (seeded rotation across
@@ -352,6 +430,8 @@ def generate_platform_draft(
         seo_title_rewrite_failed=prepared_title["rewrite_failed"],
     )
 
+    if platform_id == "tistory":
+        blog_content = _inject_tistory_frontmatter(blog_content, tistory_metadata)
     blog_file, _notes_file, blog_content = _save_draft_files(
         platform_dir,
         blog_content,
@@ -376,6 +456,8 @@ def generate_platform_draft(
         topic_id=topic["topic_id"], topic_title=topic["topic_title"], topic_keywords=topic["topic_keywords"],
         research_content=research_content, planning_content=planning_content, blog_content=blog_content,
         image=image, quality=quality, blog_file=str(blog_file),
+        title=tistory_metadata["title"], tags=tistory_metadata["tags"],
+        slug=tistory_metadata["slug"], description=tistory_metadata["description"],
     )
 
 

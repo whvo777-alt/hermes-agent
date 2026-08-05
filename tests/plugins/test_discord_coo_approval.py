@@ -946,6 +946,61 @@ class TestDiscordDailyBlogApproval(unittest.TestCase):
             ],
             ["approve", "revise", "reject"],
         )
+        self.assertFalse(any(field["name"] == "티스토리 발행 정보" for field in embed["fields"]))
+
+    def test_non_tistory_cards_keep_topic_title_display(self) -> None:
+        for platform, platform_label in (
+            ("naver", "네이버"),
+            ("wordpress", "WordPress"),
+            ("blogspot", "Blogspot"),
+        ):
+            embed = coo_approval.build_daily_blog_approval_embed_payload(
+                self._item_payload(platform=platform, platform_label=platform_label)
+            )
+
+            self.assertEqual(embed["description"], "**글 제목**\n영양제 선택 기준")
+            self.assertFalse(any(field["name"] == "티스토리 발행 정보" for field in embed["fields"]))
+
+    def test_tistory_embed_uses_final_title_and_shows_publication_info(self) -> None:
+        item = self._item_payload(
+            platform="tistory",
+            platform_label="티스토리",
+            title="금현물 투자 시작하기, KRX 금시장과 금 ETF를 고르는 기준",
+            tags="금현물, KRX금시장, 금ETF, 금투자, 재테크",
+            slug="gold-investing-krx-etf",
+            description="금현물 투자를 시작할 때 KRX 금시장과 금 ETF를 비교합니다.",
+        )
+
+        embed = coo_approval.build_daily_blog_approval_embed_payload(item)
+
+        self.assertIn("금현물 투자 시작하기", embed["description"])
+        publication_field = next(
+            field for field in embed["fields"] if field["name"] == "티스토리 발행 정보"
+        )
+        self.assertIn("제목      : 금현물 투자 시작하기", publication_field["value"])
+        self.assertIn("태그      : 금현물, KRX금시장, 금ETF, 금투자, 재테크", publication_field["value"])
+        self.assertIn("발행 주소 : gold-investing-krx-etf", publication_field["value"])
+        self.assertIn("요약      : 금현물 투자를 시작할 때", publication_field["value"])
+
+    def test_tistory_embed_marks_empty_publication_info_for_manual_input(self) -> None:
+        item = self._item_payload(
+            platform="tistory",
+            platform_label="티스토리",
+            title="",
+            tags="",
+            slug="",
+            description="",
+        )
+
+        embed = coo_approval.build_daily_blog_approval_embed_payload(item)
+        publication_field = next(
+            field for field in embed["fields"] if field["name"] == "티스토리 발행 정보"
+        )
+
+        self.assertEqual(
+            publication_field["value"].count("⚠ 생성 실패 — 직접 입력 필요"),
+            4,
+        )
 
     def test_quality_warning_is_visible_in_confirmation_field(self) -> None:
         item = self._item_payload(

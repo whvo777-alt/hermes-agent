@@ -152,6 +152,7 @@ def _split_meta_block(markdown: str) -> tuple:
 _SEO_META_LINE_RE = re.compile(
     r"^\**\s*(URL slug|URL 슬러그|슬러그|slug|Meta description|메타 디스크립션|"
     r"meta\s*title|메타\s*타이틀|메타\s*제목|"
+    r"제목|title|"
     r"카테고리 후보|태그 후보|이미지 ALT 텍스트|이미지 ALT|대표 이미지 ALT|ALT\s*후보)\s*:?\**\s*:?\s*(.*)$",
     re.M | re.I,
 )
@@ -169,10 +170,10 @@ def extract_seo_meta(markdown: str) -> Dict[str, str]:
             key = "URL slug"
         elif re.search(r"meta\s*title|메타\s*타이틀|메타\s*제목", key, re.I):
             key = "meta title"
+        elif re.fullmatch(r"제목|title", key, re.I):
+            key = "title"
         elif re.search(r"meta|메타", key, re.I):
             key = "Meta description"
-        elif re.search(r"태그", key):
-            key = "태그 후보"
         elif re.search(r"ALT", key, re.I):
             key = "이미지 ALT 텍스트"
         meta[key] = match.group(2).strip().rstrip("*").strip().strip("`")

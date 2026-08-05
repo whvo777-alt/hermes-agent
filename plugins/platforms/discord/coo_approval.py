@@ -854,7 +854,7 @@ def build_daily_blog_approval_embed_payload(
         item_payload.get("platform_label") or item_payload.get("platform") or "-"
     )
     category = str(item_payload.get("category_name") or "-")
-    title = str(item_payload.get("topic_title") or "제목 없음")
+    title = str(item_payload.get("title") or item_payload.get("topic_title") or "제목 없음")
     score = item_payload.get("quality_score", "-")
     passed = "통과" if item_payload.get("quality_passed") else "확인 필요"
     warnings = list(item_payload.get("quality_warnings") or [])
@@ -896,6 +896,27 @@ def build_daily_blog_approval_embed_payload(
             "inline": False,
         },
     ]
+    if item_payload.get("platform") == "tistory":
+        manual_input = "⚠ 생성 실패 — 직접 입력 필요"
+
+        def _publication_value(key: str) -> str:
+            value = str(item_payload.get(key) or "").strip()
+            return value or manual_input
+
+        fields.append(
+            {
+                "name": "티스토리 발행 정보",
+                "value": "\n".join(
+                    [
+                        f"제목      : {_publication_value('title')}",
+                        f"태그      : {_publication_value('tags')}",
+                        f"발행 주소 : {_publication_value('slug')}",
+                        f"요약      : {_publication_value('description')}",
+                    ]
+                ),
+                "inline": False,
+            }
+        )
     if human_review_items:
         fields.append(
             {
