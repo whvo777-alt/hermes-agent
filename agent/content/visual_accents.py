@@ -116,26 +116,17 @@ def accent_for(text: str, *, seed: str = "") -> Dict[str, str]:
 def highlighter_style(text: str, *, seed: str = "", padding: str = "0 3px") -> str:
     accent = accent_for(text, seed=seed)
     return (
-        f"background:linear-gradient(transparent 55%, {accent['mark']} 55%);"
+        "background-color:#fff3a8;"
         f"color:{accent['ink']};font-weight:800;padding:{padding};"
     )
 
 
 def strong_style(text: str, *, seed: str = "") -> str:
-    """Inline **bold** style — situational color, not always yellow."""
+    """Inline **bold** style — caution red, all other emphasis black."""
     kind = classify_emphasis(text)
-    accent = accent_for(text, seed=seed)
     if kind == "caution":
-        return f"color:{accent['ink']};font-weight:800;font-size:1.06em;"
-    if kind in {"focus", "positive", "growth", "body"}:
-        return highlighter_style(text, seed=seed) + "font-size:1.05em;"
-    if kind == "method":
-        return f"color:{accent['ink']};font-weight:800;font-size:1.04em;"
-    # Neutral bold: rotate ink among rainbow so consecutive bolds differ.
-    idx = _seed_int(seed, text) % len(_INK_RAINBOW)
-    if idx % 2 == 0:
-        return highlighter_style(text, seed=seed) + "font-size:1.04em;"
-    return f"color:{_INK_RAINBOW[idx]};font-weight:800;"
+        return "color:#c0392b;font-weight:800;font-size:1.06em;"
+    return "color:#111111;font-weight:800;font-size:1.04em;"
 
 
 def tip_bar_style(text: str, *, seed: str = "") -> str:

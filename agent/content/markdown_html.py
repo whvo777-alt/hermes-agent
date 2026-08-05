@@ -86,13 +86,13 @@ def _inline_md(text: str, *, seed: str = "", plain: bool = False) -> str:
         return f'<strong style="{strong_style(value, seed=seed)}">{value}</strong>'
 
     escaped = re.sub(r"\*\*(.+?)\*\*", _strong, escaped)
+    escaped = re.sub(
+        r"==([^=\n]+)==",
+        r'<span style="background-color:#fff3a8;">\1</span>',
+        escaped,
+    )
     if plain:
         escaped = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", escaped)
-        escaped = re.sub(
-            r"==([^=\n]+)==",
-            r'<span style="background-color:#fff3a8;">\1</span>',
-            escaped,
-        )
     escaped = re.sub(
         r"`(.+?)`",
         r"<code style='background:#f3f4f6;padding:1px 5px;border-radius:4px;'>\1</code>",
@@ -114,13 +114,8 @@ def _circled_number(num: int) -> str:
 
 
 def h2_inner_html(heading: str, *, seed: str = "") -> str:
-    """▶ + situational highlighter (color follows heading meaning)."""
-    text = escape_html(h2_display_text(heading))
-    accent = accent_for(h2_display_text(heading), seed=seed)
-    return (
-        f'<span style="color:{accent["ink"]};margin-right:6px;">▶</span>'
-        f'<span style="{highlighter_style(h2_display_text(heading), seed=seed, padding="0 4px 3px")}">{text}</span>'
-    )
+    """Render H2 text without a decorative inner highlight span."""
+    return _inline_md(h2_display_text(heading), seed=seed)
 
 
 def _split_table_row(line: str) -> List[str]:
@@ -241,25 +236,16 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
                         if plain
                         else h2_inner_html(heading_text, seed=doc_seed)
                     )
-                    html.append(
-                        '<h2 style="margin:2.2em 0 0.9em;line-height:1.4;'
-                        'font-weight:800;letter-spacing:-0.01em;color:#111;">'
-                        f"{heading_inner}</h2>"
-                    )
+                    if plain:
+                        html.append(f"<h2>{heading_inner}</h2>")
+                    else:
+                        html.append(f'<h2 style="{_TISTORY_H2_STYLE}">{heading_inner}</h2>')
                 elif level == 3:
-                    heading_inner = (
-                        _inline_md(heading_text, seed=doc_seed, plain=plain)
-                        if plain
-                        else (
-                            f'<span style="{highlighter_style(heading_text, seed=doc_seed)}'
-                            f'padding:0 5px 3px;">{escape_html(heading_text)}</span>'
-                        )
-                    )
-                    html.append(
-                        '<h3 style="margin:1.7em 0 0.65em;line-height:1.45;font-weight:800;'
-                        f'color:{accent["ink"]};">'
-                        f"{heading_inner}</h3>"
-                    )
+                    heading_inner = _inline_md(heading_text, seed=doc_seed, plain=plain)
+                    if plain:
+                        html.append(f"<h3>{heading_inner}</h3>")
+                    else:
+                        html.append(f'<h3 style="{_TISTORY_H3_STYLE}">{heading_inner}</h3>')
                 else:
                     html.append(
                         f'<{tag} style="margin:1.4em 0 0.6em;line-height:1.45;font-weight:700;">'
@@ -626,7 +612,7 @@ def markdown_to_tistory_html(markdown: str) -> str:
     )
     html = re.sub(
         r"<strong\b[^>]*>(.*?)</strong>",
-        r'<strong style="color:#c0392b;font-weight:bold;">\1</strong>',
+        lambda match: f'<strong style="{strong_style(match.group(1))}">{match.group(1)}</strong>',
         html,
         flags=re.S,
     )

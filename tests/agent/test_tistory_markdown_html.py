@@ -142,10 +142,27 @@ def test_disclaimer_whole_paragraph_becomes_dashed_gray_callout():
     assert "일반적인 정보입니다." in html
 
 
-def test_inline_strong_text_is_red():
+def test_inline_strong_text_is_black():
     html = markdown_html.markdown_to_tistory_html("이것은 **굵은 글씨**입니다.")
 
-    assert '<strong style="color:#c0392b;font-weight:bold;">굵은 글씨</strong>' in html
+    assert '<strong style="color:#111111;font-weight:800;font-size:1.04em;">굵은 글씨</strong>' in html
+
+
+def test_inline_caution_strong_text_is_red():
+    html = markdown_html.markdown_to_tistory_html("이것은 **위험 신호**입니다.")
+
+    assert '<strong style="color:#c0392b;font-weight:800;font-size:1.06em;">위험 신호</strong>' in html
+
+
+def test_tistory_inline_emphasis_uses_fixed_styles():
+    html = markdown_html.markdown_to_tistory_html(
+        "==강조 문장== **위험 신호** **일반 기준**"
+    )
+
+    assert html.count("#fff3a8") == 1
+    assert html.count("#c0392b") == 1
+    assert html.count("#111111") == 1
+    assert "linear-gradient" not in html
 
 
 def test_leading_h1_is_removed(monkeypatch):
@@ -281,7 +298,7 @@ def test_tistory_target_shape_has_boxes_and_editor_attributes():
     assert '<p style="margin:0 0 12px 0;font-weight:bold;color:#2b6b3f;"' in html
     assert '<ul style="margin:0;padding-left:22px;color:#33553f;"' in html
     strong_html = markdown_html.markdown_to_tistory_html("일반 **굵은 글씨**")
-    assert "color:#c0392b;font-weight:bold;" in strong_html
+    assert "color:#111111;font-weight:800;font-size:1.04em;" in strong_html
 
     assert '<span style="color:#16324f;">1. </span>' not in html
     assert ">목차</h2>" not in html
