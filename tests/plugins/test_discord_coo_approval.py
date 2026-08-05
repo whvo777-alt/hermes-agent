@@ -1374,7 +1374,7 @@ class TestDiscordDailyBlogRenderWiring(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(kwargs["files"]), 1)
         self.assertEqual(kwargs["files"][0]["filename"], "blog.md")
 
-    async def test_send_tistory_card_attaches_html_image_and_markdown_in_order(self) -> None:
+    async def test_send_tistory_card_attaches_html_and_markdown_without_image(self) -> None:
         import tempfile
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
@@ -1384,15 +1384,14 @@ class TestDiscordDailyBlogRenderWiring(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             html_file = Path(directory) / "blog.tistory.html"
-            image_file = Path(directory) / "hero.svg"
             blog_file = Path(directory) / "blog.md"
-            for path in (html_file, image_file, blog_file):
+            for path in (html_file, blog_file):
                 path.write_text(path.name, encoding="utf-8")
             item = TestDiscordDailyBlogApproval()._item_payload(
                 platform="tistory",
                 platform_label="티스토리",
                 blog_file=str(blog_file),
-                image={"file": str(image_file)},
+                image=None,
             )
             sent_msg = SimpleNamespace(id=778)
             channel = SimpleNamespace(send=AsyncMock(return_value=sent_msg))
@@ -1419,9 +1418,9 @@ class TestDiscordDailyBlogRenderWiring(unittest.IsolatedAsyncioTestCase):
         kwargs = channel.send.await_args.kwargs
         self.assertEqual(
             [file["filename"] for file in kwargs["files"]],
-            ["blog.tistory.html", "hero.svg", "blog.md"],
+            ["blog.tistory.html", "blog.md"],
         )
-        self.assertEqual(len(kwargs["files"]), 3)
+        self.assertEqual(len(kwargs["files"]), 2)
 
     async def test_send_tistory_card_skips_missing_files_and_keeps_card_successful(self) -> None:
         import tempfile

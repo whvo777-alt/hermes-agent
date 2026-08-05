@@ -427,7 +427,7 @@ def run_quality_gate(
     for match in _find_placeholder_matches(content):
         errors.append(f"[HARD FAIL] 미완성 placeholder 발견 ({match['label']}): {match['value']}")
 
-    if _has_broken_image(content, image):
+    if platform_id != "tistory" and _has_broken_image(content, image):
         errors.append("[HARD FAIL] 대표 이미지 파일/ALT/캡션 누락 또는 깨진 이미지 URL")
 
     category_match = _check_platform_category_match(content, platform_id, category_id)
@@ -523,13 +523,14 @@ def run_quality_gate(
         recommend("내부 링크 없음 (권장 사항)")
     if not _has_toc(content):
         recommend("TOC(목차) 없음 (권장 사항)")
-    if platform_id != "naver" and _count_inline_images(content) <= 1:
+    if platform_id not in {"naver", "tistory"} and _count_inline_images(content) <= 1:
         recommend(f"본문 이미지 1개뿐이거나 이미지 슬롯 부족 (현재 {_count_inline_images(content)}개)")
     if re.search(r"2023|2024|2025", content or ""):
         recommend("과거 연도 표현 확인 필요: 최신성 점검")
-    image_status = (image or {}).get("status")
-    if image_status not in ("ready", "local_ready_upload_required"):
-        recommend(f"대표 이미지 상태 확인 필요: {image_status or 'missing'}")
+    if platform_id != "tistory":
+        image_status = (image or {}).get("status")
+        if image_status not in ("ready", "local_ready_upload_required"):
+            recommend(f"대표 이미지 상태 확인 필요: {image_status or 'missing'}")
     if topic_title and topic_title not in (content or ""):
         recommend("본문 또는 frontmatter의 주제명 확인 필요")
 

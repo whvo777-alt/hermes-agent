@@ -311,13 +311,25 @@ def generate_platform_draft(
     # Featured image is always a title card (seeded rotation across
     # title_card.TEMPLATE_IDS) -- never the old hero "photo" mode. In-body
     # section cards (section_infographics.py) are unaffected.
-    image = create_title_card(
-        out_dir=platform_dir / "images", platform_id=platform.id, platform_label=platform.label,
-        category_id=category.id, category_name=category.name, category_keywords=category.keywords,
-        topic_title=prepared_title["h1_title"], blog_content=blog_content,
-        style_seed=topic["topic_id"],
-    )
-    blog_content = insert_hero_image(platform_id=platform.id, blog_content=blog_content, image=image)
+    if platform_id == "tistory":
+        image = HeroImage(
+            role="hero",
+            status="disabled",
+            file="",
+            alt="",
+            caption="",
+            prompt="",
+            inserted_in="",
+            created_at="",
+        )
+    else:
+        image = create_title_card(
+            out_dir=platform_dir / "images", platform_id=platform.id, platform_label=platform.label,
+            category_id=category.id, category_name=category.name, category_keywords=category.keywords,
+            topic_title=prepared_title["h1_title"], blog_content=blog_content,
+            style_seed=topic["topic_id"],
+        )
+        blog_content = insert_hero_image(platform_id=platform.id, blog_content=blog_content, image=image)
 
     recent_title_items = find_recent_topics(
         memory,

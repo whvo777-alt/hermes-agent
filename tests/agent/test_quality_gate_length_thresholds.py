@@ -24,6 +24,44 @@ def _padded_body(target_chars: int) -> str:
     return body
 
 
+def _image_ready() -> dict[str, str]:
+    return {
+        "status": "ready",
+        "file": "title_card.png",
+        "alt": "대표 이미지",
+        "caption": "대표 이미지",
+    }
+
+
+def _image_gate_content(platform_id: str) -> str:
+    content = (
+        "---\n"
+        f"platform: {platform_id}\n"
+        "category_id: it-tech\n"
+        "slug: image-gate-test\n"
+        "---\n\n"
+        "# 테스트 제목\n\n"
+        "테스트 제목에 대한 기준을 설명합니다.\n\n"
+        f"{_H2_BLOCK}\n\n"
+    )
+    paragraph_index = 0
+    while len(content) < 6500:
+        content += f"테스트 설명 문단 {paragraph_index}에서 판단 기준과 적용 방법을 정리합니다.\n\n"
+        paragraph_index += 1
+    return content
+
+
+def _image_gate_result(platform_id: str, image):
+    return run_quality_gate(
+        topic_title="테스트",
+        category_id="it-tech",
+        platform_id=platform_id,
+        content_type="blog",
+        content=_image_gate_content(platform_id),
+        image=image,
+    )
+
+
 def test_thresholds_match_documented_values():
     assert _WP_BLOGSPOT_LENGTH == {
         "body_min_chars": 4700,
@@ -85,6 +123,33 @@ def test_naver_platform_is_unaffected_by_wordpress_blogspot_thresholds():
         content_type="blog", content=content, image=None,
     )
     assert not any("너무 짧거나" in w or "과도하게 깁니다" in w for w in result.warnings)
+
+
+def test_tistory_missing_hero_does_not_create_image_failure_or_score_drop():
+    missing = _image_gate_result("tistory", None)
+    ready = _image_gate_result("tistory", _image_ready())
+
+    assert missing.passed == ready.passed
+    assert missing.score == ready.score
+    assert not any("대표 이미지" in message for message in [*missing.errors, *missing.warnings])
+
+
+def test_wordpress_and_blogspot_missing_hero_still_fail_image_gate():
+    for platform_id in ("wordpress", "blogspot"):
+        missing = _image_gate_result(platform_id, None)
+        ready = _image_gate_result(platform_id, _image_ready())
+
+        assert not missing.passed
+        assert any("대표 이미지" in error for error in missing.errors)
+        assert missing.metadata["hardFailCount"] == ready.metadata["hardFailCount"] + 1
+        assert missing.score <= ready.score - 30
+
+
+def test_naver_missing_hero_keeps_existing_image_warning_behavior():
+    result = _image_gate_result("naver", None)
+
+    assert not any("본문 이미지" in warning for warning in result.warnings)
+    assert any("대표 이미지 상태 확인 필요" in warning for warning in result.warnings)
 
 
 def test_repeated_title_template_is_an_important_warning():

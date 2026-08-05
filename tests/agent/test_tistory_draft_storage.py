@@ -4,9 +4,22 @@ from __future__ import annotations
 
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import Mock
 from unittest.mock import patch
 
-from agent.content.orchestrator import _save_draft_files
+from agent.coo.daily_blog_bundle import (
+    DailyBlogApprovalBundleStore,
+    create_daily_blog_approval_bundle,
+)
+from agent.coo.models import COOOrchestrationResult
+from agent.content.config.categories import Category
+from agent.content.config.platforms import Platform
+from agent.content.images.hero_image import HeroImage
+from agent.content.orchestrator import ContentDraft
+from agent.content.orchestrator import _save_draft_files, generate_platform_draft
+from agent.content.quality.quality_gate import QualityGateResult
 from agent.content.writing.writer import write_blog_post
 
 
@@ -131,3 +144,118 @@ def test_save_draft_files_keeps_non_tistory_format_unchanged():
         assert blog_file.read_text(encoding="utf-8") == source
         assert notes_file is None
         assert not (tmp_path / "notes.md").exists()
+
+
+def test_tistory_orchestrator_uses_disabled_image_without_generating_or_inserting():
+    platform = SimpleNamespace(id="tistory", label="티스토리")
+    category = SimpleNamespace(
+        id="finance",
+        name="재테크/경제",
+        keywords=["ETF"],
+        target_audience="재테크 관심 독자",
+        tone="실전형",
+        caution_hints=[],
+    )
+    topic = {
+        "topic_id": "tistory-no-hero",
+        "topic_title": "ETF 투자 기준",
+        "topic_keywords": ["ETF"],
+    }
+    body = "# ETF 투자 기준\n\n본문입니다."
+    prepared = {
+        "blog_content": body,
+        "h1_title": "ETF 투자 기준",
+        "seo_title": "ETF 투자 기준 | ETF",
+        "rewrite_attempted": False,
+        "rewrite_failed": False,
+    }
+    mocks = {
+        "find_platform": Mock(return_value=platform),
+        "get_launch_category": Mock(return_value=category),
+        "get_recent_feedback": Mock(return_value=[]),
+        "sync_written_corpus": Mock(return_value={}),
+        "_pick_daily_topic": Mock(return_value=topic),
+        "build_memory_check": Mock(return_value={"blocked": False}),
+        "run_research": Mock(return_value="리서치"),
+        "run_planning": Mock(return_value="기획"),
+        "write_blog_post": Mock(return_value=body),
+        "_prepare_title_for_image_and_quality": Mock(return_value=prepared),
+        "create_title_card": Mock(),
+        "insert_hero_image": Mock(),
+        "find_recent_topics": Mock(return_value=[]),
+        "run_quality_gate": Mock(return_value=QualityGateResult(True, 100)),
+        "_save_draft_files": Mock(return_value=(Path("/tmp/blog.md"), None, body)),
+        "add_content": Mock(return_value={"memory": {}}),
+        "save_memory": Mock(),
+    }
+
+    with patch.multiple("agent.content.orchestrator", **mocks):
+        draft = generate_platform_draft(platform_id="tistory", run_date="2026-08-05")
+
+    assert draft.image.status == "disabled"
+    assert draft.image.file == ""
+    assert draft.image.alt == ""
+    assert draft.image.caption == ""
+    assert draft.to_dict()["image"]["status"] == "disabled"
+    mocks["create_title_card"].assert_not_called()
+    mocks["insert_hero_image"].assert_not_called()
+
+
+def test_daily_blog_bundle_does_not_break_with_disabled_empty_image():
+    draft = ContentDraft(
+        platform=Platform(
+            id="tistory",
+            label="티스토리",
+            publisher="tistory",
+            capability="not_implemented",
+        ),
+        category=Category(
+            id="finance",
+            name="재테크/경제",
+            target_audience="재테크 관심 독자",
+            tone="실전형",
+            keywords=["ETF"],
+            caution_hints=[],
+            sensitive=True,
+        ),
+        run_date="2026-08-05",
+        topic_id="tistory-no-hero",
+        topic_title="ETF 투자 기준",
+        topic_keywords=["ETF"],
+        research_content="리서치",
+        planning_content="기획",
+        blog_content="# ETF 투자 기준\n\n본문입니다.",
+        image=HeroImage(
+            role="hero",
+            status="disabled",
+            file="",
+            alt="",
+            caption="",
+            prompt="",
+            inserted_in="",
+            created_at="",
+        ),
+        quality=QualityGateResult(True, 100),
+        blog_file="/tmp/blog.md",
+    )
+    session = SimpleNamespace()
+    bundle_store = DailyBlogApprovalBundleStore()
+
+    with patch(
+        "agent.coo.daily_blog_bundle.create_approval_session",
+        return_value=session,
+    ):
+        bundle = create_daily_blog_approval_bundle(
+            [draft],
+            cast(COOOrchestrationResult, SimpleNamespace()),
+            run_date="2026-08-05",
+            requester_id="tester",
+            channel_id="channel",
+            bundle_store=bundle_store,
+        )
+
+    assert bundle is not None
+    assert bundle_store.get(bundle.bundle_id) is bundle
+    assert bundle.items[0].image_file == ""
+    assert bundle.items[0].image_alt == ""
+    assert "- image: ``" in bundle.report.sections[0].body_lines
