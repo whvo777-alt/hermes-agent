@@ -88,7 +88,7 @@ def _inline_md(text: str, *, seed: str = "", plain: bool = False) -> str:
     escaped = re.sub(r"\*\*(.+?)\*\*", _strong, escaped)
     escaped = re.sub(
         r"==([^=\n]+)==",
-        r'<span style="background-color:#fff3a8;">\1</span>',
+        r'<span style="background-color:#f1f2ca;">\1</span>',
         escaped,
     )
     if plain:
@@ -618,7 +618,7 @@ def markdown_to_tistory_html(markdown: str) -> str:
     )
     html = re.sub(
         r"==([^=\n]+)==",
-        r'<span style="background-color:#fff3a8;">\1</span>',
+        r'<span style="background-color:#f1f2ca;">\1</span>',
         html,
     )
     html = _replace_tistory_faq_boxes(html)

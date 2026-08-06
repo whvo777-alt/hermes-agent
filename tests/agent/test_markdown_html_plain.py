@@ -30,7 +30,7 @@ GOLDEN_MARKDOWN = """# 골든 제목 **볼드** ==형광펜== *이탤릭* [링�
 > 인용 문장
 """
 
-EXPECTED_DEFAULT_HTML = """<h1 style="margin:0 0 1.1em;line-height:1.35;font-weight:800;color:#0d47a1;"><span style="background-color:#fff3a8;color:#0d47a1;font-weight:800;padding:0 4px 3px;">골든 제목 **볼드** ==형광펜== *이탤릭* [링크](url)</span></h1>
+EXPECTED_DEFAULT_HTML = """<h1 style="margin:0 0 1.1em;line-height:1.35;font-weight:800;color:#0d47a1;"><span style="background-color:#f1f2ca;color:#0d47a1;font-weight:800;padding:0 4px 3px;">골든 제목 **볼드** ==형광펜== *이탤릭* [링크](url)</span></h1>
 <h2 style="border-left:6px solid #2f6fa8;padding-left:14px;margin-top:50px;color:#16324f;">대단원</h2>
 <h3 style="color:#1b4f80;margin-top:34px;">소제목</h3>
 <p style="margin:0.85em 0 0.35em;line-height:1.75;padding:0.7em 0.95em;background:#f3e5f5;border-radius:6px;"><span style="color:#4a148c;font-weight:800;margin-right:8px;font-size:1.05em;">①</span><span style="font-weight:800;color:#111;">번호 하나</span></p>
@@ -40,7 +40,7 @@ EXPECTED_DEFAULT_HTML = """<h1 style="margin:0 0 1.1em;line-height:1.35;font-wei
 </ul>
 <p style="margin:0 0 1.25em;line-height:1.9;color:#212121;">  - 중첩 bullet</p>
 <p style="margin:0 0 1.25em;line-height:1.9;color:#212121;">일반 문단입니다.</p>
-<p style="margin:0 0 1.25em;line-height:1.9;color:#212121;">인라인 본문: <strong style="color:#1a5fa8;font-weight:800;font-size:1.04em;">볼드</strong> <span style="background-color:#fff3a8;">형광펜</span> *이탤릭* <a href="url" style="color:#1565c0;font-weight:600;text-decoration:underline;text-underline-offset:3px;" target="_blank" rel="noopener noreferrer">링크</a></p>
+<p style="margin:0 0 1.25em;line-height:1.9;color:#212121;">인라인 본문: <strong style="color:#006dd7;">볼드</strong> <span style="background-color:#f1f2ca;">형광펜</span> *이탤릭* <a href="url" style="color:#1565c0;font-weight:600;text-decoration:underline;text-underline-offset:3px;" target="_blank" rel="noopener noreferrer">링크</a></p>
 <div style="overflow-x:auto;margin:1.6em 0 2.1em;border:1px solid #e5e7eb;border-radius:14px;padding:6px 18px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
 <table style="border-collapse:collapse;width:100%;line-height:1.7;">
 <thead>
@@ -81,7 +81,7 @@ def test_markdown_to_html_plain_removes_decorations_and_keeps_basic_markup() -> 
     assert "<div" not in plain
 
     assert "<strong>볼드</strong>" in plain
-    assert '<span style="background-color:#fff3a8;">형광펜</span>' in plain
+    assert '<span style="background-color:#f1f2ca;">형광펜</span>' in plain
     assert "<em>이탤릭</em>" in plain
     assert '<a href="url">링크</a>' in plain
     assert "<blockquote>인용 문장</blockquote>" in plain
@@ -106,7 +106,7 @@ def test_styled_double_equals_uses_one_solid_highlighter_color() -> None:
 
     html = markdown_to_html(markdown)
 
-    assert html.count('background-color:#fff3a8;') == 4
+    assert html.count('background-color:#f1f2ca;') == 4
     assert "linear-gradient" not in html
 
 
@@ -121,8 +121,8 @@ def test_styled_strong_text_uses_only_red_or_dark_blue_without_highlighting() ->
         match = re.search(r"color:(#[0-9a-f]+);", style)
         assert match is not None
         colors.add(match.group(1))
-    assert colors == {"#c0392b", "#1a5fa8"}
-    assert "#fff3a8" not in html
+    assert colors == {"#ef5369", "#006dd7"}
+    assert "#f1f2ca" not in html
     assert "linear-gradient" not in html
 
 

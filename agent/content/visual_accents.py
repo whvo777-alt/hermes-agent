@@ -116,7 +116,7 @@ def accent_for(text: str, *, seed: str = "") -> Dict[str, str]:
 def highlighter_style(text: str, *, seed: str = "", padding: str = "0 3px") -> str:
     accent = accent_for(text, seed=seed)
     return (
-        "background-color:#fff3a8;"
+        "background-color:#f1f2ca;"
         f"color:{accent['ink']};font-weight:800;padding:{padding};"
     )
 
@@ -125,8 +125,8 @@ def strong_style(text: str, *, seed: str = "") -> str:
     """Inline **bold** style — caution red, all other emphasis dark blue."""
     kind = classify_emphasis(text)
     if kind == "caution":
-        return "color:#c0392b;font-weight:800;font-size:1.06em;"
-    return "color:#1a5fa8;font-weight:800;font-size:1.04em;"
+        return "color:#ef5369;"
+    return "color:#006dd7;"
 
 
 def tip_bar_style(text: str, *, seed: str = "") -> str:
