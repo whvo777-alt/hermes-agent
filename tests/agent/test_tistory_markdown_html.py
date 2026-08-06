@@ -22,6 +22,13 @@ def test_h3_has_blue_heading_color():
     assert '<h3 style="color:#1b4f80;margin-top:34px;"' in html
 
 
+def test_tistory_headings_wrap_number_and_text_in_bold():
+    html = markdown_html.markdown_to_tistory_html("## 대단원\n\n### 소단원")
+
+    assert '<h2 style="border-left:6px solid #2f6fa8;padding-left:14px;margin-top:50px;color:#16324f;" data-ke-size="size26"><b>1. 대단원</b></h2>' in html
+    assert '<h3 style="color:#1b4f80;margin-top:34px;" data-ke-size="size23"><b>소단원</b></h3>' in html
+
+
 def test_table_and_cells_have_tistory_styles():
     markdown = "| 항목 | 값 |\n| --- | --- |\n| 첫 열 | 내용 |"
     html = markdown_html.markdown_to_tistory_html(markdown)
@@ -65,8 +72,8 @@ def test_toc_h2_does_not_consume_automatic_section_number():
 
     assert len(h2_blocks) == 2
     assert '<p style="margin:0 0 10px 0;font-weight:bold;color:#16324f;"' in html
-    assert ">1. 첫 섹션</h2>" in h2_blocks[0]
-    assert ">2. 둘째 섹션</h2>" in h2_blocks[1]
+    assert "><b>1. 첫 섹션</b></h2>" in h2_blocks[0]
+    assert "><b>2. 둘째 섹션</b></h2>" in h2_blocks[1]
 
 
 def test_toc_box_contains_only_ordered_items():

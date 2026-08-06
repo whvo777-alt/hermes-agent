@@ -381,6 +381,12 @@ _TISTORY_DISCLAIMER_STYLE = (
 )
 
 
+def _wrap_heading_bold(inner: str) -> str:
+    if "<b>" in inner or "<strong" in inner:
+        return inner
+    return f"<b>{inner}</b>"
+
+
 def _replace_tistory_heading_styles(html: str) -> str:
     h2_number = 0
 
@@ -393,14 +399,11 @@ def _replace_tistory_heading_styles(html: str) -> str:
             h2_number += 1
             number = f"{h2_number}. "
         inner = re.sub(r"color\s*:[^;\"]+;?", "color:#16324f;", inner)
-        return (
-            f'<h2 style="{_TISTORY_H2_STYLE}">'
-            f"{number}{inner}</h2>"
-        )
+        return f'<h2 style="{_TISTORY_H2_STYLE}">{_wrap_heading_bold(f"{number}{inner}")}</h2>'
 
     def replace_h3(match: re.Match) -> str:
         inner = re.sub(r"color\s*:[^;\"]+;?", "color:#1b4f80;", match.group(1))
-        return f'<h3 style="{_TISTORY_H3_STYLE}">{inner}</h3>'
+        return f'<h3 style="{_TISTORY_H3_STYLE}">{_wrap_heading_bold(inner)}</h3>'
 
     html = re.sub(r"<h2\b[^>]*>(.*?)</h2>", replace_h2, html, flags=re.S)
     return re.sub(r"<h3\b[^>]*>(.*?)</h3>", replace_h3, html, flags=re.S)
