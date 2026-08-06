@@ -40,7 +40,7 @@ EXPECTED_DEFAULT_HTML = """<h1 style="margin:0 0 1.1em;line-height:1.35;font-wei
 </ul>
 <p style="margin:0 0 1.25em;line-height:1.9;color:#212121;">  - 중첩 bullet</p>
 <p style="margin:0 0 1.25em;line-height:1.9;color:#212121;">일반 문단입니다.</p>
-<p style="margin:0 0 1.25em;line-height:1.9;color:#212121;">인라인 본문: <strong style="color:#111111;font-weight:800;font-size:1.04em;">볼드</strong> <span style="background-color:#fff3a8;">형광펜</span> *이탤릭* <a href="url" style="color:#1565c0;font-weight:600;text-decoration:underline;text-underline-offset:3px;" target="_blank" rel="noopener noreferrer">링크</a></p>
+<p style="margin:0 0 1.25em;line-height:1.9;color:#212121;">인라인 본문: <strong style="color:#1a5fa8;font-weight:800;font-size:1.04em;">볼드</strong> <span style="background-color:#fff3a8;">형광펜</span> *이탤릭* <a href="url" style="color:#1565c0;font-weight:600;text-decoration:underline;text-underline-offset:3px;" target="_blank" rel="noopener noreferrer">링크</a></p>
 <div style="overflow-x:auto;margin:1.6em 0 2.1em;border:1px solid #e5e7eb;border-radius:14px;padding:6px 18px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">
 <table style="border-collapse:collapse;width:100%;line-height:1.7;">
 <thead>
@@ -110,7 +110,7 @@ def test_styled_double_equals_uses_one_solid_highlighter_color() -> None:
     assert "linear-gradient" not in html
 
 
-def test_styled_strong_text_uses_only_red_or_black_without_highlighting() -> None:
+def test_styled_strong_text_uses_only_red_or_dark_blue_without_highlighting() -> None:
     markdown = "**위험 신호**와 **도움이 되는 방법**과 **일반 기준**"
 
     html = markdown_to_html(markdown)
@@ -121,7 +121,7 @@ def test_styled_strong_text_uses_only_red_or_black_without_highlighting() -> Non
         match = re.search(r"color:(#[0-9a-f]+);", style)
         assert match is not None
         colors.add(match.group(1))
-    assert colors == {"#c0392b", "#111111"}
+    assert colors == {"#c0392b", "#1a5fa8"}
     assert "#fff3a8" not in html
     assert "linear-gradient" not in html
 

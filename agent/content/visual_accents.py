@@ -122,11 +122,11 @@ def highlighter_style(text: str, *, seed: str = "", padding: str = "0 3px") -> s
 
 
 def strong_style(text: str, *, seed: str = "") -> str:
-    """Inline **bold** style — caution red, all other emphasis black."""
+    """Inline **bold** style — caution red, all other emphasis dark blue."""
     kind = classify_emphasis(text)
     if kind == "caution":
         return "color:#c0392b;font-weight:800;font-size:1.06em;"
-    return "color:#111111;font-weight:800;font-size:1.04em;"
+    return "color:#1a5fa8;font-weight:800;font-size:1.04em;"
 
 
 def tip_bar_style(text: str, *, seed: str = "") -> str:
