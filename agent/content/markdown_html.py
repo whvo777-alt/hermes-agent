@@ -489,7 +489,7 @@ def _replace_tistory_sections(html: str) -> str:
         return (
             f'<div style="{_TISTORY_TOC_STYLE}">'
             '<p style="margin:0 0 10px 0;font-weight:bold;color:#16324f;">'
-            f'{match.group("title")}</p>'
+            f'{_strip_bold(match.group("title"))}</p>'
             '<ol style="margin:0;padding-left:22px;color:#40566b;">'
             f"{body}</ol></div>\n"
         )
@@ -506,7 +506,7 @@ def _replace_tistory_sections(html: str) -> str:
         return (
             f'<div style="{_TISTORY_CHECKLIST_STYLE}">'
             '<p style="margin:0 0 12px 0;font-weight:bold;color:#2b6b3f;">'
-            f'{match.group("title")}</p>'
+            f'{_strip_bold(match.group("title"))}</p>'
             '<ul style="margin:0;padding-left:22px;color:#33553f;">'
             f"{body}</ul></div>"
         )
@@ -593,6 +593,7 @@ def markdown_to_tistory_html(markdown: str) -> str:
         html,
         flags=re.S,
     )
+    html = _rebuild_tistory_toc(html)
     html = _replace_tistory_table_styles(html)
     html = _replace_tistory_heading_styles(html)
     html = _replace_tistory_callout(
@@ -627,6 +628,36 @@ def markdown_to_tistory_html(markdown: str) -> str:
     html = _replace_tistory_faq_boxes(html)
     html = _replace_tistory_sections(html)
     return _attach_tistory_editor_attributes(html)
+
+
+def _rebuild_tistory_toc(html: str) -> str:
+    toc_pattern = re.compile(
+        r"(?P<heading><h2\b[^>]*>(?:(?!</h2>).)*?목차(?:(?!</h2>).)*?</h2>)\s*"
+        r"(?P<ol><ol\b[^>]*>)(?P<body>.*?)</ol>",
+        flags=re.S,
+    )
+    toc_match = toc_pattern.search(html)
+    if toc_match is None:
+        return html
+
+    items = []
+    heading_pattern = re.compile(r"<h2\b[^>]*>(?P<inner>.*?)</h2>", flags=re.S)
+    for heading_match in heading_pattern.finditer(html):
+        if heading_match.start() == toc_match.start():
+            continue
+        title = re.sub(r"<[^>]+>", "", heading_match.group("inner")).strip()
+        if title:
+            items.append(f"<li>{title}</li>")
+
+    replacement = (
+        f'{toc_match.group("heading")}\n'
+        f'{toc_match.group("ol")}{"".join(items)}</ol>'
+    )
+    return html[: toc_match.start()] + replacement + html[toc_match.end() :]
+
+
+def _strip_bold(text: str) -> str:
+    return re.sub(r"</?b>", "", text)
 
 
 def extract_title(markdown: str, fallback: str = "제목 없음") -> str:

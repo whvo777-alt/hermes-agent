@@ -62,7 +62,9 @@ def test_toc_section_becomes_blue_gray_box():
     assert '<div style="background-color:#f7f9fb;border:1px solid #e3e8ee;' in html
     assert '<p style="margin:0 0 10px 0;font-weight:bold;color:#16324f;"' in html
     assert '<ol style="margin:0;padding-left:22px;color:#40566b;"' in html
-    assert "목차" in html and "하나" in html
+    assert "목차" in html
+    assert "<li>하나</li>" not in html
+    assert "<li>둘</li>" not in html
 
 
 def test_toc_h2_does_not_consume_automatic_section_number():
@@ -86,8 +88,63 @@ def test_toc_box_contains_only_ordered_items():
     )
 
     assert toc_box is not None
-    assert all(item in toc_box.group(0) for item in ("항목 하나", "항목 둘", "항목 셋"))
+    assert "첫 섹션" in toc_box.group(0)
+    assert all(item not in toc_box.group(0) for item in ("항목 하나", "항목 둘", "항목 셋"))
     assert "본문" not in toc_box.group(0)
+
+
+def test_toc_rebuild_fills_missing_h2_items():
+    markdown = (
+        "## 목차\n\n1. 잘못된 첫 항목\n2. 잘못된 둘째 항목\n\n"
+        "## 첫 번째 대단원\n본문\n\n"
+        "## 두 번째 대단원\n본문\n\n"
+        "## 세 번째 대단원\n본문"
+    )
+    html = markdown_html.markdown_to_tistory_html(markdown)
+    toc_box = re.search(
+        r'<div style="background-color:#f7f9fb;.*?</div>',
+        html,
+        flags=re.S,
+    )
+
+    assert toc_box is not None
+    assert re.findall(r"<li>(.*?)</li>", toc_box.group(0)) == [
+        "첫 번째 대단원",
+        "두 번째 대단원",
+        "세 번째 대단원",
+    ]
+
+
+def test_toc_rebuild_removes_extra_h2_items():
+    markdown = (
+        "## 목차\n\n1. 하나\n2. 둘\n3. 셋\n4. 넷\n\n"
+        "## 첫 번째 대단원\n본문\n\n"
+        "## 두 번째 대단원\n본문"
+    )
+    html = markdown_html.markdown_to_tistory_html(markdown)
+    toc_box = re.search(
+        r'<div style="background-color:#f7f9fb;.*?</div>',
+        html,
+        flags=re.S,
+    )
+
+    assert toc_box is not None
+    assert re.findall(r"<li>(.*?)</li>", toc_box.group(0)) == [
+        "첫 번째 대단원",
+        "두 번째 대단원",
+    ]
+
+
+def test_toc_box_title_does_not_include_heading_bold_tag():
+    html = markdown_html.markdown_to_tistory_html("## 목차\n\n1. 하나\n\n## 본문\n내용")
+    toc_title = re.search(
+        r'<p style="margin:0 0 10px 0;font-weight:bold;color:#16324f;"[^>]*>.*?</p>',
+        html,
+    )
+
+    assert toc_title is not None
+    assert toc_title.group(0).endswith("목차</p>")
+    assert "<b>" not in toc_title.group(0)
 
 
 def test_checklist_after_h3_becomes_green_box():
@@ -103,6 +160,8 @@ def test_checklist_after_h3_becomes_green_box():
     assert 'padding:20px 24px;margin:26px 0;border-radius:6px;">' in html
     assert checklist_box is not None
     assert "체크리스트" in checklist_box.group(0)
+    assert '<p style="margin:0 0 12px 0;font-weight:bold;color:#2b6b3f;"' in checklist_box.group(0)
+    assert "<b>" not in checklist_box.group(0)
     assert "하나" in checklist_box.group(0)
 
 
