@@ -81,7 +81,7 @@ def test_markdown_to_html_plain_removes_decorations_and_keeps_basic_markup() -> 
     assert "<div" not in plain
 
     assert "<strong>볼드</strong>" in plain
-    assert '<span style="background-color:#f1f2ca;">형광펜</span>' in plain
+    assert '<span style="background-color:#f1f2ca;font-weight:bold;">형광펜</span>' in plain
     assert "<em>이탤릭</em>" in plain
     assert '<a href="url">링크</a>' in plain
     assert "<blockquote>인용 문장</blockquote>" in plain

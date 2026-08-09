@@ -182,7 +182,7 @@ def test_checklist_wrapper_does_not_capture_previous_h3():
 def test_double_equals_sentence_gets_yellow_highlight():
     html = markdown_html.markdown_to_tistory_html("==강조 문장==")
 
-    assert '<span style="background-color:#f1f2ca;">강조 문장</span>' in html
+    assert '<span style="background-color:#f1f2ca;font-weight:bold;">강조 문장</span>' in html
 
 
 def test_core_whole_paragraph_becomes_blue_callout():
@@ -217,6 +217,19 @@ def test_inline_strong_text_is_dark_blue():
 def test_inline_caution_strong_text_is_red():
     html = markdown_html.markdown_to_tistory_html("이것은 **위험 신호**입니다.")
 
+    assert '<strong style="color:#ef5369;">위험 신호</strong>' in html
+
+
+def test_list_item_strong_text_has_no_color_but_body_strong_keeps_colors():
+    html = markdown_html.markdown_to_tistory_html(
+        "- **목록 기준**\n- **위험 신호**\n\n"
+        "본문 **일반 기준**과 **위험 신호**"
+    )
+
+    assert "<li><strong>목록 기준</strong></li>" in html
+    assert "<li><strong>위험 신호</strong></li>" in html
+    assert '<li><strong style=' not in html
+    assert '<strong style="color:#006dd7;">일반 기준</strong>' in html
     assert '<strong style="color:#ef5369;">위험 신호</strong>' in html
 
 

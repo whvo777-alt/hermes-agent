@@ -86,11 +86,15 @@ def _inline_md(text: str, *, seed: str = "", plain: bool = False) -> str:
         return f'<strong style="{strong_style(value, seed=seed)}">{value}</strong>'
 
     escaped = re.sub(r"\*\*(.+?)\*\*", _strong, escaped)
-    escaped = re.sub(
-        r"==([^=\n]+)==",
-        r'<span style="background-color:#f1f2ca;">\1</span>',
-        escaped,
-    )
+    def _highlight(match: re.Match) -> str:
+        style = (
+            "background-color:#f1f2ca;font-weight:bold;"
+            if plain
+            else "background-color:#f1f2ca;"
+        )
+        return f'<span style="{style}">{match.group(1)}</span>'
+
+    escaped = re.sub(r"==([^=\n]+)==", _highlight, escaped)
     if plain:
         escaped = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", escaped)
     escaped = re.sub(
@@ -579,6 +583,26 @@ def _attach_tistory_editor_attributes(html: str) -> str:
     return html
 
 
+def _plain_bold_in_list_items(html: str) -> str:
+    """Remove inline colors from bold text inside Tistory list items only."""
+
+    def clear_strong_style(match: re.Match) -> str:
+        body = re.sub(
+            r"<strong\b[^>]*>(.*?)</strong>",
+            r"<strong>\1</strong>",
+            match.group(2),
+            flags=re.S,
+        )
+        return f"{match.group(1)}{body}{match.group(3)}"
+
+    return re.sub(
+        r"(<li\b[^>]*>)(.*?)(</li>)",
+        clear_strong_style,
+        html,
+        flags=re.S,
+    )
+
+
 def markdown_to_tistory_html(markdown: str) -> str:
     """Convert Markdown to Tistory paste-ready HTML with inline styles only."""
     html = markdown_to_html(markdown, plain=True)
@@ -620,9 +644,10 @@ def markdown_to_tistory_html(markdown: str) -> str:
         html,
         flags=re.S,
     )
+    html = _plain_bold_in_list_items(html)
     html = re.sub(
         r"==([^=\n]+)==",
-        r'<span style="background-color:#f1f2ca;">\1</span>',
+        r'<span style="background-color:#f1f2ca;font-weight:bold;">\1</span>',
         html,
     )
     html = _replace_tistory_faq_boxes(html)
