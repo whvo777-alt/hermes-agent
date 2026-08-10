@@ -603,6 +603,28 @@ def _plain_bold_in_list_items(html: str) -> str:
     )
 
 
+def _convert_tistory_bold_to_editor_markup(html: str) -> str:
+    """Use Tistory editor markup for bold text and inline colors."""
+    html = re.sub(
+        r'<span style="background-color:#f1f2ca;font-weight:bold;">(.*?)</span>',
+        r'<b><span style="background-color:#f1f2ca;">\1</span></b>',
+        html,
+        flags=re.S,
+    )
+    html = re.sub(
+        r'<strong\b[^>]*style="([^"]*)"[^>]*>(.*?)</strong>',
+        r'<b><span style="\1">\2</span></b>',
+        html,
+        flags=re.S,
+    )
+    return re.sub(
+        r"<strong\b[^>]*>(.*?)</strong>",
+        r"<b>\1</b>",
+        html,
+        flags=re.S,
+    )
+
+
 def markdown_to_tistory_html(markdown: str) -> str:
     """Convert Markdown to Tistory paste-ready HTML with inline styles only."""
     html = markdown_to_html(markdown, plain=True)
@@ -644,12 +666,13 @@ def markdown_to_tistory_html(markdown: str) -> str:
         html,
         flags=re.S,
     )
-    html = _plain_bold_in_list_items(html)
     html = re.sub(
         r"==([^=\n]+)==",
         r'<span style="background-color:#f1f2ca;font-weight:bold;">\1</span>',
         html,
     )
+    html = _plain_bold_in_list_items(html)
+    html = _convert_tistory_bold_to_editor_markup(html)
     html = _replace_tistory_faq_boxes(html)
     html = _replace_tistory_sections(html)
     return _attach_tistory_editor_attributes(html)

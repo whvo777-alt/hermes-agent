@@ -126,6 +126,12 @@ def test_styled_strong_text_uses_only_red_or_dark_blue_without_highlighting() ->
     assert "linear-gradient" not in html
 
 
+def test_styled_non_tistory_strong_markup_remains_colored_strong() -> None:
+    html = markdown_to_html("**일반 기준**")
+
+    assert '<strong style="color:#006dd7;">일반 기준</strong>' in html
+
+
 def test_styled_emphasis_is_independent_of_document_seed() -> None:
     body = "## 같은 제목\n\n### 같은 소제목\n\n==중요 문장== **위험 신호** **일반 기준**"
 
