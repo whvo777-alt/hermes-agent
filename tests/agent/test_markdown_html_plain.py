@@ -91,6 +91,33 @@ def test_markdown_to_html_plain_removes_decorations_and_keeps_basic_markup() -> 
     assert "[링크](url)" not in plain
 
 
+def test_experience_placeholder_becomes_red_dashed_box_with_hint() -> None:
+    html = markdown_to_html(
+        "앞 문단\n\n"
+        "::경험::\n"
+        "힌트: 이 대목에서 직접 겪은 일을 넣으면 좋습니다\n"
+        "::경험끝::\n\n"
+        "뒤 문단"
+    )
+
+    box = re.search(r'<div style="background-color:#fdecef;.*?</div>', html, flags=re.S)
+    assert box is not None
+    assert '<p style="margin:0 0 8px 0;font-weight:bold;color:#b3283c;">[경험] 여기에 직접 겪은 일을 한 문단 쓰고 이 박스는 지우세요</p>' in box.group(0)
+    assert '<p style="margin:0;color:#7a3a44;">힌트 : 이 대목에서 직접 겪은 일을 넣으면 좋습니다</p>' in box.group(0)
+    assert "::경험::" not in html
+    assert "::경험끝::" not in html
+
+
+def test_experience_placeholder_without_hint_has_only_the_instruction() -> None:
+    html = markdown_to_html("::경험::\n::경험끝::")
+
+    assert '<div style="background-color:#fdecef;border:2px dashed #ef5369;padding:16px 20px;margin:26px 0;border-radius:6px;">' in html
+    assert "[경험] 여기에 직접 겪은 일을 한 문단 쓰고 이 박스는 지우세요" in html
+    assert "힌트 :" not in html
+    assert "::경험::" not in html
+    assert "::경험끝::" not in html
+
+
 def test_styled_headings_use_tistory_heading_styles_without_gradients() -> None:
     markdown = "# 문서 제목\n\n## 큰 제목\n\n### 작은 제목"
 

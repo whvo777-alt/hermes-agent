@@ -22,6 +22,14 @@ def test_h3_has_blue_heading_color():
     assert '<h3 style="color:#1b4f80;margin-top:34px;"' in html
 
 
+def test_tistory_output_without_experience_placeholder_is_unchanged():
+    html = markdown_html.markdown_to_tistory_html("일반 문단입니다.")
+
+    assert html == '<p data-ke-size="size16">일반 문단입니다.</p>'
+    assert "::경험::" not in html
+    assert "::경험끝::" not in html
+
+
 def test_tistory_headings_wrap_number_and_text_in_bold():
     html = markdown_html.markdown_to_tistory_html("## 대단원\n\n### 소단원")
 

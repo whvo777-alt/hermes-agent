@@ -348,7 +348,8 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
     if plain:
         close_plain_ordered_list()
     close_table()
-    return "\n".join(html)
+    rendered = "\n".join(html)
+    return rendered if plain else _replace_experience_placeholders(rendered)
 
 
 _TISTORY_H2_STYLE = "border-left:6px solid #2f6fa8;padding-left:14px;margin-top:50px;color:#16324f;"
@@ -479,6 +480,33 @@ def _replace_tistory_image_placeholders(html: str) -> str:
         )
 
     return pattern.sub(replace_image, html)
+
+
+def _replace_experience_placeholders(html: str) -> str:
+    pattern = re.compile(
+        r'<p\b[^>]*>::경험::</p>\s*'
+        r'(?:<p\b[^>]*>힌트:\s*(.*?)</p>\s*)?'
+        r'<p\b[^>]*>::경험끝::</p>',
+        flags=re.S,
+    )
+
+    def replace_experience(match: re.Match) -> str:
+        hint = match.group(1)
+        hint_html = (
+            f'<p style="margin:0;color:#7a3a44;">힌트 : {hint.strip()}</p>\n'
+            if hint is not None and hint.strip()
+            else ""
+        )
+        return (
+            '<div style="background-color:#fdecef;border:2px dashed #ef5369;'
+            'padding:16px 20px;margin:26px 0;border-radius:6px;">\n'
+            '<p style="margin:0 0 8px 0;font-weight:bold;color:#b3283c;">'
+            '[경험] 여기에 직접 겪은 일을 한 문단 쓰고 이 박스는 지우세요</p>\n'
+            f"{hint_html}"
+            "</div>"
+        )
+
+    return pattern.sub(replace_experience, html)
 
 
 def _replace_tistory_sections(html: str) -> str:
