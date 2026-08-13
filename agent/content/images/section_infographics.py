@@ -114,7 +114,7 @@ _RISK_TIER_GROUP = {"안전": "safe", "낮음": "safe", "중간": "mid", "보통
 # double as common counter words, so they're a much more honest signal of
 # "this section is actually built around one stat."
 _GAUGE_STAT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(kg|kcal|mmHg|mg|%|리터|L|ml)\b")
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?다요])\s+")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
 
 @dataclass
