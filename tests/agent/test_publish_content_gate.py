@@ -25,16 +25,17 @@ def _bundle_with_content(tmp_path, content: str):
     return cast(DailyBlogApprovalBundle, SimpleNamespace(items=[item]))
 
 
-def test_live_publish_blocks_experience_marker_and_reports_line(tmp_path):
+def test_live_publish_allows_experience_marker(tmp_path):
     bundle = _bundle_with_content(tmp_path, "첫 줄\n::경험::\n세 번째 줄\n")
 
-    with patch("agent.content.publish_on_approval.create_naver_draft") as publisher:
-        with pytest.raises(PublishBlockedError) as exc_info:
-            publish_approved_item(bundle, "naver", live=True)
+    with patch(
+        "agent.content.publish_on_approval.create_naver_draft",
+        return_value={"ok": True},
+    ) as publisher:
+        result = publish_approved_item(bundle, "naver", live=True)
 
-    assert "::경험::" in str(exc_info.value)
-    assert "2번째 줄" in str(exc_info.value)
-    publisher.assert_not_called()
+    assert result == {"ok": True}
+    publisher.assert_called_once()
 
 
 def test_live_publish_blocks_author_note_and_reports_line(tmp_path):

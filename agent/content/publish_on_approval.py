@@ -42,9 +42,6 @@ class PublishBlockedError(RuntimeError):
 
 
 _PUBLISH_BLOCKED_MARKERS = (
-    "::경험::",
-    "::경험끝::",
-    "[경험] 여기에 직접 겪은 일을",
     "현재 제공된 자료",
     "발행 전",
     "검토 필요",
