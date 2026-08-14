@@ -47,9 +47,10 @@ def test_wordpress_and_blogspot_get_new_length_target():
         assert "H2 6~7개" in text
 
 
-def test_blogspot_faq_is_now_required_not_optional():
+def test_blogspot_faq_is_not_required_and_follows_platform_rule():
     text = _expression_goals(platform_id="blogspot", category_id="self-dev")
-    assert "FAQ는 필수 섹션으로 넣는다" in text
+    assert "자주 묻는 질문 절은 플랫폼 규칙을 따른다" in text
+    assert "FAQ는 필수 섹션으로 넣는다" not in text
     assert "FAQ는 생략하거나 Q 2개만" not in text
 
 
@@ -79,7 +80,7 @@ def test_write_blog_post_final_line_naver_unchanged():
 
 def test_write_blog_post_final_line_wordpress_updated():
     user_prompt = _write_and_capture_user_prompt(platform_id="wordpress", category_id="health")
-    assert "H1 1개, H2 6~7개(실전 사례·FAQ 섹션 포함), 본문 5,500~7,500자. 개인차 안내를 포함한다." in user_prompt
+    assert "H1 1개, H2 6~7개(실전 사례 포함), 본문 5,500~7,500자. 개인차 안내를 포함한다." in user_prompt
 
 
 def test_write_blog_post_title_prompt_uses_internal_topic_label_and_positive_criteria():

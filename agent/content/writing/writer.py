@@ -251,7 +251,7 @@ def _expression_goals(*, platform_id: str, category_id: str) -> str:
         length_rule = "- 본문 분량 5,500~7,500자 (4,500자 미만·속이 빈 짧은 글 금지, 9,000자 초과 금지)."
         h2_rule = (
             "- H2 6~7개. 흐름: 독자 문제 → 판단 기준 → 실전 적용(상황별) → 실제 사례(케이스 1~2개) → "
-            "함정/주의 → FAQ(`질문:`/`답변:` 마커로 3~4쌍) → 오늘 체크·마무리."
+            "함정/주의 → 오늘 체크·마무리."
         )
     else:
         length_rule = "- 본문 분량 4,000~6,500자 (3,000자 미만·속이 빈 짧은 글 금지, 8,000자 초과 금지)."
@@ -286,7 +286,8 @@ def _expression_goals(*, platform_id: str, category_id: str) -> str:
     if category_id == "self-dev" or platform_id == "blogspot":
         faq_rule = (
             "- 독자가 “오늘 실행·측정할 문장”을 가져가게 쓴다. "
-            "FAQ는 필수 섹션으로 넣는다. Q 3~4개, 각 질문은 `질문: …` 다음 줄에 `답변: …` 형식(각 답변 2~4문장)."
+            "자주 묻는 질문 절은 플랫폼 규칙을 따른다. "
+            "각 질문은 `질문: …` 다음 줄에 `답변: …` 형식(각 답변 2~4문장)."
             if platform_id in ("wordpress", "blogspot")
             else "- 독자가 “오늘 실행·측정할 문장”을 가져가게 쓴다. FAQ는 생략하거나 Q 2개만."
         )
@@ -392,7 +393,7 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
         prior_feedback=prior_feedback,
     )
     length_h2_line = (
-        "- H1 1개, H2 6~7개(실전 사례·FAQ 섹션 포함), 본문 5,500~7,500자. 개인차 안내를 포함한다."
+        "- H1 1개, H2 6~7개(실전 사례 포함), 본문 5,500~7,500자. 개인차 안내를 포함한다."
         if platform_id in ("wordpress", "blogspot")
         else "- H1 1개, H2 5~6개, 본문 4,000~6,500자. 개인차 안내를 포함한다." if platform_id == "tistory" else "- H1 1개, H2 4~5개, 본문 4,000~6,500자. 개인차 안내를 포함한다."
     )
