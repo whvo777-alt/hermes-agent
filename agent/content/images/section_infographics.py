@@ -235,7 +235,7 @@ def _extract_qa(lines: List[str], *, base: int) -> Tuple[List[Tuple[str, str]], 
                     i = j
                     break
         i += 1
-    return pairs[:2], ranges
+    return pairs[:2], ranges[:2]
 
 
 def extract_all_qa_pairs(markdown: str) -> List[Tuple[str, str]]:
