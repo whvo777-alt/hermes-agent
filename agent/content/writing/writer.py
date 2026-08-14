@@ -160,9 +160,6 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
     enhanced = re.sub(r"완치", "개선 가능성", enhanced)
     enhanced = re.sub(r"100%", "충분히", enhanced)
 
-    if not re.search(r"요약|핵심|첫 화면|한눈에", enhanced):
-        enhanced = _append_to_body(enhanced, f"## 한눈에 보는 핵심 요약\n- 오늘 주제는 {topic_title}.\n- 핵심만 짚으면, 확인할 기준과 주의할 점 두 가지다.")
-
     if not re.search(r"정보 제공 목적|개인 상황|전문가|상담|보장하지 않습니다|참고", enhanced):
         enhanced = _append_to_body(enhanced, "[정보 제공 안내]\n이 글은 일반적인 정보 제공 목적입니다. 개인 상황에 따라 적용 결과가 달라질 수 있으므로 중요한 결정 전에는 추가 확인이 필요합니다.")
 
