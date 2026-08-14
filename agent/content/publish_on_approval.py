@@ -38,7 +38,29 @@ from agent.content.structured_data import build_structured_data_html
 
 
 class PublishBlockedError(RuntimeError):
-    """Raised when a publish is attempted before CEO approval."""
+    """Raised when live publication is blocked by a required gate."""
+
+
+_PUBLISH_BLOCKED_MARKERS = (
+    "::경험::",
+    "::경험끝::",
+    "[경험] 여기에 직접 겪은 일을",
+    "현재 제공된 자료",
+    "발행 전",
+    "검토 필요",
+    "별도 제공된 자료",
+    "자료 없음",
+)
+
+
+def _find_publish_content_blockers(content: str) -> list[tuple[str, int]]:
+    """Return author-note/placeholder markers with their 1-based line numbers."""
+    blockers: list[tuple[str, int]] = []
+    for line_number, line in enumerate(str(content or "").splitlines(), start=1):
+        for marker in _PUBLISH_BLOCKED_MARKERS:
+            if marker in line:
+                blockers.append((marker, line_number))
+    return blockers
 
 
 def _slugify(title: str) -> str:
@@ -512,6 +534,17 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
         )
 
     blog_content = Path(item.blog_file).read_text(encoding="utf-8")
+
+    if live:
+        blockers = _find_publish_content_blockers(blog_content)
+        if blockers:
+            details = "; ".join(
+                f"'{marker}' ({line_number}번째 줄)"
+                for marker, line_number in blockers
+            )
+            raise PublishBlockedError(
+                f"{platform_id} 발행 차단: {details} — publisher not called."
+            )
 
     if platform_id == "wordpress":
         publishable_content = _wordpress_publishable_markdown(
