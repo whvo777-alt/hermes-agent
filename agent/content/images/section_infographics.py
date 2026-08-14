@@ -524,7 +524,7 @@ def _style_has_renderer(style: str, skin: Optional[str]) -> bool:
 
 
 def extract_infographic_specs(
-    markdown: str, *, max_count: int = 5, style_seed: str = "", skin: Optional[str] = None,
+    markdown: str, *, max_count: int = 3, style_seed: str = "", skin: Optional[str] = None,
     quote_cap: int = 2,
 ) -> List[InfographicSpec]:
     """Pick H2 sections that tell a visual story, preferring variety.
@@ -1841,7 +1841,7 @@ def render_section_infographic(
 
 
 def build_section_infographics(*, markdown: str, category_id: str, output_dir: str,
-                               max_count: int = 5, style_seed: str = "",
+                               max_count: int = 3, style_seed: str = "",
                                quote_cap: int = 2) -> List[Dict[str, object]]:
     """Render infographics for the strongest sections of the markdown.
 
