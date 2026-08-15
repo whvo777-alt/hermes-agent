@@ -145,7 +145,7 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
         enhanced,
         flags=re.I,
     )
-    enhanced = re.sub(r"무조건\s+", "일률적인 ", enhanced)
+
     enhanced = re.sub(r"반드시 효과", "도움이 될 수 있음", enhanced)
     enhanced = re.sub(r"수익 보장", "수익을 확정한다는 표현", enhanced)
     # Finance/health disclaimer wording that otherwise trips guarantee HARD FAIL.
