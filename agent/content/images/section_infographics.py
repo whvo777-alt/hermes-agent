@@ -169,7 +169,7 @@ def _split_table_row(line: str) -> List[str]:
 def _extract_table_with_range(lines: List[str]) -> Optional[Tuple[List[List[str]], int, int]]:
     """Locate a markdown table within ``lines``; return (table, local_start, local_end)
     where local_start/local_end are the indices of the first/last row line actually
-    consumed by the returned (possibly row-capped) table."""
+    consumed by the returned table."""
     row_indices: List[int] = []
     for i, line in enumerate(lines):
         if line.lstrip().startswith("|"):
@@ -189,10 +189,9 @@ def _extract_table_with_range(lines: List[str]) -> Optional[Tuple[List[List[str]
         return None
     width = len(header)
     body = [(r + [""] * width)[:width] for r in body]
-    kept_body_count = min(5, len(body))
-    consumed = min(body_start + kept_body_count, len(row_indices))
+    consumed = body_start + len(body)
     local_start, local_end = row_indices[0], row_indices[consumed - 1]
-    return [header] + body[:5], local_start, local_end
+    return [header] + body, local_start, local_end
 
 
 def _extract_before_after(lines: List[str], *, base: int) -> Tuple[List[Tuple[str, str]], List[Tuple[int, int]]]:
@@ -375,6 +374,8 @@ def _build_spec_for_section(heading: str, section_lines: List[str], *, base: int
     table_info = _extract_table_with_range(section_lines)
     if table_info is not None:
         table, local_start, local_end = table_info
+        if len(table) - 1 > 5:
+            return None
         return InfographicSpec(
             heading=heading, display_title=display_title, shape="grid",
             eligible_styles=("grid",), table=table,
@@ -410,26 +411,32 @@ def _build_spec_for_section(heading: str, section_lines: List[str], *, base: int
         )
 
     step_items, step_ranges = _extract_steps(section_lines, base=base)
+    if len(step_items) > 5:
+        return None
     if len(step_items) >= 3:
         return InfographicSpec(
             heading=heading, display_title=display_title, shape="ordered",
             eligible_styles=("timeline", "checklist"),
-            items=step_items[:5], strip_ranges=step_ranges[:5],
+            items=step_items, strip_ranges=step_ranges,
         )
 
     numbered_items, num_ranges = _extract_numbered(section_lines, base=base)
+    if len(numbered_items) > 5:
+        return None
     if len(numbered_items) >= 3:
         return InfographicSpec(
             heading=heading, display_title=display_title, shape="ordered",
             eligible_styles=("timeline", "checklist"),
-            items=numbered_items[:5], strip_ranges=num_ranges[:5],
+            items=numbered_items, strip_ranges=num_ranges,
         )
 
     bullet_items, bullet_ranges = _extract_bullets(section_lines, base=base)
+    if len(bullet_items) > _MAX_CHECKLIST_ITEMS:
+        return None
     if len(bullet_items) >= 3:
         checklist_items, checklist_ranges = (
-            bullet_items[:_MAX_CHECKLIST_ITEMS],
-            bullet_ranges[:_MAX_CHECKLIST_ITEMS],
+            bullet_items,
+            bullet_ranges,
         )
         if _contains_task_checkbox(section_lines):
             return InfographicSpec(
