@@ -136,7 +136,7 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
         "\n",
         enhanced,
     )
-    enhanced = re.sub(r"2023년?|2024년?|2025년?", "2026년 기준", enhanced)
+
     enhanced = re.sub(
         r"\n?!\[[^\]]*\]\((?:https?://(?:example\.com|via\.placeholder\.com|source\.unsplash\.com|"
         r"images\.unsplash\.com|unsplash\.com|placehold\.co|placekitten\.com)[^)]*|[^)]*placeholder[^)]*)\)\s*"
