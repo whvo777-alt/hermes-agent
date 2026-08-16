@@ -212,34 +212,6 @@ _EXTERNAL_LINKS_TOPIC_LABEL: Dict[str, str] = {
 }
 _DEFAULT_TOPIC_LABEL = "건강·생활"
 
-_KEYWORD_SYNONYMS: Dict[str, List[str]] = {
-    "요가": ["수업", "동작", "스트레칭", "매트 운동", "운동"],
-    "영양제": ["제품", "건강기능식품", "보충제", "해당 제품", "성분 제품"],
-    "다이어트": ["체중 관리", "식단 관리", "감량 목표", "체중 조절", "식습관 관리"],
-}
-
-# Longer phrases first so Rank Math substring density drops without
-# breaking Hangul tokens like 필요가.
-_KEYWORD_PHRASE_REPLACEMENTS: Dict[str, List[Tuple[str, str]]] = {
-    "요가": [
-        ("요가원", "스튜디오"),
-        ("요가 강사", "강사"),
-        ("요가 수업", "수업"),
-        ("요가 효과", "운동 효과"),
-        ("요가 시작", "운동 시작"),
-        ("요가 선택", "수업 선택"),
-        ("요가 준비", "수업 준비"),
-        ("홈트 요가", "홈트"),
-        ("요가 매트", "매트"),
-    ],
-    "영양제": [
-        ("영양제 선택", "제품 선택"),
-        ("영양제 섭취", "제품 섭취"),
-        ("영양제 구매", "제품 구매"),
-    ],
-}
-
-
 SEO_TITLE_MIN_LENGTH = 28
 SEO_TITLE_MAX_LENGTH = 40
 SEO_TITLE_TRUNCATION_MAX_LENGTH = 60
@@ -276,91 +248,6 @@ def format_seo_title_length_warning(title: str, *, action: str) -> str:
         f"TITLE_LENGTH_OUT_OF_RANGE: SEO title {length}자 "
         f"(권장 {SEO_TITLE_MIN_LENGTH}~{SEO_TITLE_MAX_LENGTH}자, {action})"
     )
-
-
-def thin_focus_keyword(markdown: str, focus_keyword: str, *, max_occurrences: int = 14) -> str:
-    """Reduce focus-keyword spam while keeping early/heading matches.
-
-    Rank Math flags density above ~2.5%. For a ~1000-word Korean post,
-    ~12–15 occurrences (~1–1.5%) is a safe target.
-    """
-    keyword = (focus_keyword or "").strip()
-    if not keyword or max_occurrences < 1:
-        return markdown
-
-    value = markdown
-    # Rank Math does raw substring matching. Short Korean keywords can hide
-    # inside unrelated words (요가 ⊂ 필요가). Break those false positives first.
-    if keyword == "요가":
-        value = value.replace("필요가", "필요")
-        value = value.replace("할 필요 없습니다", "할 필요는 없습니다")
-        value = value.replace("할 필요없습니다", "할 필요는 없습니다")
-
-    # 1) Replace longer compounds first (each removal drops substring hits).
-    for src, dst in _KEYWORD_PHRASE_REPLACEMENTS.get(keyword, []):
-        matches = list(re.finditer(re.escape(src), value))
-        if len(matches) <= 1:
-            continue
-        parts: List[str] = []
-        last = 0
-        for i, match in enumerate(matches):
-            parts.append(value[last:match.start()])
-            line_start = value.rfind("\n", 0, match.start()) + 1
-            on_heading = bool(re.match(r"^#{1,3}\s+", value[line_start:match.start() + len(src)]))
-            if i == 0 or on_heading:
-                parts.append(match.group(0))
-            else:
-                parts.append(dst)
-            last = match.end()
-        parts.append(value[last:])
-        value = "".join(parts)
-
-    # 2) Replace leftover keyword hits down to max_occurrences.
-    # Prefer standalone tokens, but if density is still high (compounds /
-    # Rank Math substring counting), thin remaining raw occurrences too.
-    pattern = re.compile(re.escape(keyword))
-    matches = []
-    for match in pattern.finditer(value):
-        before = value[: match.start()]
-        if before.rfind("<") > before.rfind(">"):
-            continue  # inside an HTML tag
-        matches.append(match)
-    if len(matches) <= max_occurrences:
-        return value
-
-    synonyms = _KEYWORD_SYNONYMS.get(keyword, ["이것", "해당 항목", "관련 내용"])
-    keep_indexes = set(range(min(4, max_occurrences)))
-    lines = value.split("\n")
-    offset = 0
-    heading_spans = []
-    for line in lines:
-        if re.match(r"^#{1,3}\s+", line):
-            heading_spans.append((offset, offset + len(line)))
-        offset += len(line) + 1
-    for i, match in enumerate(matches):
-        if any(start <= match.start() < end for start, end in heading_spans):
-            keep_indexes.add(i)
-    for i in range(len(matches)):
-        if len(keep_indexes) >= max_occurrences:
-            break
-        keep_indexes.add(i)
-
-    parts = []
-    last = 0
-    replace_i = 0
-    for i, match in enumerate(matches):
-        parts.append(value[last:match.start()])
-        if i in keep_indexes:
-            parts.append(match.group(0))
-        else:
-            parts.append(synonyms[replace_i % len(synonyms)])
-            replace_i += 1
-        last = match.end()
-    parts.append(value[last:])
-    result = "".join(parts)
-    if keyword == "요가":
-        result = result.replace("필요가", "필요")
-    return result
 
 
 def _has_external_link(markdown: str) -> bool:
@@ -615,10 +502,10 @@ def enrich_wordpress_markdown_for_seo(
     wp_category_term_id: Optional[int] = None,
     internal_link_target: int = 3,
 ) -> Dict[str, Any]:
-    """Apply density thinning + external/internal link enrichment."""
+    """Apply external/internal link enrichment without rewriting words."""
     original = markdown
-    content = thin_focus_keyword(original, focus_keyword)
-    thinned = content != original
+    content = original
+    thinned = False
     before_links = content
     content = append_external_links(
         content, category_id=category_id, platform_id=platform_id, seed=seed,
