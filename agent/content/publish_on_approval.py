@@ -490,7 +490,7 @@ def _attach_blogspot_infographics(markdown: str, *, category_id: str, output_dir
     if not results:
         return markdown
 
-    narrative = _strip_infographic_source_blocks(markdown, results)
+    narrative = markdown
     lines = narrative.split("\n")
     for info in results:
         try:
@@ -629,7 +629,7 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
                 output_dir=str(Path(item.blog_file).parent / "images"),
                 style_seed=f"{item.platform}:{item.topic_title}:{title}",
             )
-            narrative_content = _strip_infographic_source_blocks(publishable_content, infographic_results)
+            narrative_content = publishable_content
         except Exception as exc:  # noqa: BLE001 — draft must proceed even if infographic build fails
             logging.getLogger(__name__).warning(
                 "WordPress section infographics build failed: %s", exc
