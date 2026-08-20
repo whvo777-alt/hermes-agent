@@ -30,6 +30,7 @@ Pure local PIL drawing — no LLM call, no network call.
 from __future__ import annotations
 
 import re
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -1835,6 +1836,19 @@ def render_section_infographic(
     build_section_infographics (see choose_card_skin) and passed through
     here unchanged for every card in that document.
     """
+    try:
+        from agent.content.images.html_cards import render_html_card
+
+        rendered = render_html_card(
+            spec, output_path, category_id=category_id, skin=skin
+        )
+        if rendered:
+            return rendered
+    except Exception:  # noqa: BLE001 - HTML 실패는 PIL 렌더러로 넘긴다
+        logging.getLogger(__name__).warning(
+            "html card renderer unavailable; falling back to PIL", exc_info=True
+        )
+
     # Skin C's "3단계 스텝형(선형)" only makes sense for an exact 3-step
     # timeline (STEP 1/2/3 is a fixed-width layout, not a variable grid) --
     # checked ahead of the flat _SKIN_RENDERERS lookup since it depends on
