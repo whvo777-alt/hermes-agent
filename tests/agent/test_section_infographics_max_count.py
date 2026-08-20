@@ -1,11 +1,13 @@
 """Regression test for the document-level infographic count default."""
 
+from inspect import signature
+
 from agent.content.images.section_infographics import extract_infographic_specs
 
 
-def _six_eligible_sections() -> str:
+def _eight_eligible_sections() -> str:
     sections = []
-    for index in range(1, 7):
+    for index in range(1, 9):
         sections.append(
             f"## 대단원 {index}\n"
             f"- 조건을 충족하는 항목 {index}-1\n"
@@ -15,7 +17,8 @@ def _six_eligible_sections() -> str:
     return "# 제목\n\n" + "\n".join(sections)
 
 
-def test_default_max_count_limits_specs_to_three():
-    specs = extract_infographic_specs(_six_eligible_sections(), style_seed="max-count")
+def test_default_max_count_limits_specs_to_default():
+    specs = extract_infographic_specs(_eight_eligible_sections(), style_seed="max-count")
+    default_max_count = signature(extract_infographic_specs).parameters["max_count"].default
 
-    assert len(specs) <= 3
+    assert len(specs) == default_max_count
