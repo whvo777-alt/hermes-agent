@@ -245,16 +245,38 @@ def _enhance_blog_quality(*, platform_id: str, category_name: str, topic_title: 
     return enhanced
 
 
-def _expression_goals(*, platform_id: str, category_id: str) -> str:
+_FLOWS = (
+    "문제 해결형",
+    "정보 설명형",
+    "비교형",
+    "단계별 가이드형",
+    "상황별형",
+)
+
+
+def _pick_flow(seed: str) -> str:
+    """날짜·플랫폼·카테고리로 다섯 흐름 중 하나를 정한다."""
+    digits = "".join(ch for ch in str(seed) if ch.isdigit())
+    base = int(digits) if digits else 0
+    offset = sum(ord(ch) for ch in str(seed))
+    return _FLOWS[(base + offset) % len(_FLOWS)]
+
+
+def _expression_goals(*, platform_id: str, category_id: str, flow_seed: str = "") -> str:
     """Quality-first practical writing goals for WordPress and Blogspot."""
+    flow = _pick_flow(f"{flow_seed}:{platform_id}:{category_id}")
     if platform_id in ("wordpress", "blogspot"):
         length_rule = "- 본문 분량 5,500~7,500자 (4,500자 미만·속이 빈 짧은 글 금지, 9,000자 초과 금지)."
         h2_rule = (
-            "- H2 4~7개. 흐름은 매거진 스타일 규칙의 다섯 가지 중 이 글 주제에 맞는 하나를 고른다."
+            f"- H2 4~7개. 이 글은 매거진 스타일 규칙의 다섯 흐름 중 '{flow}' 으로 쓴다. "
+            "다른 흐름을 고르지 않는다."
         )
     else:
         length_rule = "- 본문 분량 4,000~6,500자 (3,000자 미만·속이 빈 짧은 글 금지, 8,000자 초과 금지)."
-        h2_rule = "- H2 4~5개. 흐름은 매거진 스타일 규칙의 다섯 가지 중 이 글 주제에 맞는 하나를 고른다."
+        h2_rule = (
+            f"- H2 4~5개. 이 글은 매거진 스타일 규칙의 다섯 흐름 중 '{flow}' 으로 쓴다. "
+            "다른 흐름을 고르지 않는다."
+        )
     shared = f"""{length_rule}
 {h2_rule}
 - 사람이 쓴 호흡: 문장 길이를 섞고, 한 줄 팁만 나열하지 않는다. 각 팁에 왜/어떻게를 붙인다.
@@ -393,7 +415,7 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
         prior_feedback=prior_feedback,
     )
     length_h2_line = (
-        "- H1 1개, H2 4개에서 7개(실전 사례 포함), 본문 5,500~7,500자. 개인차 안내를 포함한다."
+        "- H1 1개, H2 4개에서 7개, 본문 5,500~7,500자. 개인차 안내를 포함한다."
         if platform_id in ("wordpress", "blogspot")
         else "- H1 1개, H2 5~6개, 본문 4,000~6,500자. 개인차 안내를 포함한다." if platform_id == "tistory" else "- H1 1개, H2 4~5개, 본문 4,000~6,500자. 개인차 안내를 포함한다."
     )
@@ -412,7 +434,11 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
 과거 연도를 최신 트렌드처럼 쓰지 말고, 필요하면 현재 기준 또는 연도 없는 표현을 사용하세요.
 위 시스템 프롬프트의 Research/Planning Summary를 반영해서 실제 발행 직전 검토가 가능한 블로그 글 1편을 작성해줘.
 
-{_expression_goals(platform_id=platform_id, category_id=category_id)}
+{_expression_goals(
+    platform_id=platform_id,
+    category_id=category_id,
+    flow_seed=f"{current_date}:{topic_title}",
+)}
 
 {_visual_marker_hint()}
 

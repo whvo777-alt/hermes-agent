@@ -16,7 +16,7 @@ from unittest.mock import patch
 from agent.content.writing.writer import _expression_goals, write_blog_post
 
 _OLD_LENGTH_LINE = "- 본문 분량 4,000~6,500자 (3,000자 미만·속이 빈 짧은 글 금지, 8,000자 초과 금지)."
-_OLD_H2_LINE = "- H2 4~5개. 흐름은 매거진 스타일 규칙의 다섯 가지 중 이 글 주제에 맞는 하나를 고른다."
+_NON_WP_H2_PREFIX = "- H2 4~5개. 이 글은 매거진 스타일 규칙의 다섯 흐름 중 '"
 _NEW_LENGTH_LINE = "- 본문 분량 5,500~7,500자 (4,500자 미만·속이 빈 짧은 글 금지, 9,000자 초과 금지)."
 
 
@@ -26,7 +26,8 @@ def test_naver_expression_goals_unchanged_even_for_health_category():
     OLD text, not the new wordpress/blogspot target."""
     text = _expression_goals(platform_id="naver", category_id="health")
     assert _OLD_LENGTH_LINE in text
-    assert _OLD_H2_LINE in text
+    assert _NON_WP_H2_PREFIX in text
+    assert "다른 흐름을 고르지 않는다." in text
     assert _NEW_LENGTH_LINE not in text
 
 
@@ -80,7 +81,7 @@ def test_write_blog_post_final_line_naver_unchanged():
 
 def test_write_blog_post_final_line_wordpress_updated():
     user_prompt = _write_and_capture_user_prompt(platform_id="wordpress", category_id="health")
-    assert "H1 1개, H2 4개에서 7개(실전 사례 포함), 본문 5,500~7,500자. 개인차 안내를 포함한다." in user_prompt
+    assert "H1 1개, H2 4개에서 7개, 본문 5,500~7,500자. 개인차 안내를 포함한다." in user_prompt
 
 
 def test_write_blog_post_title_prompt_uses_internal_topic_label_and_positive_criteria():
