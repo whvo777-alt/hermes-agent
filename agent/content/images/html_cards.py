@@ -69,6 +69,27 @@ def _stack_height(row_count: int, row_h: int = 150, extra: int = 0) -> int:
     return max(_MIN_CARD_HEIGHT, min(total, _MAX_CARD_HEIGHT))
 
 
+def _est_lines(text: str, chars_per_line: int) -> int:
+    """글자 수로 줄 수를 어림한다. 한글 기준."""
+    length = len(str(text or "").strip())
+    if length <= 0:
+        return 1
+    return max(1, -(-length // max(1, chars_per_line)))
+
+
+def _rows_height(texts, *, chars_per_line: int, line_h: int,
+                 base_row: int, extra: int = 0) -> int:
+    """줄이 접히는 것까지 헤아려 카드 높이를 정한다."""
+    rows = list(texts) or [""]
+    body = sum(
+        max(base_row, _est_lines(t, chars_per_line) * line_h + 62) for t in rows
+    )
+    total = (
+        _HEADER_H + body + (len(rows) - 1) * _ROW_GAP + extra + _FOOTER_H + 40
+    )
+    return max(_MIN_CARD_HEIGHT, min(total, _MAX_CARD_HEIGHT))
+
+
 def _card_height(row_count: int) -> int:
     """옛 이름 유지."""
     return _stack_height(row_count)
@@ -182,7 +203,7 @@ _ROWS_CSS = """
 
 def _checklist_html(title: str, items: List[str]) -> str:
     p = _PALETTE
-    height = _card_height(len(items))
+    height = _rows_height(items, chars_per_line=21, line_h=48, base_row=150)
     rows = "".join(
         f'<div class="rw"><span class="num">{i}</span>'
         f'<span class="txt">{html.escape(t)}</span><span class="box"></span></div>'
@@ -205,7 +226,7 @@ def _checklist_html(title: str, items: List[str]) -> str:
 
 def _timeline_html(title: str, items: List[str]) -> str:
     p = _PALETTE
-    height = _card_height(len(items))
+    height = _rows_height(items, chars_per_line=24, line_h=46, base_row=150)
     rows = "".join(
         f'<div class="rw"><span class="num">{i}</span>'
         f'<span class="txt">{html.escape(t)}</span></div>'
@@ -231,7 +252,24 @@ def _timeline_html(title: str, items: List[str]) -> str:
 def _grid_html(title: str, table: List[List[str]]) -> str:
     p = _PALETTE
     header, body = table[0], table[1:]
-    height = _stack_height(len(body), row_h=118, extra=86)
+
+    # 칸이 좁을수록 글이 여러 줄로 접힌다. 줄 수를 어림해 높이를 잡는다.
+    cols = max(1, len(header))
+    cell_w = (CARD_WIDTH - 116) / cols - 44          # 좌우 여백과 칸 안쪽 여백
+    chars_per_line = max(4, int(cell_w / 29))        # 글자 30px 기준 한 줄 글자 수
+    line_h = 40                                      # 30px * 1.32 줄간격
+    cell_pad = 44                                    # 위아래 안쪽 여백
+
+    header_h = line_h + 48
+    body_h = 0
+    for row in body:
+        lines = max(_est_lines(c, chars_per_line) for c in row) if row else 1
+        body_h += lines * line_h + cell_pad
+
+    height = max(
+        _MIN_CARD_HEIGHT,
+        min(_HEADER_H + header_h + body_h + _FOOTER_H + 40, _MAX_CARD_HEIGHT),
+    )
     ths = "".join(f"<th>{html.escape(str(c))}</th>" for c in header)
     trs = "".join(
         "<tr>" + "".join(f"<td>{html.escape(str(c))}</td>" for c in row) + "</tr>"
@@ -258,7 +296,9 @@ tr td:first-child{{color:{p['blue']};font-weight:800}}
 
 def _before_after_html(title: str, pairs) -> str:
     p = _PALETTE
-    height = _stack_height(len(pairs), row_h=132, extra=72)
+    longest = [b if len(str(b)) > len(str(a)) else a for b, a in pairs]
+    height = _rows_height(longest, chars_per_line=13, line_h=38,
+                          base_row=132, extra=72)
     rows = "".join(
         f'<div class="pair"><div class="cell l">{html.escape(str(b))}</div>'
         f'<span class="arw">{_ICON_ARROW}</span>'
@@ -292,7 +332,14 @@ def _before_after_html(title: str, pairs) -> str:
 
 def _qa_html(title: str, pairs) -> str:
     p = _PALETTE
-    height = _stack_height(len(pairs), row_h=280, extra=20)
+    body_h = 0
+    for q, a in pairs:
+        q_lines = _est_lines(q, 26)
+        a_lines = _est_lines(a, 31)
+        body_h += max(280, q_lines * 43 + a_lines * 40 + 100)
+    height = max(_MIN_CARD_HEIGHT, min(
+        _HEADER_H + body_h + (len(pairs) - 1) * 20 + _FOOTER_H + 60,
+        _MAX_CARD_HEIGHT))
     blocks = "".join(
         f'<div class="qa"><div class="q"><span class="mk">Q</span>'
         f'<span>{html.escape(str(q))}</span></div>'
@@ -354,7 +401,8 @@ _TIER_COLORS = {
 
 def _risk_tier_html(title: str, tiers) -> str:
     p = _PALETTE
-    height = _stack_height(len(tiers), row_h=155)
+    height = _rows_height([t[2] for t in tiers], chars_per_line=24,
+                          line_h=41, base_row=155)
     rows = []
     for group, label, desc in tiers:
         fg, bg = _TIER_COLORS.get(str(group).lower(), (p["blue"], p["blue_pale"]))
