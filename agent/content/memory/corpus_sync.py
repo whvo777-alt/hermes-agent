@@ -21,6 +21,40 @@ from agent.content.memory.content_memory import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+_HTML_ENTITY_RE = re.compile(r"&#?\w+;")
+_JOSA = (
+    "에서", "으로", "에게", "과의", "와의", "이나", "라도",
+    "은", "는", "이", "가", "을", "를", "의", "에", "도", "와", "과", "로", "만",
+)
+
+
+def _strip_josa(token: str) -> str:
+    """낱말 끝에 붙은 조사를 뗀다. 짧은 낱말은 건드리지 않는다."""
+    for josa in sorted(_JOSA, key=len, reverse=True):
+        if len(token) > len(josa) + 1 and token.endswith(josa):
+            return token[: -len(josa)]
+    return token
+
+
+def _lead_keyword(title: str) -> str:
+    """제목이 '키워드, 설명' 꼴이면 맨 앞 낱말을 대표로 본다."""
+    head = re.split(r"[,:|·]", str(title or ""), maxsplit=1)[0]
+    head = _HTML_ENTITY_RE.sub(" ", head)
+    tokens = [t for t in _normalize_text(head).split() if len(t) >= 2]
+    if len(tokens) == 1:
+        return _strip_josa(tokens[0])
+    return ""
+
+
+def _usable_token(token: str) -> bool:
+    if len(token) < 2:
+        return False
+    if re.fullmatch(r"[0-9]+", token):
+        return False
+    if re.match(r"^[0-9]", token):
+        return False
+    return True
+
 
 def _drafts_root() -> Path:
     override = os.environ.get("HERMES_CONTENT_DRAFTS_DIR")
@@ -28,12 +62,17 @@ def _drafts_root() -> Path:
 
 
 def _guess_main_keyword(title: str, category_keywords: Optional[List[str]] = None) -> str:
-    text = _normalize_text(title)
+    lead = _lead_keyword(title)
+    if lead:
+        return lead
+    text = _normalize_text(_HTML_ENTITY_RE.sub(" ", str(title or "")))
     for kw in category_keywords or []:
         if _normalize_text(kw) and _normalize_text(kw) in text:
             return str(kw).strip()
-    tokens = [t for t in text.split() if len(t) >= 2]
-    return tokens[0] if tokens else ""
+    for token in text.split():
+        if _usable_token(token):
+            return _strip_josa(token)
+    return ""
 
 
 def _extract_h1(markdown: str) -> str:
