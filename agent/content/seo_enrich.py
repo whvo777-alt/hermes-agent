@@ -438,15 +438,38 @@ def append_internal_links(
     """Insert up to N internal links near the end of the article."""
     if _has_internal_link(markdown, site_url):
         return markdown
-    terms = [t for t in (preferred_terms or []) if t]
+
+    def _split_terms(sources) -> list[str]:
+        """제목 문장이 통째로 넘어와도 견줄 낱말로 쪼갠다."""
+        out: list[str] = []
+        for src in sources or []:
+            for chunk in re.split(r"[^0-9A-Za-z가-힣]+", str(src or "")):
+                chunk = chunk.strip()
+                if len(chunk) >= 2:
+                    out.append(chunk)
+        seen: set[str] = set()
+        return [t for t in out if not (t in seen or seen.add(t))]
+
+    terms = _split_terms(preferred_terms)
     ranked = list(candidates)
+
+    def _bigrams(word: str) -> set[str]:
+        w = str(word or "")
+        return {w[i:i + 2] for i in range(len(w) - 1)} if len(w) >= 2 else set()
 
     def _score(item: Dict[str, str]) -> int:
         title = item.get("title") or ""
         score = 0
+        title_grams = _bigrams(title)
         for term in terms:
-            if term and term in title:
-                score += 3
+            if not term:
+                continue
+            if term in title:
+                score += 5
+                continue
+            shared = _bigrams(term) & title_grams
+            if shared:
+                score += 2 * min(len(shared), 2)
         # Softly prefer non-tech filler when writing health/lifestyle posts.
         for noise in ("AI", "서버", "PC", "윈도우", "모니터", "슬랙", "노션"):
             if noise in title:
@@ -455,7 +478,11 @@ def append_internal_links(
 
     if terms:
         ranked = sorted(ranked, key=_score, reverse=True)
-    picks = [item for item in ranked if _score(item) >= 0][:max_links]
+    related = [item for item in ranked if _score(item) > 0]
+    if related:
+        picks = sorted(related, key=_score, reverse=True)[:max_links]
+    else:
+        picks = ranked[:max_links]
     if picks and len(picks) < max_links:
         logger.info(
             "Internal links: only %d/%d same-category candidates available",

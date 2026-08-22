@@ -233,3 +233,59 @@ def test_enrich_wordpress_markdown_internal_added_matches_actual_target():
             internal_link_target=3,
         )
     assert result["internalCount"] == 3
+
+
+def test_full_topic_title_is_split_into_terms_for_matching():
+    candidates = [
+        {"title": "다크초콜릿 고르는 법", "link": "https://x.com/unrelated"},
+        {"title": "연차계산기 사용법", "link": "https://x.com/related"},
+    ]
+
+    out = append_internal_links(
+        "## 마무리\n끝.",
+        site_url="https://x.com",
+        candidates=candidates,
+        max_links=1,
+        preferred_terms=["연차계산기 | 입사일로 연차휴가를 계산하는 방법과 확인할 점"],
+    )
+
+    assert "- [연차계산기 사용법](https://x.com/related)" in out
+    assert "다크초콜릿 고르는 법" not in out
+
+
+def test_two_character_overlap_can_rank_a_candidate():
+    candidates = [
+        {"title": "다크초콜릿 고르는 법", "link": "https://x.com/unrelated"},
+        {"title": "컴퓨터 어깨 통증 완화", "link": "https://x.com/related"},
+    ]
+
+    out = append_internal_links(
+        "## 마무리\n끝.",
+        site_url="https://x.com",
+        candidates=candidates,
+        max_links=1,
+        preferred_terms=["어깨결림"],
+    )
+
+    assert "- [컴퓨터 어깨 통증 완화](https://x.com/related)" in out
+    assert "다크초콜릿 고르는 법" not in out
+
+
+def test_unrelated_candidates_are_excluded_when_any_related_candidate_exists():
+    candidates = [
+        {"title": "다크초콜릿 고르는 법", "link": "https://x.com/chocolate"},
+        {"title": "셀룰라이트 관리 방법", "link": "https://x.com/cellulite"},
+        {"title": "컴퓨터 어깨 통증 완화", "link": "https://x.com/shoulder"},
+    ]
+
+    out = append_internal_links(
+        "## 마무리\n끝.",
+        site_url="https://x.com",
+        candidates=candidates,
+        preferred_terms=["어깨결림"],
+    )
+
+    assert out.count("- [") == 1
+    assert "- [컴퓨터 어깨 통증 완화](https://x.com/shoulder)" in out
+    assert "다크초콜릿 고르는 법" not in out
+    assert "셀룰라이트 관리 방법" not in out
