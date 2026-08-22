@@ -297,3 +297,49 @@ def test_pagination_does_not_exceed_five_pages(monkeypatch):
 
     assert _publish_pages(calls) == [1, 2, 3, 4, 5]
     assert len(_items(memory)) == 500
+
+
+def _run_private_ingest(monkeypatch):
+    calls = []
+
+    monkeypatch.setenv("WORDPRESS_SITE_URL", "https://example.test")
+    monkeypatch.setenv("WORDPRESS_USERNAME", "user")
+    monkeypatch.setenv("WORDPRESS_APP_PASSWORD", "password")
+    monkeypatch.setattr(
+        wordpress,
+        "_build_auth_header",
+        lambda **_kwargs: "Basic test-auth",
+    )
+
+    def fake_get(endpoint, **kwargs):
+        calls.append((endpoint, kwargs))
+        if "/wp/v2/posts" in endpoint and "status=private" in endpoint:
+            return _FakeResponse([_post("private-post")])
+        if "/wp/v2/posts" in endpoint:
+            return _FakeResponse([])
+        if "/wp/v2/categories" in endpoint:
+            return _FakeResponse([])
+        raise AssertionError(f"unexpected endpoint: {endpoint}")
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    memory = corpus_sync.ingest_wordpress_published(
+        {"items": []},
+        category_id="health",
+    )
+    return memory, calls
+
+
+def test_private_status_is_requested(monkeypatch):
+    _memory, calls = _run_private_ingest(monkeypatch)
+
+    private_calls = [
+        endpoint for endpoint, _kwargs in calls if "status=private" in endpoint
+    ]
+    assert len(private_calls) == 1
+
+
+def test_private_post_is_added_to_memory(monkeypatch):
+    memory, calls = _run_private_ingest(monkeypatch)
+
+    assert any("status=private" in endpoint for endpoint, _kwargs in calls)
+    assert any(item["slug"] == "wp-private-post" for item in _items(memory))

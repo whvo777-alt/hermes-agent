@@ -243,7 +243,7 @@ def ingest_wordpress_published(
 
     current = memory
     posts: List[Dict[str, Any]] = []
-    for status in ("publish", "draft"):
+    for status in ("publish", "draft", "private"):
         for page in range(1, _WP_MAX_PAGES + 1):
             endpoint = (
                 f"{site_url.rstrip('/')}/wp-json/wp/v2/posts"
