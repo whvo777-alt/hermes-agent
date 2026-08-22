@@ -127,3 +127,63 @@ def test_category_lookup_is_called_once_for_all_posts(monkeypatch):
     assert len(_items(memory)) == 2
     assert len(category_calls) == 1
     assert "include=7,12" in category_calls[0]
+
+
+def test_url_encoded_korean_category_slug_maps_to_health(monkeypatch):
+    memory, _calls = _run_ingest(
+        monkeypatch,
+        [_post("health-post", categories=[7])],
+        category_rows=[{"id": 7, "slug": "%ea%b1%b4%ea%b0%95"}],
+    )
+
+    assert _items(memory)[0]["category"] == "health"
+
+
+def test_it_category_slug_maps_to_it_tech(monkeypatch):
+    memory, _calls = _run_ingest(
+        monkeypatch,
+        [_post("intel", categories=[7])],
+        category_rows=[{"id": 7, "slug": "it"}],
+    )
+
+    assert _items(memory)[0]["category"] == "it-tech"
+
+
+def test_slack_category_slug_maps_to_it_tech(monkeypatch):
+    memory, _calls = _run_ingest(
+        monkeypatch,
+        [_post("slack", categories=[7])],
+        category_rows=[{"id": 7, "slug": "slack"}],
+    )
+
+    assert _items(memory)[0]["category"] == "it-tech"
+
+
+def test_uncategorized_category_slug_uses_fallback(monkeypatch):
+    memory, _calls = _run_ingest(
+        monkeypatch,
+        [_post("walking", categories=[7])],
+        category_rows=[{"id": 7, "slug": "uncategorized"}],
+    )
+
+    assert _items(memory)[0]["category"] == "health"
+
+
+def test_it_tech_category_slug_is_unchanged(monkeypatch):
+    memory, _calls = _run_ingest(
+        monkeypatch,
+        [_post("it-tech-post", categories=[7])],
+        category_rows=[{"id": 7, "slug": "it-tech"}],
+    )
+
+    assert _items(memory)[0]["category"] == "it-tech"
+
+
+def test_unlisted_category_slug_is_unchanged(monkeypatch):
+    memory, _calls = _run_ingest(
+        monkeypatch,
+        [_post("travel", categories=[7])],
+        category_rows=[{"id": 7, "slug": "travel"}],
+    )
+
+    assert _items(memory)[0]["category"] == "travel"

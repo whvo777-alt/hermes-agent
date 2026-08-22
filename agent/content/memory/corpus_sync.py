@@ -11,6 +11,7 @@ import re
 from datetime import date as date_cls
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import unquote
 
 from agent.content.memory.content_memory import (
     _normalize_text,
@@ -20,6 +21,24 @@ from agent.content.memory.content_memory import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+_WP_CATEGORY_ALIASES = {
+    "건강": "health",
+    "it": "it-tech",
+    "slack": "it-tech",
+}
+_WP_CATEGORY_IGNORED = {"uncategorized", ""}
+
+
+def _normalize_wp_slug(slug: str) -> str:
+    """주소 방식 글자를 한글로 되돌리고 우리 이름으로 짝지어 준다."""
+    raw = str(slug or "").strip()
+    try:
+        decoded = unquote(raw).strip().lower()
+    except Exception:  # noqa: BLE001
+        decoded = raw.lower()
+    if decoded in _WP_CATEGORY_IGNORED:
+        return ""
+    return _WP_CATEGORY_ALIASES.get(decoded, decoded)
 
 _HTML_ENTITY_RE = re.compile(r"&#?\w+;")
 _JOSA = (
@@ -173,7 +192,7 @@ def _fetch_category_slugs(site_url: str, term_ids: List[int]) -> Dict[int, str]:
     out: Dict[int, str] = {}
     for row in rows or []:
         try:
-            out[int(row.get("id"))] = str(row.get("slug") or "").strip()
+            out[int(row.get("id"))] = _normalize_wp_slug(row.get("slug"))
         except (TypeError, ValueError):
             continue
     return out
