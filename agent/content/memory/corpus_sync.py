@@ -146,6 +146,56 @@ def ingest_local_drafts(
     return current
 
 
+def _fetch_category_slugs(site_url: str, term_ids: List[int]) -> Dict[int, str]:
+    """카테고리 번호를 이름표로 바꾼다. 실패하면 빈 사전을 돌려준다."""
+    ids = sorted({int(i) for i in term_ids if isinstance(i, int) or str(i).isdigit()})
+    if not ids:
+        return {}
+    endpoint = (
+        f"{site_url.rstrip('/')}/wp-json/wp/v2/categories"
+        f"?include={','.join(str(i) for i in ids)}"
+        f"&per_page=100&_fields=id,slug"
+    )
+    try:
+        from agent.content.publishers.wordpress import _build_auth_header
+        import httpx
+
+        auth = _build_auth_header(
+            username=os.environ.get("WORDPRESS_USERNAME"),
+            app_password=os.environ.get("WORDPRESS_APP_PASSWORD"),
+        )
+        response = httpx.get(endpoint, headers={"Authorization": auth}, timeout=20.0)
+        if response.status_code >= 400:
+            return {}
+        rows = response.json() if response.content else []
+    except Exception:  # noqa: BLE001
+        return {}
+    out: Dict[int, str] = {}
+    for row in rows or []:
+        try:
+            out[int(row.get("id"))] = str(row.get("slug") or "").strip()
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _resolve_category(term_ids, slug_by_id: Dict[int, str], fallback: str) -> str:
+    """글의 진짜 카테고리를 정한다. 못 알아내면 fallback 을 쓴다."""
+    slugs = []
+    for i in term_ids or []:
+        try:
+            slug = slug_by_id.get(int(i))
+        except (TypeError, ValueError):
+            continue
+        if slug:
+            slugs.append(slug)
+    if fallback in slugs:
+        return fallback
+    if slugs:
+        return slugs[0]
+    return fallback
+
+
 def ingest_wordpress_published(
     memory: Dict[str, Any],
     *,
@@ -171,10 +221,11 @@ def ingest_wordpress_published(
         return memory
 
     current = memory
+    posts: List[Dict[str, Any]] = []
     for status in ("publish", "draft"):
         endpoint = (
             f"{site_url.rstrip('/')}/wp-json/wp/v2/posts"
-            f"?per_page={limit}&status={status}&_fields=id,title,link,date,slug"
+            f"?per_page={limit}&status={status}&_fields=id,title,link,date,slug,categories"
         )
         try:
             response = httpx.get(endpoint, headers={"Authorization": auth}, timeout=20.0)
@@ -185,29 +236,34 @@ def ingest_wordpress_published(
             continue
         if not isinstance(body, list):
             continue
-        for item in body:
-            title = ((item.get("title") or {}).get("rendered") or "").strip()
-            title = re.sub(r"<[^>]+>", "", title)
-            if not title:
-                continue
-            raw_date = str(item.get("date") or "")[:10] or date_cls.today().isoformat()
-            keyword = _guess_main_keyword(title, category_keywords)
-            slug = str(item.get("slug") or item.get("id") or title)
-            added = add_content(
-                current,
-                {
-                    "date": raw_date,
-                    "platform": "wordpress",
-                    "category": category_id,
-                    "topic": title,
-                    "title": title,
-                    "mainKeyword": keyword,
-                    "subKeywords": [],
-                    "slug": f"wp-{slug}",
-                    "filePath": str(item.get("link") or ""),
-                },
-            )
-            current = added["memory"]
+        posts.extend(body)
+
+    term_ids = [term_id for item in posts for term_id in (item.get("categories") or [])]
+    slug_by_id = _fetch_category_slugs(site_url, term_ids)
+    for item in posts:
+        title = ((item.get("title") or {}).get("rendered") or "").strip()
+        title = re.sub(r"<[^>]+>", "", title)
+        if not title:
+            continue
+        raw_date = str(item.get("date") or "")[:10] or date_cls.today().isoformat()
+        keyword = _guess_main_keyword(title, category_keywords)
+        slug = str(item.get("slug") or item.get("id") or title)
+        resolved_category = _resolve_category(item.get("categories"), slug_by_id, category_id)
+        added = add_content(
+            current,
+            {
+                "date": raw_date,
+                "platform": "wordpress",
+                "category": resolved_category,
+                "topic": title,
+                "title": title,
+                "mainKeyword": keyword,
+                "subKeywords": [],
+                "slug": f"wp-{slug}",
+                "filePath": str(item.get("link") or ""),
+            },
+        )
+        current = added["memory"]
     return current
 
 
