@@ -187,3 +187,113 @@ def test_unlisted_category_slug_is_unchanged(monkeypatch):
     )
 
     assert _items(memory)[0]["category"] == "travel"
+
+
+def _run_paged_ingest(monkeypatch, post_pages):
+    calls = []
+
+    monkeypatch.setenv("WORDPRESS_SITE_URL", "https://example.test")
+    monkeypatch.setenv("WORDPRESS_USERNAME", "user")
+    monkeypatch.setenv("WORDPRESS_APP_PASSWORD", "password")
+    monkeypatch.setattr(
+        wordpress,
+        "_build_auth_header",
+        lambda **_kwargs: "Basic test-auth",
+    )
+
+    def fake_get(endpoint, **kwargs):
+        calls.append((endpoint, kwargs))
+        if "/wp/v2/posts" in endpoint:
+            status = "publish" if "status=publish" in endpoint else "draft"
+            page = 1
+            for part in endpoint.split("?")[-1].split("&"):
+                if part.startswith("page="):
+                    page = int(part.split("=", 1)[1])
+                    break
+            response = post_pages.get((status, page), _FakeResponse([]))
+            if isinstance(response, BaseException):
+                raise response
+            return response
+        if "/wp/v2/categories" in endpoint:
+            return _FakeResponse([])
+        raise AssertionError(f"unexpected endpoint: {endpoint}")
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    memory = corpus_sync.ingest_wordpress_published(
+        {"items": []},
+        category_id="health",
+    )
+    return memory, calls
+
+
+def _publish_pages(calls):
+    pages = []
+    for endpoint, _kwargs in calls:
+        if "/wp/v2/posts" not in endpoint or "status=publish" not in endpoint:
+            continue
+        page = 1
+        for part in endpoint.split("?")[-1].split("&"):
+            if part.startswith("page="):
+                page = int(part.split("=", 1)[1])
+                break
+        pages.append(page)
+    return pages
+
+
+def test_full_page_fetches_the_next_page(monkeypatch):
+    page_one = [_post(f"bulk-{index:03d}") for index in range(100)]
+    page_two = [_post("bulk-100")]
+    memory, calls = _run_paged_ingest(
+        monkeypatch,
+        {
+            ("publish", 1): _FakeResponse(page_one),
+            ("publish", 2): _FakeResponse(page_two),
+        },
+    )
+
+    assert _publish_pages(calls) == [1, 2]
+    assert len(_items(memory)) == 101
+
+
+def test_short_page_does_not_fetch_the_next_page(monkeypatch):
+    page_one = [_post(f"short-{index:03d}") for index in range(99)]
+    memory, calls = _run_paged_ingest(
+        monkeypatch,
+        {
+            ("publish", 1): _FakeResponse(page_one),
+            ("publish", 2): _FakeResponse([_post("must-not-fetch")]),
+        },
+    )
+
+    assert _publish_pages(calls) == [1]
+    assert len(_items(memory)) == 99
+
+
+def test_http_error_on_second_page_stops_pagination(monkeypatch):
+    page_one = [_post(f"error-{index:03d}") for index in range(100)]
+    memory, calls = _run_paged_ingest(
+        monkeypatch,
+        {
+            ("publish", 1): _FakeResponse(page_one),
+            ("publish", 2): _FakeResponse([], status_code=400),
+            ("publish", 3): _FakeResponse([_post("must-not-fetch")]),
+        },
+    )
+
+    assert _publish_pages(calls) == [1, 2]
+    assert len(_items(memory)) == 100
+
+
+def test_pagination_does_not_exceed_five_pages(monkeypatch):
+    post_pages = {
+        ("publish", page): _FakeResponse(
+            [_post(f"capped-{page}-{index:03d}") for index in range(100)]
+        )
+        for page in range(1, 6)
+    }
+    post_pages[("publish", 6)] = _FakeResponse([_post("must-not-fetch")])
+
+    memory, calls = _run_paged_ingest(monkeypatch, post_pages)
+
+    assert _publish_pages(calls) == [1, 2, 3, 4, 5]
+    assert len(_items(memory)) == 500

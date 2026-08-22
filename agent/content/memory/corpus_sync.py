@@ -27,6 +27,8 @@ _WP_CATEGORY_ALIASES = {
     "slack": "it-tech",
 }
 _WP_CATEGORY_IGNORED = {"uncategorized", ""}
+_WP_PAGE_SIZE = 100
+_WP_MAX_PAGES = 5
 
 
 def _normalize_wp_slug(slug: str) -> str:
@@ -242,20 +244,24 @@ def ingest_wordpress_published(
     current = memory
     posts: List[Dict[str, Any]] = []
     for status in ("publish", "draft"):
-        endpoint = (
-            f"{site_url.rstrip('/')}/wp-json/wp/v2/posts"
-            f"?per_page={limit}&status={status}&_fields=id,title,link,date,slug,categories"
-        )
-        try:
-            response = httpx.get(endpoint, headers={"Authorization": auth}, timeout=20.0)
-            if response.status_code >= 400:
-                continue
-            body = response.json() if response.content else []
-        except Exception:  # noqa: BLE001
-            continue
-        if not isinstance(body, list):
-            continue
-        posts.extend(body)
+        for page in range(1, _WP_MAX_PAGES + 1):
+            endpoint = (
+                f"{site_url.rstrip('/')}/wp-json/wp/v2/posts"
+                f"?per_page={_WP_PAGE_SIZE}&page={page}&status={status}"
+                f"&_fields=id,title,link,date,slug,categories"
+            )
+            try:
+                response = httpx.get(endpoint, headers={"Authorization": auth}, timeout=20.0)
+                if response.status_code >= 400:
+                    break
+                body = response.json() if response.content else []
+            except Exception:  # noqa: BLE001
+                break
+            if not isinstance(body, list) or not body:
+                break
+            posts.extend(body)
+            if len(body) < _WP_PAGE_SIZE:
+                break
 
     term_ids = [term_id for item in posts for term_id in (item.get("categories") or [])]
     slug_by_id = _fetch_category_slugs(site_url, term_ids)
