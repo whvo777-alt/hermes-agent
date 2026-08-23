@@ -30,7 +30,9 @@ def test_html_entity_digits_are_not_selected_as_main_keyword():
 def test_digit_starting_token_is_not_selected_as_main_keyword():
     title = "7가지 질문으로 정리하는 저칼로리 간식과 단백질 간식 선택법"
 
-    assert _guess_main_keyword(title) == "질문"
+    result = _guess_main_keyword(title)
+    assert result != "7가지"
+    assert not result[:1].isdigit()
 
 
 def test_josa_is_removed_from_main_keyword():
@@ -45,3 +47,27 @@ def test_category_keyword_fallback_is_preserved_for_legacy_titles():
     title = "다이어트 시작할 때 알아야 할 식단과 운동 기준"
 
     assert _guess_main_keyword(title, _KEYWORDS) == "다이어트"
+
+
+def test_comma_lead_starting_with_digit_is_not_used_as_main_keyword():
+    title = "30대, 직장인을 위한 아침 스트레칭 순서"
+
+    assert _guess_main_keyword(title, _KEYWORDS) != "30대"
+
+
+def test_common_word_is_not_used_as_main_keyword():
+    title = "자고 일어나면 목결림이 생길 때, 살펴볼 생활 습관과 대처 순서"
+
+    assert _guess_main_keyword(title, _KEYWORDS) != "자고"
+
+
+def test_english_main_keyword_is_lowercased():
+    title = "PT, 운동 초보는 가격과 계약 조건을 먼저 비교할까?"
+
+    assert _guess_main_keyword(title, _KEYWORDS) == "pt"
+
+
+def test_hangul_main_keyword_is_preserved():
+    title = "요가 초보가 수업 전 확인할 7가지 기준"
+
+    assert _guess_main_keyword(title, _KEYWORDS) == "요가"

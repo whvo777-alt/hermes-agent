@@ -47,6 +47,13 @@ _JOSA = (
     "에서", "으로", "에게", "과의", "와의", "이나", "라도",
     "은", "는", "이", "가", "을", "를", "의", "에", "도", "와", "과", "로", "만",
 )
+_SKIP_KEYWORDS = frozenset(
+    {
+        "자고", "질문", "이런", "저런", "그런", "요즘", "정말", "진짜",
+        "제발", "이제", "다시", "가장", "매우", "정도", "경우", "때문",
+        "위해", "통해", "대해", "관련", "가지", "번째", "이상", "이하",
+    }
+)
 
 
 def _strip_josa(token: str) -> str:
@@ -57,16 +64,6 @@ def _strip_josa(token: str) -> str:
     return token
 
 
-def _lead_keyword(title: str) -> str:
-    """제목이 '키워드, 설명' 꼴이면 맨 앞 낱말을 대표로 본다."""
-    head = re.split(r"[,:|·]", str(title or ""), maxsplit=1)[0]
-    head = _HTML_ENTITY_RE.sub(" ", head)
-    tokens = [t for t in _normalize_text(head).split() if len(t) >= 2]
-    if len(tokens) == 1:
-        return _strip_josa(tokens[0])
-    return ""
-
-
 def _usable_token(token: str) -> bool:
     if len(token) < 2:
         return False
@@ -74,7 +71,19 @@ def _usable_token(token: str) -> bool:
         return False
     if re.match(r"^[0-9]", token):
         return False
+    if _strip_josa(token) in _SKIP_KEYWORDS:
+        return False
     return True
+
+
+def _lead_keyword(title: str) -> str:
+    """제목이 '키워드, 설명' 꼴이면 맨 앞 낱말을 대표로 본다."""
+    head = re.split(r"[,:|·]", str(title or ""), maxsplit=1)[0]
+    head = _HTML_ENTITY_RE.sub(" ", head)
+    tokens = [t for t in _normalize_text(head).split() if _usable_token(t)]
+    if len(tokens) == 1:
+        return _strip_josa(tokens[0])
+    return ""
 
 
 def _drafts_root() -> Path:
@@ -85,14 +94,14 @@ def _drafts_root() -> Path:
 def _guess_main_keyword(title: str, category_keywords: Optional[List[str]] = None) -> str:
     lead = _lead_keyword(title)
     if lead:
-        return lead
+        return lead.lower()
     text = _normalize_text(_HTML_ENTITY_RE.sub(" ", str(title or "")))
     for kw in category_keywords or []:
         if _normalize_text(kw) and _normalize_text(kw) in text:
             return str(kw).strip()
     for token in text.split():
         if _usable_token(token):
-            return _strip_josa(token)
+            return _strip_josa(token).lower()
     return ""
 
 
