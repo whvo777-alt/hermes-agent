@@ -183,6 +183,7 @@ def _resolve_provider():
 
 _LANDSCAPE_MIN_RATIO = 1.3
 _LANDSCAPE_TARGET_RATIO = 16 / 9
+_HERO_JPEG_QUALITY = 85
 
 
 def _enforce_landscape_crop(path: Path) -> None:
@@ -220,6 +221,34 @@ def _enforce_landscape_crop(path: Path) -> None:
         logger.warning("Landscape crop enforcement failed for %s: %s", path, exc)
 
 
+def _to_jpeg(path: Path) -> Path:
+    """대표 이미지를 JPEG 로 바꿔 용량을 줄인다. 실패하면 원래 파일 그대로."""
+    try:
+        if path.suffix.lower() in (".jpg", ".jpeg"):
+            return path
+        from PIL import Image
+
+        target = path.with_suffix(".jpg")
+        with Image.open(path) as img:
+            if img.mode in ("RGBA", "LA", "P"):
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                converted = img.convert("RGBA")
+                background.paste(converted, mask=converted.split()[-1])
+                img = background
+            else:
+                img = img.convert("RGB")
+            img.save(target, "JPEG", quality=_HERO_JPEG_QUALITY, optimize=True)
+        if target.is_file() and target.stat().st_size > 0:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            return target
+    except Exception:  # noqa: BLE001 — 변환 실패는 원본으로 넘긴다
+        logger.warning("hero JPEG conversion failed; keeping original", exc_info=True)
+    return path
+
+
 def _materialize_provider_image(image_ref: str, *, dest_dir: Path) -> Optional[Path]:
     """Copy (or download) the provider's output into ``dest_dir/hero_ai.<ext>``."""
     if image_ref.startswith("http://") or image_ref.startswith("https://"):
@@ -244,7 +273,7 @@ def _materialize_provider_image(image_ref: str, *, dest_dir: Path) -> Optional[P
         logger.warning("Could not copy AI hero image into draft dir: %s", exc)
         return None
     _enforce_landscape_crop(dest)
-    return dest
+    return _to_jpeg(dest)
 
 
 def _find_cached_ai_hero(out_dir: Path) -> Optional[Path]:
