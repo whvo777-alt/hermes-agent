@@ -214,6 +214,32 @@ def _pick_daily_topic(
     )
 
 
+def _make_hero_image(**kwargs: Any) -> HeroImage:
+    """Try the configured AI hero and retain title-card fallback behavior."""
+    mode = ""
+    try:
+        from agent.content.images.ai_hero_image import _is_ai_hero_enabled
+
+        mode = "ai" if _is_ai_hero_enabled() else ""
+    except Exception:  # noqa: BLE001 — preserve the existing title-card path
+        mode = ""
+
+    if mode == "ai":
+        try:
+            from agent.content.images.ai_hero_image import create_hero_image_ai
+
+            image = create_hero_image_ai(**kwargs)
+            if image and "hero_ai" in str(getattr(image, "file", "")):
+                return image
+        except Exception:  # noqa: BLE001 — title card keeps draft generation alive
+            logging.getLogger(__name__).warning(
+                "AI hero image failed; using title card",
+                exc_info=True,
+            )
+
+    return create_title_card(**kwargs)
+
+
 @dataclass
 class ContentDraft:
     platform: Platform
@@ -401,7 +427,7 @@ def generate_platform_draft(
             created_at="",
         )
     else:
-        image = create_title_card(
+        image = _make_hero_image(
             out_dir=platform_dir / "images", platform_id=platform.id, platform_label=platform.label,
             category_id=category.id, category_name=category.name, category_keywords=category.keywords,
             topic_title=prepared_title["h1_title"], blog_content=blog_content,
