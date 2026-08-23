@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -126,16 +128,19 @@ def _render_one(
         image_ref = response.get("image")
         if not image_ref:
             return None
-        saved = _materialize_provider_image(str(image_ref), dest_dir=out_dir)
+        with tempfile.TemporaryDirectory() as tmp:
+            staged = _materialize_provider_image(str(image_ref), dest_dir=Path(tmp))
+            if not staged:
+                return None
+            out_dir.mkdir(parents=True, exist_ok=True)
+            target = out_dir / f"section_ai_{index + 1:02d}{staged.suffix}"
+            try:
+                shutil.copyfile(staged, target)
+            except OSError:
+                logger.warning("section AI image copy failed for %r", heading, exc_info=True)
+                return None
     except Exception:  # noqa: BLE001 - 그림 하나 실패해도 글은 나간다
         logger.warning("section AI image failed for %r", heading, exc_info=True)
         return None
 
-    if not saved:
-        return None
-    target = out_dir / f"section_ai_{index + 1:02d}{saved.suffix}"
-    try:
-        saved.replace(target)
-    except OSError:
-        return saved
     return target

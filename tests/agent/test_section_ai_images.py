@@ -119,3 +119,29 @@ def test_section_filename_does_not_overwrite_hero_and_prompt_uses_heading(
     assert "hero_ai" not in Path(results[0]["file"]).name
     assert prompts[0]["topic_title"] == heading
     assert provider.calls == [("fake prompt", "landscape")]
+
+
+def test_existing_hero_image_is_preserved_when_section_image_is_created(monkeypatch, tmp_path):
+    _configure_success(monkeypatch, tmp_path)
+    import agent.content.images.ai_hero_image as ai_hero_image
+
+    hero_dir = tmp_path / "images"
+    hero_dir.mkdir(parents=True)
+    hero = hero_dir / "hero_ai.jpg"
+    original_hero = b"existing hero image"
+    hero.write_bytes(original_hero)
+
+    def fake_materialize(_image_ref: str, *, dest_dir: Path) -> Path:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        staged = dest_dir / "hero_ai.jpg"
+        staged.write_bytes(b"new section image")
+        return staged
+
+    monkeypatch.setattr(ai_hero_image, "_materialize_provider_image", fake_materialize)
+
+    results = _build("## 물 마시기\n본문", tmp_path, max_count=1)
+
+    assert hero.is_file()
+    assert hero.read_bytes() == original_hero
+    assert len(results) == 1
+    assert Path(results[0]["file"]).name.startswith("section_ai_")
