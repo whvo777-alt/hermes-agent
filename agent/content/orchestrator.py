@@ -394,13 +394,29 @@ def generate_platform_draft(
         caution_hints=category.caution_hints, research_content=research_content, memory_check=memory_check,
     )
 
+    recent_titles = []
+    try:
+        rows = find_recent_topics(
+            memory,
+            date=resolved_date,
+            days=60,
+            category=category.id,
+            platform=platform.id,
+        )
+        for row in rows[:10]:
+            title = str(row.get("title") or "").strip()
+            if title:
+                recent_titles.append(title)
+    except Exception:  # noqa: BLE001 - 최근 제목을 못 얻어도 글은 나간다
+        logging.getLogger(__name__).warning("recent titles lookup failed", exc_info=True)
+
     blog_content = write_blog_post(
         platform_id=platform.id, platform_label=platform.label, category_id=category.id,
         category_name=category.name, target_audience=category.target_audience, tone=category.tone,
         topic_title=topic["topic_title"], topic_keywords=topic["topic_keywords"],
         category_keywords=category.keywords, caution_hints=category.caution_hints,
         current_date=resolved_date, research_content=research_content, planning_content=planning_content,
-        prior_feedback=prior_feedback,
+        prior_feedback=prior_feedback, recent_titles=recent_titles,
     )
     prepared_title = _prepare_title_for_image_and_quality(
         blog_content,
@@ -434,18 +450,6 @@ def generate_platform_draft(
             style_seed=topic["topic_id"],
         )
         blog_content = insert_hero_image(platform_id=platform.id, blog_content=blog_content, image=image)
-
-    recent_title_items = find_recent_topics(
-        memory,
-        date=resolved_date,
-        category=category.id,
-        platform=platform.id,
-    )
-    recent_titles = [
-        str(item.get("title") or "").strip()
-        for item in recent_title_items
-        if str(item.get("title") or "").strip()
-    ]
 
     quality = run_quality_gate(
         topic_title=topic["topic_title"], category_id=category.id, platform_id=platform.id,

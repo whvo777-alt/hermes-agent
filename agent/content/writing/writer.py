@@ -416,7 +416,8 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
                      target_audience: str, tone: str, topic_title: str, topic_keywords: List[str],
                      category_keywords: List[str], caution_hints: List[str], current_date: str,
                      research_content: str, planning_content: str,
-                     prior_feedback: Optional[List[str]] = None) -> str:
+                     prior_feedback: Optional[List[str]] = None,
+                     recent_titles: Optional[List[str]] = None) -> str:
     research_summary = summarize_research(research_content)
     planning_summary = summarize_planning(planning_content)
 
@@ -433,6 +434,17 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
         if platform_id in ("wordpress", "blogspot")
         else "- H1 1개, H2 5~6개, 본문 4,000~6,500자. 개인차 안내를 포함한다." if platform_id == "tistory" else "- H1 1개, H2 4~5개, 본문 4,000~6,500자. 개인차 안내를 포함한다."
     )
+    recent_block = ""
+    if recent_titles:
+        listed = "\n".join(f"- {t}" for t in recent_titles[:10])
+        recent_block = (
+            "\n[최근에 쓴 글]\n"
+            f"{listed}\n"
+            "위 글들과 겹치지 않게 쓴다.\n"
+            "- 제목 형식을 따라 하지 않는다. 같은 꼬리말(기준 · 방법 · 가지)을 반복하지 않는다.\n"
+            "- 위 글이 이미 다룬 범위는 짧게 스치고, 이 글만의 좁은 상황을 깊게 판다.\n"
+            "- 겹치는 주제가 있으면 그 글이 안 다룬 각도를 고른다.\n"
+        )
 
     user = f"""카테고리: {category_name}
 플랫폼: {platform_label}
@@ -441,7 +453,7 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
 키워드: {', '.join(topic_keywords)}
 카테고리 기본 키워드: {', '.join(category_keywords)}
 주의사항: {', '.join(caution_hints) or '없음'}
-현재 날짜: {current_date}
+{recent_block}현재 날짜: {current_date}
 
 {brief.to_prompt_text()}
 
