@@ -487,6 +487,19 @@ def _attach_blogspot_infographics(markdown: str, *, category_id: str, output_dir
     results = _build_section_infographic_results(
         markdown=markdown, category_id=category_id, output_dir=output_dir, style_seed=style_seed,
     )
+    try:
+        from agent.content.images.section_ai_images import build_section_ai_images
+
+        results = list(results) + build_section_ai_images(
+            markdown,
+            out_dir=Path(output_dir),
+            category_id=category_id,
+            category_name="",
+            used_headings=[r.get("heading") for r in results],
+            style_seed=style_seed,
+        )
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("section AI images skipped", exc_info=True)
     if not results:
         return markdown
 
@@ -629,6 +642,19 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
                 output_dir=str(Path(item.blog_file).parent / "images"),
                 style_seed=f"{item.platform}:{item.topic_title}:{title}",
             )
+            try:
+                from agent.content.images.section_ai_images import build_section_ai_images
+
+                infographic_results = list(infographic_results) + build_section_ai_images(
+                    publishable_content,
+                    out_dir=Path(item.blog_file).parent / "images",
+                    category_id=item.category_id,
+                    category_name=item.category_name,
+                    used_headings=[r.get("heading") for r in infographic_results],
+                    style_seed=f"{item.platform}:{item.topic_title}:{title}",
+                )
+            except Exception:  # noqa: BLE001
+                logging.getLogger(__name__).warning("section AI images skipped", exc_info=True)
             narrative_content = publishable_content
         except Exception as exc:  # noqa: BLE001 — draft must proceed even if infographic build fails
             logging.getLogger(__name__).warning(
