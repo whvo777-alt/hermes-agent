@@ -1,6 +1,6 @@
 """Tests for body-data infographic prompt construction."""
 
-from agent.content.images.infographic_prompt import build_infographic_prompt
+from agent.content.images.infographic_prompt import build_infographic_alt, build_infographic_prompt
 from agent.content.images.section_infographics import InfographicSpec
 
 
@@ -226,3 +226,96 @@ def test_four_to_five_ratio_is_in_every_prompt_type():
     for spec in specs:
         prompt = build_infographic_prompt(spec)
         assert "세로로 긴 4:5 비율. 1080 x 1350 픽셀." in prompt
+
+
+def test_checklist_alt_contains_items_and_count():
+    spec = _spec(
+        heading="수면 습관 점검",
+        display_title="오늘 밤 수면 습관 체크",
+        style="checklist",
+        items=[
+            "늦은 시간 카페인을 마셨는가",
+            "낮잠이 평소보다 길었는가",
+            "저녁 운동 시간이 늦었는가",
+            "취침 직전 과식했는가",
+            "침대에서 스마트폰을 오래 봤는가",
+            "최근 스트레스가 커졌는가",
+        ],
+    )
+
+    alt = build_infographic_alt(spec)
+
+    assert "오늘 밤 수면 습관 체크" in alt
+    assert "늦은 시간 카페인을 마셨는가" in alt
+    assert "낮잠이 평소보다 길었는가" in alt
+    assert "6가지" in alt
+
+
+def test_timeline_alt_contains_step_word_and_endpoints():
+    spec = _spec(
+        heading="시작하는 순서",
+        display_title="10분 안에 시작하는 5단계",
+        style="timeline",
+        items=[
+            "파일 열기",
+            "제목 또는 첫 문장 적기",
+            "필요한 자료 3개 확인하기",
+            "막힌 부분을 질문으로 바꾸기",
+            "다음 행동 한 줄 남기기",
+        ],
+    )
+
+    alt = build_infographic_alt(spec)
+
+    assert "단계" in alt
+    assert "파일 열기" in alt
+    assert "다음 행동 한 줄 남기기" in alt
+    assert "5단계" in alt
+
+
+def test_table_alt_contains_header_names():
+    spec = _spec(
+        heading="상황별 대응표",
+        style="grid",
+        table=[
+            ["상황", "대응"],
+            ["시간이 부족할 때", "핵심부터 시작"],
+        ],
+    )
+
+    alt = build_infographic_alt(spec)
+
+    assert "상황" in alt
+    assert "대응" in alt
+    assert "비교표" in alt
+
+
+def test_alt_is_empty_without_material():
+    alt = build_infographic_alt(_spec(style="checklist", items=[]))
+
+    assert alt == ""
+
+
+def test_alt_is_capped_at_120_characters_without_ellipsis():
+    spec = _spec(
+        display_title="아주 긴 제목 " * 20,
+        style="checklist",
+        items=["아주 긴 항목 " * 30, "두 번째 항목"],
+    )
+
+    alt = build_infographic_alt(spec)
+
+    assert len(alt) <= 120
+    assert "…" not in alt
+
+
+def test_alt_does_not_use_generic_related_image_phrase():
+    spec = _spec(
+        display_title="실제 내용이 있는 체크리스트",
+        style="checklist",
+        items=["첫 번째 확인 항목", "두 번째 확인 항목"],
+    )
+
+    alt = build_infographic_alt(spec)
+
+    assert "관련 이미지" not in alt

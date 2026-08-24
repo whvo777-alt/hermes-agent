@@ -79,7 +79,10 @@ def build_section_ai_images(
         return []
 
     spec_map = _specs_by_heading(markdown, style_seed=style_seed)
-    from agent.content.images.infographic_prompt import build_infographic_prompt
+    from agent.content.images.infographic_prompt import (
+        build_infographic_alt,
+        build_infographic_prompt,
+    )
 
     ranked = []
     for order, heading in enumerate(all_headings):
@@ -94,44 +97,50 @@ def build_section_ai_images(
             continue
         if not prompt:
             continue
+        alt = ""
+        try:
+            alt = build_infographic_alt(spec)
+        except Exception:  # noqa: BLE001
+            alt = ""
         kind = str(getattr(spec, "style", "") or getattr(spec, "shape", "") or "")
-        ranked.append((-_material_score(spec), order, heading, prompt, kind))
+        ranked.append((-_material_score(spec), order, heading, prompt, kind, alt))
     ranked.sort()
 
     picks = []
     seen_kinds = set()
     chosen = set()
 
-    for score, _order, heading, prompt, kind in ranked:
+    for score, _order, heading, prompt, kind, alt in ranked:
         if -score <= 0:
             continue
         if kind in seen_kinds:
             continue
         seen_kinds.add(kind)
         chosen.add(heading)
-        picks.append((heading, prompt))
+        picks.append((heading, prompt, alt))
 
-    for score, _order, heading, prompt, _kind in ranked:
+    for score, _order, heading, prompt, _kind, alt in ranked:
         if -score <= 0:
             continue
         if heading in chosen:
             continue
         chosen.add(heading)
-        picks.append((heading, prompt))
+        picks.append((heading, prompt, alt))
 
-    for _score, _order, heading, prompt, _kind in ranked:
+    for _score, _order, heading, prompt, _kind, alt in ranked:
         if heading in chosen:
             continue
         chosen.add(heading)
-        picks.append((heading, prompt))
+        picks.append((heading, prompt, alt))
 
-    picks += [(heading, "") for heading in free_headings if heading not in spec_map]
+    picks += [(heading, "", "") for heading in free_headings if heading not in spec_map]
 
     results: List[Dict[str, Any]] = []
-    for index, (heading, prompt) in enumerate(picks[:max_count]):
+    for index, (heading, prompt, alt) in enumerate(picks[:max_count]):
         saved = _render_one(
             heading=heading,
             prompt=prompt,
+            alt=alt,
             out_dir=out_dir,
             category_id=category_id,
             category_name=category_name,
@@ -144,7 +153,7 @@ def build_section_ai_images(
             {
                 "file": str(saved),
                 "heading": heading,
-                "alt": f"{heading} 관련 이미지",
+                "alt": alt or f"{heading} 관련 이미지",
                 "style": "ai_photo",
                 "skin": "",
                 "strip_ranges": [],
@@ -176,6 +185,7 @@ def _render_one(
     *,
     heading: str,
     prompt: str,
+    alt: str,
     out_dir: Path,
     category_id: str,
     category_name: str,

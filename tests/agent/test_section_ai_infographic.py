@@ -442,3 +442,55 @@ def test_zero_material_candidate_is_selected_after_positive_material(monkeypatch
         "재료 있는 대단원",
         "한 문장 인용 대단원",
     ]
+
+
+def test_infographic_result_uses_content_alt(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    _install_spec(
+        monkeypatch,
+        InfographicSpec(
+            heading="자세 점검",
+            display_title="자세 점검",
+            style="checklist",
+            items=["첫 번째 기준", "두 번째 기준"],
+        ),
+    )
+
+    results = _build("## 자세 점검\n본문", tmp_path, max_count=1)
+
+    assert "첫 번째 기준" in results[0]["alt"]
+    assert results[0]["alt"] != "자세 점검 관련 이미지"
+
+
+def test_photo_result_keeps_existing_alt_fallback(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    _install_specs(monkeypatch, [])
+
+    results = _build("## 사진 항목\n본문", tmp_path, max_count=1)
+
+    assert results[0]["alt"] == "사진 항목 관련 이미지"
+
+
+def test_alt_failure_keeps_image_and_existing_fallback(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    _install_spec(
+        monkeypatch,
+        InfographicSpec(
+            heading="ALT 오류 대단원",
+            display_title="ALT 오류 대단원",
+            style="checklist",
+            items=["첫 번째 기준", "두 번째 기준"],
+        ),
+    )
+
+    import agent.content.images.infographic_prompt as infographic_prompt
+
+    def broken_alt(_spec):
+        raise RuntimeError("fake alt failure")
+
+    monkeypatch.setattr(infographic_prompt, "build_infographic_alt", broken_alt)
+
+    results = _build("## ALT 오류 대단원\n본문", tmp_path, max_count=1)
+
+    assert len(results) == 1
+    assert results[0]["alt"] == "ALT 오류 대단원 관련 이미지"

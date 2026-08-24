@@ -43,20 +43,35 @@ _STYLE_KIND = {
 }
 
 
+def _clean_infographic_text(raw_value) -> str:
+    """프롬프트와 ALT에서 함께 쓰는 제목·재료 정리 규칙."""
+    value = str(raw_value or "").strip()
+    value = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", value)
+    value = re.sub(r"\*\*(.*?)\*\*", r"\1", value)
+    value = re.sub(r"`([^`]*)`", r"\1", value)
+    value = re.sub(r"^\s*(?:[-*]\s+|\d+\.\s+)", "", value).strip()
+    value = re.sub(r"\s+", " ", value)
+    if len(value) > 45:
+        value_cut = value[:45]
+        value = value_cut.rsplit(" ", 1)[0] if " " in value_cut else value_cut
+    return value
+
+
+def _limit_infographic_alt(text: str) -> str:
+    if len(text) <= 120:
+        return text
+    text_cut = text[:120]
+    return text_cut.rsplit(" ", 1)[0] if " " in text_cut else text_cut
+
+
 def build_infographic_prompt(spec, *, category_id: str = "", category_name: str = "") -> str:
     """본문에서 뽑은 재료로 인포그래픽 프롬프트를 만든다."""
     if spec is None:
         return ""
 
-    title = str(getattr(spec, "display_title", "") or getattr(spec, "heading", "") or "")
-    title = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", title)
-    title = re.sub(r"\*\*(.*?)\*\*", r"\1", title)
-    title = re.sub(r"`([^`]*)`", r"\1", title)
-    title = re.sub(r"^\s*(?:[-*]\s+|\d+\.\s+)", "", title).strip()
-    title = re.sub(r"\s+", " ", title)
-    if len(title) > 45:
-        title_cut = title[:45]
-        title = title_cut.rsplit(" ", 1)[0] if " " in title_cut else title_cut
+    title = _clean_infographic_text(
+        getattr(spec, "display_title", "") or getattr(spec, "heading", "") or ""
+    )
     if not title:
         return ""
 
@@ -64,15 +79,7 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     for raw_item in list(getattr(spec, "items", ()) or ()):
         if len(items) >= 6:
             break
-        item = str(raw_item or "").strip()
-        item = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", item)
-        item = re.sub(r"\*\*(.*?)\*\*", r"\1", item)
-        item = re.sub(r"`([^`]*)`", r"\1", item)
-        item = re.sub(r"^\s*(?:[-*]\s+|\d+\.\s+)", "", item).strip()
-        item = re.sub(r"\s+", " ", item)
-        if len(item) > 45:
-            item_cut = item[:45]
-            item = item_cut.rsplit(" ", 1)[0] if " " in item_cut else item_cut
+        item = _clean_infographic_text(raw_item)
         if item:
             items.append(item)
 
@@ -332,3 +339,132 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
         )
 
     return "\n".join(prompt_lines)
+
+
+
+def build_infographic_alt(spec) -> str:
+    """그림을 설명하는 대체 글자를 만든다. 재료가 모자라면 빈 문자열."""
+    if spec is None:
+        return ""
+
+    title = _clean_infographic_text(
+        getattr(spec, "display_title", "") or getattr(spec, "heading", "") or ""
+    )
+    if not title:
+        return ""
+
+    items = []
+    for raw_item in list(getattr(spec, "items", ()) or ())[:6]:
+        item = _clean_infographic_text(raw_item)
+        if item:
+            items.append(item)
+
+    table = []
+    for raw_row in list(getattr(spec, "table", None) or ()):
+        row = [_clean_infographic_text(cell) for cell in list(raw_row or ())]
+        if row:
+            table.append(row)
+
+    qa_pairs = []
+    for raw_pair in list(getattr(spec, "qa_pairs", ()) or ())[:2]:
+        if len(raw_pair) < 2:
+            continue
+        question = _clean_infographic_text(raw_pair[0])
+        answer = _clean_infographic_text(raw_pair[1])
+        if question and answer:
+            qa_pairs.append((question, answer))
+
+    before_pairs = []
+    for raw_pair in list(getattr(spec, "before_pairs", ()) or ())[:4]:
+        if len(raw_pair) < 2:
+            continue
+        before = _clean_infographic_text(raw_pair[0])
+        after = _clean_infographic_text(raw_pair[1])
+        if before and after:
+            before_pairs.append((before, after))
+
+    risk_tiers = []
+    for raw_tier in list(getattr(spec, "risk_tiers", ()) or ())[:3]:
+        if len(raw_tier) < 3:
+            continue
+        label = _clean_infographic_text(raw_tier[1])
+        description = _clean_infographic_text(raw_tier[2])
+        if label and description:
+            risk_tiers.append((label, description))
+
+    quote_text = _clean_infographic_text(getattr(spec, "quote_text", ""))
+
+    gauge_stat = getattr(spec, "gauge_stat", None)
+    gauge_number = ""
+    gauge_value = ""
+    if gauge_stat and len(gauge_stat) >= 2:
+        gauge_number = str(gauge_stat[0] or "").strip()
+        gauge_unit = str(gauge_stat[1] or "").strip()
+        gauge_value = f"{gauge_number}{gauge_unit}"
+    gauge_label = _clean_infographic_text(getattr(spec, "gauge_label", ""))
+
+    ox_values = []
+    ox_pair = getattr(spec, "ox_pair", None)
+    if ox_pair and len(ox_pair) >= 2:
+        ox_values = [_clean_infographic_text(value) for value in ox_pair[:2]]
+        ox_values = [value for value in ox_values if value]
+
+    selected_style = str(getattr(spec, "style", "") or "").strip()
+    if not selected_style:
+        selected_style = str(getattr(spec, "shape", "") or "").strip()
+    kind = _STYLE_KIND.get(selected_style, "summary")
+    if selected_style == "grid" and table:
+        kind = "table"
+
+    if kind in {"checklist", "summary", "timeline"} and not items:
+        return ""
+    if kind == "before_after" and not before_pairs:
+        return ""
+    if kind == "table" and (len(table) < 2 or not table[0]):
+        return ""
+    if kind == "qa" and not qa_pairs:
+        return ""
+    if kind == "risk" and not risk_tiers:
+        return ""
+    if kind == "ox" and len(ox_values) < 2:
+        return ""
+    if kind == "gauge" and (not gauge_number or not gauge_label):
+        return ""
+    if kind == "quote" and not quote_text:
+        return ""
+
+    if kind == "checklist":
+        item_description = (
+            items[0]
+            if len(items) == 1
+            else f"{items[0]}, {items[1]} 등 {len(items)}가지"
+        )
+        description = f"{item_description}를 확인하는 체크리스트"
+    elif kind == "summary":
+        item_description = (
+            items[0]
+            if len(items) == 1
+            else f"{items[0]}, {items[1]} 등 {len(items)}가지"
+        )
+        description = f"{item_description}를 정리한 요약 카드"
+    elif kind == "timeline":
+        description = f"{items[0]}부터 {items[-1]}까지 {len(items)}단계 순서도"
+    elif kind == "before_after":
+        before, after = before_pairs[0]
+        description = f"{before}을 {after}으로 바꾸는 비교 카드"
+    elif kind == "table":
+        description = f"{', '.join(table[0])}을 견준 비교표"
+    elif kind == "qa":
+        description = f"{qa_pairs[0][0]} 같은 물음과 답을 담은 카드"
+    elif kind == "risk":
+        description = f"{', '.join(label for label, _description in risk_tiers)}으로 나눈 주의 안내"
+    elif kind == "ox":
+        description = "O 와 X 로 나눈 확인 카드"
+    elif kind == "gauge":
+        description = f"{gauge_value}를 보여주는 기록 카드"
+    elif kind == "quote":
+        description = quote_text
+    else:
+        return ""
+
+    return _limit_infographic_alt(f"{title}. {description}")
