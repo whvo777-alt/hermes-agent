@@ -1,0 +1,134 @@
+"""Tests for body-data infographic prompt construction."""
+
+from agent.content.images.infographic_prompt import build_infographic_prompt
+from agent.content.images.section_infographics import InfographicSpec
+
+
+def _spec(**kwargs) -> InfographicSpec:
+    return InfographicSpec(
+        heading="시험용 제목",
+        display_title="시험용 제목",
+        **kwargs,
+    )
+
+
+def test_checklist_prompt_keeps_five_items():
+    items = [
+        "서 있을 때 한쪽 발에만 체중이 실리는 느낌이 있는가",
+        "양발의 방향이 지나치게 안쪽 또는 바깥쪽으로 벌어지는가",
+        "의자에서 일어날 때 무릎이 안쪽으로 모이는가",
+        "허리를 세우려고 가슴을 과하게 내밀거나 갈비뼈를 들고 있지는 않은가",
+        "내려갈 때 발바닥이 바닥에서 뜨거나 몸이 한쪽으로 기우는가",
+    ]
+
+    prompt = build_infographic_prompt(
+        _spec(style="checklist", items=items),
+        category_id="health",
+        category_name="건강",
+    )
+
+    assert "체크박스 5개" in prompt
+    for item in items:
+        assert f'"{item}"' in prompt
+
+
+def test_timeline_prompt_preserves_item_order():
+    items = ["준비한다", "호흡을 정리한다", "동작을 시작한다"]
+
+    prompt = build_infographic_prompt(_spec(style="timeline", items=items))
+
+    assert prompt.index("준비한다") < prompt.index("호흡을 정리한다") < prompt.index("동작을 시작한다")
+
+
+def test_qa_prompt_contains_questions_and_answers():
+    pairs = [
+        ("언제 쉬어야 하나요?", "통증이 생기면 동작을 멈춥니다."),
+        ("얼마나 반복하나요?", "몸 상태에 맞춰 횟수를 정합니다."),
+    ]
+
+    prompt = build_infographic_prompt(_spec(style="qa", qa_pairs=pairs))
+
+    for question, answer in pairs:
+        assert question in prompt
+        assert answer in prompt
+
+
+def test_table_prompt_contains_header_and_body_cells():
+    table = [
+        ["구분", "기준"],
+        ["초보", "가볍게 시작"],
+        ["숙련", "강도를 조절"],
+    ]
+
+    prompt = build_infographic_prompt(_spec(style="grid", table=table))
+
+    for cell in ("구분", "기준", "초보", "가볍게 시작", "숙련", "강도를 조절"):
+        assert f'"{cell}"' in prompt
+
+
+def test_one_item_returns_empty_prompt():
+    prompt = build_infographic_prompt(_spec(style="checklist", items=["하나만 있음"]))
+
+    assert prompt == ""
+
+
+def test_eight_items_are_capped_at_six():
+    items = [
+        "첫 번째 문장",
+        "두 번째 문장",
+        "세 번째 문장",
+        "네 번째 문장",
+        "다섯 번째 문장",
+        "여섯 번째 문장",
+        "일곱 번째 문장",
+        "여덟 번째 문장",
+    ]
+
+    prompt = build_infographic_prompt(_spec(style="checklist", items=items))
+
+    for item in items[:6]:
+        assert item in prompt
+    assert "일곱 번째 문장" not in prompt
+    assert "여덟 번째 문장" not in prompt
+
+
+def test_markdown_symbols_are_removed_before_insertion():
+    items = [
+        "**굵게** `코드` [링크](https://example.com)",
+        "- 앞머리 문장",
+    ]
+
+    prompt = build_infographic_prompt(_spec(style="checklist", items=items))
+
+    assert "굵게" in prompt
+    assert "코드" in prompt
+    assert "링크" in prompt
+    assert "**" not in prompt
+    assert "`" not in prompt
+    assert "https://example.com" not in prompt
+    assert "- 앞머리 문장" not in prompt
+
+
+def test_unknown_style_uses_summary_structure_instead_of_empty():
+    prompt = build_infographic_prompt(
+        _spec(style="알 수 없는 유형", items=["핵심 하나", "핵심 둘"])
+    )
+
+    assert prompt
+    assert "둥근 카드" in prompt
+    assert "핵심 하나" in prompt
+    assert "핵심 둘" in prompt
+
+
+def test_prompt_always_contains_common_design_and_korean_text_rules():
+    prompt = build_infographic_prompt(
+        _spec(style="checklist", items=["첫 항목", "둘째 항목"]),
+        category_id="health",
+        category_name="건강",
+    )
+
+    assert "한국 건강·웰니스 블로그용" in prompt
+    assert "밝은 아이보리 배경" in prompt
+    assert "모바일에서 읽기 쉬운 큰 글씨" in prompt
+    assert "모든 글자는 한국어로 쓴다" in prompt
+    assert "따옴표 안의 문장은 글자 하나 바꾸지 말고 그대로 쓴다" in prompt
