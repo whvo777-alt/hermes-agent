@@ -5,9 +5,11 @@ from agent.content.images.section_infographics import InfographicSpec
 
 
 def _spec(**kwargs) -> InfographicSpec:
+    heading = kwargs.pop("heading", "시험용 제목")
+    display_title = kwargs.pop("display_title", heading)
     return InfographicSpec(
-        heading="시험용 제목",
-        display_title="시험용 제목",
+        heading=heading,
+        display_title=display_title,
         **kwargs,
     )
 
@@ -132,3 +134,37 @@ def test_prompt_always_contains_common_design_and_korean_text_rules():
     assert "모바일에서 읽기 쉬운 큰 글씨" in prompt
     assert "모든 글자는 한국어로 쓴다" in prompt
     assert "따옴표 안의 문장은 글자 하나 바꾸지 말고 그대로 쓴다" in prompt
+
+
+def test_prompt_does_not_repeat_category_or_title():
+    title = "맨몸스쿼트 전 자세 점검 5가지"
+
+    prompt = build_infographic_prompt(
+        _spec(display_title=title, style="checklist", items=["첫 항목", "둘째 항목"]),
+        category_id="health",
+        category_name="",
+    )
+
+    assert "분야 이름은" not in prompt
+    assert f'제목은 "{title}".' in prompt
+    assert prompt.count(f'"{title}"') == 1
+    assert "이라는 제목 아래에" not in prompt
+    assert "제목 아래에 큰 체크박스" in prompt
+
+
+def test_risk_tier_prompt_keeps_source_order_and_flips_only_colors():
+    prompt = build_infographic_prompt(
+        _spec(
+            style="risk_tier",
+            risk_tiers=[
+                ("safe", "안전", "안전한 상태"),
+                ("mid", "주의", "주의할 상태"),
+                ("risk", "위험", "위험한 상태"),
+            ],
+        ),
+    )
+
+    assert "위는 초록, 가운데는 주황, 아래는 빨강." in prompt
+    assert "위는 빨강, 가운데는 주황, 아래는 초록." not in prompt
+    assert prompt.index('이름표: "안전"') < prompt.index('이름표: "주의"')
+    assert prompt.index('이름표: "주의"') < prompt.index('이름표: "위험"')

@@ -211,7 +211,6 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     category_context = _CATEGORY_CONTEXT.get(category_id, "한국 생활정보 블로그용")
     prompt_lines = [
         category_context + ".",
-        f'분야 이름은 "{category_name.strip()}"이다.' if category_name.strip() else "",
         "밝은 아이보리 배경, 딥 네이비 제목, 블루와 민트 포인트 색.",
         "작고 단순한 플랫 벡터 아이콘을 쓴다.",
         "충분한 여백과 둥근 모서리 카드.",
@@ -221,14 +220,14 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
         "따옴표 안의 문장은 글자 하나 바꾸지 말고 그대로 쓴다.",
         "따옴표 표시 자체는 그리지 않는다.",
         "없는 문장을 지어내지 않는다.",
-        f'제목은 "{title}"이다.',
+        f'제목은 "{title}".',
     ]
     prompt_lines = [line for line in prompt_lines if line]
 
     if kind == "checklist":
         prompt_lines.extend(
             [
-                f'"{title}" 이라는 제목 아래에 큰 체크박스 {len(items)}개를 세로로 나란히 배치한다.',
+                f'제목 아래에 큰 체크박스 {len(items)}개를 세로로 나란히 배치한다.',
                 "각 체크박스 오른쪽에 아래 문장을 하나씩 넣는다.",
             ]
         )
@@ -236,7 +235,7 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     elif kind == "summary":
         prompt_lines.extend(
             [
-                f'"{title}" 이라는 제목 아래에 둥근 카드 {len(items)}개를 2열로 배치한다.',
+                f'제목 아래에 둥근 카드 {len(items)}개를 2열로 배치한다.',
                 "각 카드에 작은 아이콘 하나와 아래 문장을 하나씩 넣는다.",
             ]
         )
@@ -244,7 +243,7 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     elif kind == "timeline":
         prompt_lines.extend(
             [
-                f'"{title}" 이라는 제목 아래에 위에서 아래로 이어지는 흐름선을 그리고',
+                "제목 아래에 위에서 아래로 이어지는 흐름선을 그리고",
                 f"번호가 붙은 동그라미 {len(items)}개를 순서대로 놓는다.",
                 "각 동그라미 오른쪽에 아래 문장을 순서대로 하나씩 넣는다.",
             ]
@@ -253,7 +252,7 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     elif kind == "before_after":
         prompt_lines.extend(
             [
-                f'"{title}" 이라는 제목 아래에 좌우 두 칸을 만든다.',
+                "제목 아래에 좌우 두 칸을 만든다.",
                 '왼쪽 칸 머리글은 "이전", 오른쪽 칸 머리글은 "이후".',
                 "같은 줄에 짝을 맞춰 아래 내용을 넣는다.",
             ]
@@ -263,7 +262,7 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
         header = table[0]
         prompt_lines.extend(
             [
-                f'"{title}" 이라는 제목 아래에 {len(header)}칸 표를 그린다.',
+                f'제목 아래에 {len(header)}칸 표를 그린다.',
                 f'표의 머리줄은 {", ".join(f'"{cell}"' for cell in header)}.',
                 "아래 줄들을 순서대로 넣는다.",
             ]
@@ -272,7 +271,7 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     elif kind == "qa":
         prompt_lines.extend(
             [
-                f'"{title}" 이라는 제목 아래에 문답을 넣는다.',
+                "제목 아래에 문답을 넣는다.",
                 "질문은 왼쪽에 붙은 말풍선, 답은 그 아래 오른쪽에 붙은 말풍선으로 그린다.",
             ]
         )
@@ -280,18 +279,18 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     elif kind == "risk":
         prompt_lines.extend(
             [
-                f'"{title}" 이라는 제목 아래에 신호등처럼 위에서 아래로 세 단을 그린다.',
-                "위는 빨강, 가운데는 주황, 아래는 초록.",
+                "제목 아래에 신호등처럼 위에서 아래로 세 단을 그린다.",
+                "위는 초록, 가운데는 주황, 아래는 빨강.",
             ]
         )
         prompt_lines.extend(
             f'이름표: "{label}" 설명: "{description}"'
-            for _, label, description in reversed(risk_tiers)
+            for _, label, description in risk_tiers
         )
     elif kind == "ox":
         prompt_lines.extend(
             [
-                f'"{title}" 이라는 제목 아래를 세로로 나눠 왼쪽에 큰 O, 오른쪽에 큰 X를 그린다.',
+                "제목 아래를 세로로 나눠 왼쪽에 큰 O, 오른쪽에 큰 X를 그린다.",
                 f'O: "{ox_values[0]}"',
                 f'X: "{ox_values[1]}"',
             ]
@@ -299,14 +298,14 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     elif kind == "gauge":
         prompt_lines.extend(
             [
-                f'"{title}" 이라는 제목 아래 가운데에 아주 큰 숫자 "{gauge_value}"을 놓는다.',
+                f'제목 아래 가운데에 아주 큰 숫자 "{gauge_value}"을 놓는다.',
                 f'숫자 둘레에 반원 눈금을 그리고, 숫자 아래에 "{gauge_label}"을 작게 쓴다.',
             ]
         )
     elif kind == "quote":
         prompt_lines.extend(
             [
-                f'"{title}" 이라는 제목 아래 가운데에 큰 따옴표 모양 장식을 하나 놓고',
+                "제목 아래 가운데에 큰 따옴표 모양 장식을 하나 놓고",
                 f'그 아래에 "{quote_text}" 한 문장만 크게 쓴다. 다른 글자는 넣지 않는다.',
             ]
         )

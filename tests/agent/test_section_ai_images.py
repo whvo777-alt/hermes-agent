@@ -33,7 +33,9 @@ def _configure_success(monkeypatch, tmp_path: Path, *, error: Exception | None =
         lambda **kwargs: prompts.append(kwargs) or "fake prompt",
     )
 
-    def fake_materialize(_image_ref: str, *, dest_dir: Path) -> Path:
+    def fake_materialize(
+        _image_ref: str, *, dest_dir: Path, enforce_landscape: bool = True
+    ) -> Path:
         dest_dir.mkdir(parents=True, exist_ok=True)
         saved = dest_dir / "hero_ai.jpg"
         saved.write_bytes(b"fake image")
@@ -131,7 +133,9 @@ def test_existing_hero_image_is_preserved_when_section_image_is_created(monkeypa
     original_hero = b"existing hero image"
     hero.write_bytes(original_hero)
 
-    def fake_materialize(_image_ref: str, *, dest_dir: Path) -> Path:
+    def fake_materialize(
+        _image_ref: str, *, dest_dir: Path, enforce_landscape: bool = True
+    ) -> Path:
         dest_dir.mkdir(parents=True, exist_ok=True)
         staged = dest_dir / "hero_ai.jpg"
         staged.write_bytes(b"new section image")

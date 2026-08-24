@@ -17,6 +17,22 @@ def _plain_heading(text: str) -> str:
     return " ".join(str(text or "").split())
 
 
+def _specs_by_heading(markdown: str) -> dict:
+    """대단원 이름으로 재료를 찾을 수 있게 상자에 담는다."""
+    try:
+        from agent.content.images.section_infographics import extract_infographic_specs
+
+        specs = extract_infographic_specs(markdown, max_count=9999)
+    except Exception:  # noqa: BLE001 - 재료를 못 얻어도 사진으로 간다
+        return {}
+    out: dict = {}
+    for spec in specs or []:
+        heading = str(getattr(spec, "heading", "") or "").strip()
+        if heading and heading not in out:
+            out[heading] = spec
+    return out
+
+
 def build_section_ai_images(
     markdown: str,
     *,
@@ -48,10 +64,12 @@ def build_section_ai_images(
         logger.warning("section AI image: heading scan failed", exc_info=True)
         return []
 
+    spec_map = _specs_by_heading(markdown)
     results: List[Dict[str, Any]] = []
     for index, heading in enumerate(headings[:max_count]):
         saved = _render_one(
             heading=heading,
+            spec=spec_map.get(heading),
             out_dir=out_dir,
             category_id=category_id,
             category_name=category_name,
@@ -95,6 +113,7 @@ def _collect_free_headings(markdown: str, used: set) -> List[str]:
 def _render_one(
     *,
     heading: str,
+    spec: Any,
     out_dir: Path,
     category_id: str,
     category_name: str,
@@ -115,21 +134,38 @@ def _render_one(
         provider = _resolve_provider()
         if not provider:
             return None
-        prompt = build_hero_prompt(
-            category_id=category_id,
-            hero_mode="photo",
-            style_seed=style_seed,
-            topic_title=heading,
-            category_name=category_name,
+        prompt = ""
+        if spec is not None:
+            try:
+                from agent.content.images.infographic_prompt import build_infographic_prompt
+
+                prompt = build_infographic_prompt(
+                    spec, category_id=category_id, category_name=category_name
+                )
+            except Exception:  # noqa: BLE001
+                prompt = ""
+
+        is_infographic = bool(prompt)
+        if not prompt:
+            prompt = build_hero_prompt(
+                category_id=category_id,
+                hero_mode="photo",
+                style_seed=style_seed,
+                topic_title=heading,
+                category_name=category_name,
+            )
+        response = provider.generate(
+            prompt, aspect_ratio="portrait" if is_infographic else "landscape"
         )
-        response = provider.generate(prompt, aspect_ratio="landscape")
         if not isinstance(response, dict) or not response.get("success"):
             return None
         image_ref = response.get("image")
         if not image_ref:
             return None
         with tempfile.TemporaryDirectory() as tmp:
-            staged = _materialize_provider_image(str(image_ref), dest_dir=Path(tmp))
+            staged = _materialize_provider_image(
+                str(image_ref), dest_dir=Path(tmp), enforce_landscape=not is_infographic
+            )
             if not staged:
                 return None
             out_dir.mkdir(parents=True, exist_ok=True)

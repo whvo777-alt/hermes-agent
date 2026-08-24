@@ -249,7 +249,9 @@ def _to_jpeg(path: Path) -> Path:
     return path
 
 
-def _materialize_provider_image(image_ref: str, *, dest_dir: Path) -> Optional[Path]:
+def _materialize_provider_image(
+    image_ref: str, *, dest_dir: Path, enforce_landscape: bool = True
+) -> Optional[Path]:
     """Copy (or download) the provider's output into ``dest_dir/hero_ai.<ext>``."""
     if image_ref.startswith("http://") or image_ref.startswith("https://"):
         try:
@@ -272,7 +274,8 @@ def _materialize_provider_image(image_ref: str, *, dest_dir: Path) -> Optional[P
     except OSError as exc:
         logger.warning("Could not copy AI hero image into draft dir: %s", exc)
         return None
-    _enforce_landscape_crop(dest)
+    if enforce_landscape:
+        _enforce_landscape_crop(dest)
     return _to_jpeg(dest)
 
 
