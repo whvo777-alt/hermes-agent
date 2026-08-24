@@ -17,12 +17,12 @@ def _plain_heading(text: str) -> str:
     return " ".join(str(text or "").split())
 
 
-def _specs_by_heading(markdown: str) -> dict:
+def _specs_by_heading(markdown: str, style_seed: str = "") -> dict:
     """대단원 이름으로 재료를 찾을 수 있게 상자에 담는다."""
     try:
         from agent.content.images.section_infographics import extract_infographic_specs
 
-        specs = extract_infographic_specs(markdown, max_count=9999)
+        specs = extract_infographic_specs(markdown, max_count=9999, style_seed=style_seed)
     except Exception:  # noqa: BLE001 - 재료를 못 얻어도 사진으로 간다
         return {}
     out: dict = {}
@@ -64,7 +64,7 @@ def build_section_ai_images(
         logger.warning("section AI image: heading scan failed", exc_info=True)
         return []
 
-    spec_map = _specs_by_heading(markdown)
+    spec_map = _specs_by_heading(markdown, style_seed=style_seed)
     results: List[Dict[str, Any]] = []
     for index, heading in enumerate(headings[:max_count]):
         saved = _render_one(

@@ -159,3 +159,24 @@ def test_empty_extraction_result_also_keeps_photo_path(monkeypatch, tmp_path):
     assert provider.calls[0][1] == "landscape"
     assert hero_prompt_calls[0]["topic_title"] == "목록 없는 대단원"
     assert materialize_calls == [True]
+
+
+def test_extractor_receives_the_section_ai_style_seed(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    calls: list[dict] = []
+    spec = InfographicSpec(
+        heading="seed 확인",
+        display_title="seed 확인",
+        style="checklist",
+        items=["첫 기준", "둘째 기준"],
+    )
+
+    def capture_extractor(_markdown, **kwargs):
+        calls.append(kwargs)
+        return [spec]
+
+    monkeypatch.setattr(section_infographics, "extract_infographic_specs", capture_extractor)
+
+    _build("## seed 확인\n본문", tmp_path, max_count=1)
+
+    assert calls == [{"max_count": 9999, "style_seed": "test-seed"}]
