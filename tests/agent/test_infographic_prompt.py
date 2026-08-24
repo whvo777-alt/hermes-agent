@@ -164,7 +164,65 @@ def test_risk_tier_prompt_keeps_source_order_and_flips_only_colors():
         ),
     )
 
-    assert "위는 초록, 가운데는 주황, 아래는 빨강." in prompt
-    assert "위는 빨강, 가운데는 주황, 아래는 초록." not in prompt
+    assert "위는 민트, 가운데는 낮은 채도의 주황, 아래는 낮은 채도의 코랄." in prompt
+    assert "아래는 빨강" not in prompt
     assert prompt.index('이름표: "안전"') < prompt.index('이름표: "주의"')
     assert prompt.index('이름표: "주의"') < prompt.index('이름표: "위험"')
+
+
+def test_health_prompt_contains_self_diagnosis_safety_rule():
+    prompt = build_infographic_prompt(
+        _spec(style="checklist", items=["첫 항목", "둘째 항목"]),
+        category_id="health",
+    )
+
+    assert "병을 단정하거나 스스로 진단하게 만드는 글자를 넣지 않는다." in prompt
+
+
+def test_self_dev_prompt_blocks_trophy_and_rocket_imagery():
+    prompt = build_infographic_prompt(
+        _spec(style="checklist", items=["첫 항목", "둘째 항목"]),
+        category_id="self-dev",
+    )
+
+    assert "돈다발, 트로피, 로켓, 슈퍼히어로 그림을 넣지 않는다." in prompt
+
+
+def test_unknown_category_prompt_is_still_created():
+    prompt = build_infographic_prompt(
+        _spec(style="checklist", items=["첫 항목", "둘째 항목"]),
+        category_id="finance",
+    )
+
+    assert prompt
+
+
+def test_qa_prompt_uses_vertical_cards_not_speech_bubbles():
+    prompt = build_infographic_prompt(
+        _spec(style="qa", qa_pairs=[("질문", "답변")]),
+    )
+
+    assert "문답 하나를 카드 하나로 만든다." in prompt
+    assert "카드들을 같은 크기로 세로로 나란히 배치한다." in prompt
+    assert "말풍선" not in prompt
+
+
+def test_four_to_five_ratio_is_in_every_prompt_type():
+    specs = [
+        _spec(style="checklist", items=["첫 항목", "둘째 항목"]),
+        _spec(style="qa", qa_pairs=[("질문", "답변")]),
+        _spec(
+            style="risk_tier",
+            risk_tiers=[
+                ("safe", "안전", "안전한 상태"),
+                ("mid", "주의", "주의할 상태"),
+                ("risk", "위험", "위험한 상태"),
+            ],
+        ),
+        _spec(style="gauge", gauge_stat=("7", "일"), gauge_label="기준"),
+        _spec(style="quote", quote_text="한 문장"),
+    ]
+
+    for spec in specs:
+        prompt = build_infographic_prompt(spec)
+        assert "세로로 긴 4:5 비율. 1080 x 1350 픽셀." in prompt

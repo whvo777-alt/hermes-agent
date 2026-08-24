@@ -10,6 +10,23 @@ _CATEGORY_CONTEXT = {
     "self-dev": "한국 자기계발 블로그용",
 }
 
+_CATEGORY_RULES = {
+    "health": (
+        "병원 광고가 아니라 건강 정보 콘텐츠 분위기로 만든다.",
+        "병을 단정하거나 스스로 진단하게 만드는 글자를 넣지 않는다.",
+        "확인 · 점검 · 상담 고려 같은 말을 쓴다.",
+        "진한 빨강, 무섭게 느껴지는 그림, 아픈 부위 사진을 넣지 않는다.",
+        "주의가 필요한 곳에만 낮은 채도의 주황이나 코랄을 쓴다.",
+    ),
+    "self-dev": (
+        "성공학 광고가 아니라 실용적인 생산성 자료 분위기로 만든다.",
+        "돈다발, 트로피, 로켓, 슈퍼히어로 그림을 넣지 않는다.",
+        "무조건 성공 · 인생이 바뀐다 같은 부풀린 글자를 넣지 않는다.",
+        "강조가 필요한 곳에만 낮은 채도의 옐로우나 오렌지를 쓴다.",
+        "실제로 할 수 있는 행동에 초점을 맞춘다.",
+    ),
+}
+
 _STYLE_KIND = {
     "checklist": "checklist",
     "grid": "summary",
@@ -212,6 +229,7 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     prompt_lines = [
         category_context + ".",
         "밝은 아이보리 배경, 딥 네이비 제목, 블루와 민트 포인트 색.",
+        "세로로 긴 4:5 비율. 1080 x 1350 픽셀.",
         "작고 단순한 플랫 벡터 아이콘을 쓴다.",
         "충분한 여백과 둥근 모서리 카드.",
         "모바일에서 읽기 쉬운 큰 글씨.",
@@ -223,6 +241,7 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
         f'제목은 "{title}".',
     ]
     prompt_lines = [line for line in prompt_lines if line]
+    prompt_lines.extend(_CATEGORY_RULES.get(category_id, ()))
 
     if kind == "checklist":
         prompt_lines.extend(
@@ -271,8 +290,9 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     elif kind == "qa":
         prompt_lines.extend(
             [
-                "제목 아래에 문답을 넣는다.",
-                "질문은 왼쪽에 붙은 말풍선, 답은 그 아래 오른쪽에 붙은 말풍선으로 그린다.",
+                "문답 하나를 카드 하나로 만든다.",
+                "카드 위쪽에 질문, 카드 아래쪽에 답을 넣는다.",
+                "카드들을 같은 크기로 세로로 나란히 배치한다.",
             ]
         )
         prompt_lines.extend(f'질문: "{question}" 답: "{answer}"' for question, answer in qa_pairs)
@@ -280,7 +300,8 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
         prompt_lines.extend(
             [
                 "제목 아래에 신호등처럼 위에서 아래로 세 단을 그린다.",
-                "위는 초록, 가운데는 주황, 아래는 빨강.",
+                "위는 민트, 가운데는 낮은 채도의 주황, 아래는 낮은 채도의 코랄.",
+                "공포감을 주는 진한 빨강을 쓰지 않는다. 차분하게 그린다.",
             ]
         )
         prompt_lines.extend(
