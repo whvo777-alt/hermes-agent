@@ -54,6 +54,14 @@ def _install_spec(monkeypatch, spec: InfographicSpec):
     )
 
 
+def _install_specs(monkeypatch, specs: list[InfographicSpec]):
+    monkeypatch.setattr(
+        section_infographics,
+        "extract_infographic_specs",
+        lambda _markdown, **_kwargs: list(specs),
+    )
+
+
 def _build(markdown: str, tmp_path: Path, **kwargs):
     return build_section_ai_images(
         markdown,
@@ -180,3 +188,160 @@ def test_extractor_receives_the_section_ai_style_seed(monkeypatch, tmp_path):
     _build("## seed 확인\n본문", tmp_path, max_count=1)
 
     assert calls == [{"max_count": 9999, "style_seed": "test-seed"}]
+
+
+def test_card_consumed_headings_can_still_create_infographics(monkeypatch, tmp_path):
+    provider, _materialize_calls, _hero_prompt_calls = _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading="첫 번째 카드 대단원",
+            display_title="첫 번째 카드 대단원",
+            style="checklist",
+            items=["첫 기준", "둘째 기준"],
+        ),
+        InfographicSpec(
+            heading="두 번째 카드 대단원",
+            display_title="두 번째 카드 대단원",
+            style="checklist",
+            items=["셋째 기준", "넷째 기준"],
+        ),
+    ]
+    _install_specs(monkeypatch, specs)
+
+    results = _build(
+        "## 첫 번째 카드 대단원\n본문\n## 두 번째 카드 대단원\n본문",
+        tmp_path,
+        used_headings=[spec.heading for spec in specs],
+        max_count=2,
+    )
+
+    assert [result["heading"] for result in results] == [
+        "첫 번째 카드 대단원",
+        "두 번째 카드 대단원",
+    ]
+    assert [aspect_ratio for _prompt, aspect_ratio in provider.calls] == [
+        "portrait",
+        "portrait",
+    ]
+
+
+def test_headings_with_more_material_are_ranked_first(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading="재료 적은 대단원",
+            display_title="재료 적은 대단원",
+            style="checklist",
+            items=["한 줄"],
+        ),
+        InfographicSpec(
+            heading="재료 많은 대단원",
+            display_title="재료 많은 대단원",
+            style="checklist",
+            items=["첫 줄", "둘째 줄", "셋째 줄", "넷째 줄"],
+        ),
+    ]
+    _install_specs(monkeypatch, specs)
+
+    results = _build(
+        "## 재료 적은 대단원\n본문\n## 재료 많은 대단원\n본문",
+        tmp_path,
+        max_count=1,
+    )
+
+    assert [result["heading"] for result in results] == ["재료 많은 대단원"]
+
+
+def test_empty_infographic_prompt_removes_candidate(monkeypatch, tmp_path):
+    provider, _materialize_calls, hero_prompt_calls = _configure(monkeypatch, tmp_path)
+    spec = InfographicSpec(
+        heading="프롬프트 없는 대단원",
+        display_title="프롬프트 없는 대단원",
+        style="checklist",
+        items=["첫 줄", "둘째 줄"],
+    )
+    _install_spec(monkeypatch, spec)
+
+    import agent.content.images.infographic_prompt as infographic_prompt
+
+    monkeypatch.setattr(infographic_prompt, "build_infographic_prompt", lambda *args, **kwargs: "")
+
+    results = _build("## 프롬프트 없는 대단원\n본문", tmp_path, max_count=1)
+
+    assert results == []
+    assert provider.calls == []
+    assert hero_prompt_calls == []
+
+
+def test_photo_fallback_fills_when_infographic_candidates_are_short(
+    monkeypatch, tmp_path
+):
+    provider, _materialize_calls, _hero_prompt_calls = _configure(monkeypatch, tmp_path)
+    spec = InfographicSpec(
+        heading="재료 있는 마지막 대단원",
+        display_title="재료 있는 마지막 대단원",
+        style="checklist",
+        items=["첫 줄", "둘째 줄"],
+    )
+    _install_spec(monkeypatch, spec)
+
+    results = _build(
+        "## 사진 첫 대단원\n본문\n## 사진 둘째 대단원\n본문\n"
+        "## 재료 있는 마지막 대단원\n본문",
+        tmp_path,
+        max_count=2,
+    )
+
+    assert [result["heading"] for result in results] == [
+        "재료 있는 마지막 대단원",
+        "사진 첫 대단원",
+    ]
+    assert [aspect_ratio for _prompt, aspect_ratio in provider.calls] == [
+        "portrait",
+        "landscape",
+    ]
+
+
+def test_section_ai_images_never_exceed_max_count(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading=f"대단원 {index}",
+            display_title=f"대단원 {index}",
+            style="checklist",
+            items=[f"기준 {index}", f"추가 기준 {index}"],
+        )
+        for index in range(3)
+    ]
+    _install_specs(monkeypatch, specs)
+
+    results = _build(
+        "## 대단원 0\n본문\n## 대단원 1\n본문\n## 대단원 2\n본문",
+        tmp_path,
+        max_count=2,
+    )
+
+    assert len(results) == 2
+
+
+def test_skipped_headings_are_not_ai_image_candidates(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading="FAQ",
+            display_title="FAQ",
+            style="checklist",
+            items=["질문", "답변"],
+        ),
+        InfographicSpec(
+            heading="실제 대단원",
+            display_title="실제 대단원",
+            style="checklist",
+            items=["기준", "추가 기준"],
+        ),
+    ]
+    _install_specs(monkeypatch, specs)
+
+    results = _build("## FAQ\n질문\n## 실제 대단원\n본문", tmp_path, max_count=2)
+
+    assert [result["heading"] for result in results] == ["실제 대단원"]

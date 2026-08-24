@@ -17,6 +17,19 @@ def _plain_heading(text: str) -> str:
     return " ".join(str(text or "").split())
 
 
+def _material_score(spec) -> int:
+    """재료가 얼마나 많은지 센다. 많을수록 좋은 인포그래픽이 된다."""
+    if spec is None:
+        return 0
+    total = len(getattr(spec, "items", ()) or ())
+    table = getattr(spec, "table", None) or []
+    total += max(0, len(table) - 1)
+    total += len(getattr(spec, "qa_pairs", ()) or ())
+    total += len(getattr(spec, "before_pairs", ()) or ())
+    total += len(getattr(spec, "risk_tiers", ()) or ())
+    return total
+
+
 def _specs_by_heading(markdown: str, style_seed: str = "") -> dict:
     """대단원 이름으로 재료를 찾을 수 있게 상자에 담는다."""
     try:
@@ -59,17 +72,39 @@ def build_section_ai_images(
 
     used = {_plain_heading(h) for h in (used_headings or [])}
     try:
-        headings = _collect_free_headings(markdown, used)
+        all_headings = _collect_free_headings(markdown, set())
+        free_headings = _collect_free_headings(markdown, used)
     except Exception:  # noqa: BLE001
         logger.warning("section AI image: heading scan failed", exc_info=True)
         return []
 
     spec_map = _specs_by_heading(markdown, style_seed=style_seed)
+    from agent.content.images.infographic_prompt import build_infographic_prompt
+
+    ranked = []
+    for order, heading in enumerate(all_headings):
+        spec = spec_map.get(heading)
+        if spec is None:
+            continue
+        try:
+            prompt = build_infographic_prompt(
+                spec, category_id=category_id, category_name=category_name
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        if not prompt:
+            continue
+        ranked.append((-_material_score(spec), order, heading, prompt))
+    ranked.sort()
+
+    picks = [(heading, prompt) for _, _, heading, prompt in ranked]
+    picks += [(heading, "") for heading in free_headings if heading not in spec_map]
+
     results: List[Dict[str, Any]] = []
-    for index, heading in enumerate(headings[:max_count]):
+    for index, (heading, prompt) in enumerate(picks[:max_count]):
         saved = _render_one(
             heading=heading,
-            spec=spec_map.get(heading),
+            prompt=prompt,
             out_dir=out_dir,
             category_id=category_id,
             category_name=category_name,
@@ -113,7 +148,7 @@ def _collect_free_headings(markdown: str, used: set) -> List[str]:
 def _render_one(
     *,
     heading: str,
-    spec: Any,
+    prompt: str,
     out_dir: Path,
     category_id: str,
     category_name: str,
@@ -134,17 +169,6 @@ def _render_one(
         provider = _resolve_provider()
         if not provider:
             return None
-        prompt = ""
-        if spec is not None:
-            try:
-                from agent.content.images.infographic_prompt import build_infographic_prompt
-
-                prompt = build_infographic_prompt(
-                    spec, category_id=category_id, category_name=category_name
-                )
-            except Exception:  # noqa: BLE001
-                prompt = ""
-
         is_infographic = bool(prompt)
         if not prompt:
             prompt = build_hero_prompt(
