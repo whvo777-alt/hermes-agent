@@ -94,10 +94,37 @@ def build_section_ai_images(
             continue
         if not prompt:
             continue
-        ranked.append((-_material_score(spec), order, heading, prompt))
+        kind = str(getattr(spec, "style", "") or getattr(spec, "shape", "") or "")
+        ranked.append((-_material_score(spec), order, heading, prompt, kind))
     ranked.sort()
 
-    picks = [(heading, prompt) for _, _, heading, prompt in ranked]
+    picks = []
+    seen_kinds = set()
+    chosen = set()
+
+    for score, _order, heading, prompt, kind in ranked:
+        if -score <= 0:
+            continue
+        if kind in seen_kinds:
+            continue
+        seen_kinds.add(kind)
+        chosen.add(heading)
+        picks.append((heading, prompt))
+
+    for score, _order, heading, prompt, _kind in ranked:
+        if -score <= 0:
+            continue
+        if heading in chosen:
+            continue
+        chosen.add(heading)
+        picks.append((heading, prompt))
+
+    for _score, _order, heading, prompt, _kind in ranked:
+        if heading in chosen:
+            continue
+        chosen.add(heading)
+        picks.append((heading, prompt))
+
     picks += [(heading, "") for heading in free_headings if heading not in spec_map]
 
     results: List[Dict[str, Any]] = []

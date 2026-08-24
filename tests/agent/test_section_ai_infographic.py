@@ -345,3 +345,100 @@ def test_skipped_headings_are_not_ai_image_candidates(monkeypatch, tmp_path):
     results = _build("## FAQ\n질문\n## 실제 대단원\n본문", tmp_path, max_count=2)
 
     assert [result["heading"] for result in results] == ["실제 대단원"]
+
+
+def test_diverse_kind_is_selected_before_same_kind_tie(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading="체크리스트 많은 대단원",
+            display_title="체크리스트 많은 대단원",
+            style="checklist",
+            items=["첫 기준", "둘째 기준", "셋째 기준", "넷째 기준", "다섯째 기준", "여섯째 기준"],
+        ),
+        InfographicSpec(
+            heading="체크리스트 다음 대단원",
+            display_title="체크리스트 다음 대단원",
+            style="checklist",
+            items=["첫 기준", "둘째 기준", "셋째 기준", "넷째 기준", "다섯째 기준"],
+        ),
+        InfographicSpec(
+            heading="타임라인 대단원",
+            display_title="타임라인 대단원",
+            style="timeline",
+            items=["첫 단계", "둘째 단계", "셋째 단계", "넷째 단계", "다섯째 단계"],
+        ),
+    ]
+    _install_specs(monkeypatch, specs)
+
+    results = _build(
+        "## 체크리스트 많은 대단원\n본문\n"
+        "## 체크리스트 다음 대단원\n본문\n## 타임라인 대단원\n본문",
+        tmp_path,
+        max_count=2,
+    )
+
+    assert [result["heading"] for result in results] == [
+        "체크리스트 많은 대단원",
+        "타임라인 대단원",
+    ]
+
+
+def test_same_kind_is_selected_twice_when_no_other_kind_exists(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading="첫 체크리스트 대단원",
+            display_title="첫 체크리스트 대단원",
+            style="checklist",
+            items=["첫 기준", "둘째 기준", "셋째 기준"],
+        ),
+        InfographicSpec(
+            heading="둘째 체크리스트 대단원",
+            display_title="둘째 체크리스트 대단원",
+            style="checklist",
+            items=["넷째 기준", "다섯째 기준"],
+        ),
+    ]
+    _install_specs(monkeypatch, specs)
+
+    results = _build(
+        "## 첫 체크리스트 대단원\n본문\n## 둘째 체크리스트 대단원\n본문",
+        tmp_path,
+        max_count=2,
+    )
+
+    assert [result["heading"] for result in results] == [
+        "첫 체크리스트 대단원",
+        "둘째 체크리스트 대단원",
+    ]
+
+
+def test_zero_material_candidate_is_selected_after_positive_material(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading="한 문장 인용 대단원",
+            display_title="한 문장 인용 대단원",
+            style="quote",
+            quote_text="핵심이 되는 한 문장입니다.",
+        ),
+        InfographicSpec(
+            heading="재료 있는 대단원",
+            display_title="재료 있는 대단원",
+            style="checklist",
+            items=["첫 기준", "둘째 기준"],
+        ),
+    ]
+    _install_specs(monkeypatch, specs)
+
+    results = _build(
+        "## 한 문장 인용 대단원\n본문\n## 재료 있는 대단원\n본문",
+        tmp_path,
+        max_count=2,
+    )
+
+    assert [result["heading"] for result in results] == [
+        "재료 있는 대단원",
+        "한 문장 인용 대단원",
+    ]
