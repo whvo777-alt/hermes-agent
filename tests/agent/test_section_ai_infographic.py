@@ -494,3 +494,167 @@ def test_alt_failure_keeps_image_and_existing_fallback(monkeypatch, tmp_path):
 
     assert len(results) == 1
     assert results[0]["alt"] == "ALT 오류 대단원 관련 이미지"
+
+
+def test_default_max_count_is_four(monkeypatch, tmp_path):
+    provider, _materialize_calls, _hero_prompt_calls = _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading=f"대단원 {index}",
+            display_title=f"대단원 {index}",
+            style="checklist",
+            items=[f"기준 {index}", f"추가 기준 {index}"],
+        )
+        for index in range(4)
+    ]
+    _install_specs(monkeypatch, specs)
+
+    results = _build(
+        "## 대단원 0\n본문\n## 대단원 1\n본문\n"
+        "## 대단원 2\n본문\n## 대단원 3\n본문",
+        tmp_path,
+    )
+
+    assert len(results) == 4
+    assert len(provider.calls) == 4
+
+
+def test_repeated_kind_rebuilds_the_second_prompt(monkeypatch, tmp_path):
+    provider, _materialize_calls, _hero_prompt_calls = _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading="첫 체크 대단원",
+            display_title="첫 체크 대단원",
+            style="checklist",
+            items=["첫 번째 재료", "첫 번째 추가 재료"],
+        ),
+        InfographicSpec(
+            heading="둘째 체크 대단원",
+            display_title="둘째 체크 대단원",
+            style="checklist",
+            items=["둘째 재료", "둘째 추가 재료"],
+        ),
+    ]
+    _install_specs(monkeypatch, specs)
+
+    results = _build(
+        "## 첫 체크 대단원\n본문\n## 둘째 체크 대단원\n본문",
+        tmp_path,
+        max_count=2,
+    )
+
+    assert len(results) == 2
+    assert provider.calls[0][0] != provider.calls[1][0]
+    assert "큰 체크박스" in provider.calls[0][0]
+    assert "제목 아래에 번호가 붙은 둥근 카드를 세로로 나란히 놓는다." in provider.calls[1][0]
+
+
+def test_repeated_kind_retry_keeps_its_section_items(monkeypatch, tmp_path):
+    provider, _materialize_calls, _hero_prompt_calls = _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading="첫 목록 대단원",
+            display_title="첫 목록 대단원",
+            style="checklist",
+            items=["첫 번째 재료", "첫 번째 추가 재료"],
+        ),
+        InfographicSpec(
+            heading="둘째 목록 대단원",
+            display_title="둘째 목록 대단원",
+            style="checklist",
+            items=["둘째 재료", "둘째 추가 재료"],
+        ),
+    ]
+    _install_specs(monkeypatch, specs)
+
+    results = _build(
+        "## 첫 목록 대단원\n본문\n## 둘째 목록 대단원\n본문",
+        tmp_path,
+        max_count=2,
+    )
+
+    assert len(results) == 2
+    assert '"둘째 재료"' in provider.calls[1][0]
+    assert '"둘째 추가 재료"' in provider.calls[1][0]
+
+
+def test_different_kinds_are_not_rebuilt(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading="체크 대단원",
+            display_title="체크 대단원",
+            style="checklist",
+            items=["첫 기준", "둘째 기준"],
+        ),
+        InfographicSpec(
+            heading="단계 대단원",
+            display_title="단계 대단원",
+            style="timeline",
+            items=["첫 단계", "둘째 단계"],
+        ),
+    ]
+    _install_specs(monkeypatch, specs)
+
+    import agent.content.images.infographic_prompt as infographic_prompt
+
+    original = infographic_prompt.build_infographic_prompt
+    calls: list[int] = []
+
+    def capture(*args, **kwargs):
+        calls.append(kwargs.get("variant", 0))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(infographic_prompt, "build_infographic_prompt", capture)
+
+    results = _build(
+        "## 체크 대단원\n본문\n## 단계 대단원\n본문",
+        tmp_path,
+        max_count=2,
+    )
+
+    assert len(results) == 2
+    assert calls == [0, 0]
+
+
+def test_retry_failure_keeps_the_original_prompt_and_renders(monkeypatch, tmp_path):
+    provider, _materialize_calls, _hero_prompt_calls = _configure(monkeypatch, tmp_path)
+    specs = [
+        InfographicSpec(
+            heading="첫 실패 대단원",
+            display_title="첫 실패 대단원",
+            style="checklist",
+            items=["첫 번째 재료", "첫 번째 추가 재료"],
+        ),
+        InfographicSpec(
+            heading="둘째 실패 대단원",
+            display_title="둘째 실패 대단원",
+            style="checklist",
+            items=["둘째 재료", "둘째 추가 재료"],
+        ),
+    ]
+    _install_specs(monkeypatch, specs)
+
+    import agent.content.images.infographic_prompt as infographic_prompt
+
+    original = infographic_prompt.build_infographic_prompt
+    retry_attempts: list[int] = []
+
+    def fail_retry(*args, **kwargs):
+        if kwargs.get("variant", 0) > 0:
+            retry_attempts.append(kwargs["variant"])
+            raise RuntimeError("fake retry failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(infographic_prompt, "build_infographic_prompt", fail_retry)
+
+    results = _build(
+        "## 첫 실패 대단원\n본문\n## 둘째 실패 대단원\n본문",
+        tmp_path,
+        max_count=2,
+    )
+
+    assert len(results) == 2
+    assert retry_attempts == [1]
+    assert '"둘째 재료"' in provider.calls[1][0]
+    assert "큰 체크박스" in provider.calls[1][0]

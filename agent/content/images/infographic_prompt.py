@@ -42,6 +42,21 @@ _STYLE_KIND = {
     "quote_keyword": "quote",
 }
 
+_ALT_LAYOUTS = (
+    (
+        "제목 아래에 번호가 붙은 둥근 카드를 세로로 나란히 놓는다.",
+        "각 카드 왼쪽에 큰 번호, 오른쪽에 아래 문장을 하나씩 넣는다.",
+    ),
+    (
+        "제목 아래에 왼쪽은 작은 아이콘, 오른쪽은 글인 가로 띠를 세로로 쌓는다.",
+        "각 띠에 아래 문장을 하나씩 넣는다.",
+    ),
+    (
+        "제목 아래에 두 칸 표를 그린다. 왼쪽 칸은 번호, 오른쪽 칸은 내용.",
+        "아래 문장을 순서대로 한 줄씩 넣는다.",
+    ),
+)
+
 
 def _clean_infographic_text(raw_value) -> str:
     """프롬프트와 ALT에서 함께 쓰는 제목·재료 정리 규칙."""
@@ -64,7 +79,13 @@ def _limit_infographic_alt(text: str) -> str:
     return text_cut.rsplit(" ", 1)[0] if " " in text_cut else text_cut
 
 
-def build_infographic_prompt(spec, *, category_id: str = "", category_name: str = "") -> str:
+def build_infographic_prompt(
+    spec,
+    *,
+    category_id: str = "",
+    category_name: str = "",
+    variant: int = 0,
+) -> str:
     """본문에서 뽑은 재료로 인포그래픽 프롬프트를 만든다."""
     if spec is None:
         return ""
@@ -249,10 +270,14 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
     ]
     prompt_lines = [line for line in prompt_lines if line]
     prompt_lines.extend(_CATEGORY_RULES.get(category_id, ()))
+    layout = None
+    if variant > 0 and kind in {"checklist", "summary", "timeline"}:
+        layout = _ALT_LAYOUTS[min(variant - 1, len(_ALT_LAYOUTS) - 1)]
 
     if kind == "checklist":
         prompt_lines.extend(
-            [
+            layout
+            or [
                 f'제목 아래에 큰 체크박스 {len(items)}개를 세로로 나란히 배치한다.',
                 "각 체크박스 오른쪽에 아래 문장을 하나씩 넣는다.",
             ]
@@ -260,7 +285,8 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
         prompt_lines.extend(f'"{item}"' for item in items)
     elif kind == "summary":
         prompt_lines.extend(
-            [
+            layout
+            or [
                 f'제목 아래에 둥근 카드 {len(items)}개를 2열로 배치한다.',
                 "각 카드에 작은 아이콘 하나와 아래 문장을 하나씩 넣는다.",
             ]
@@ -268,7 +294,8 @@ def build_infographic_prompt(spec, *, category_id: str = "", category_name: str 
         prompt_lines.extend(f'"{item}"' for item in items)
     elif kind == "timeline":
         prompt_lines.extend(
-            [
+            layout
+            or [
                 "제목 아래에 위에서 아래로 이어지는 흐름선을 그리고",
                 f"번호가 붙은 동그라미 {len(items)}개를 순서대로 놓는다.",
                 "각 동그라미 오른쪽에 아래 문장을 순서대로 하나씩 넣는다.",

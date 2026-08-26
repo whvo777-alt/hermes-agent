@@ -319,3 +319,85 @@ def test_alt_does_not_use_generic_related_image_phrase():
     alt = build_infographic_alt(spec)
 
     assert "관련 이미지" not in alt
+
+
+def test_variant_zero_keeps_the_existing_checklist_layout():
+    prompt = build_infographic_prompt(
+        _spec(style="checklist", items=["첫 항목", "둘째 항목"]),
+    )
+
+    assert "제목 아래에 큰 체크박스 2개를 세로로 나란히 배치한다." in prompt
+    assert "각 체크박스 오른쪽에 아래 문장을 하나씩 넣는다." in prompt
+    assert "제목 아래에 번호가 붙은 둥근 카드를 세로로 나란히 놓는다." not in prompt
+
+
+def test_variant_one_uses_numbered_cards_for_list_layout():
+    prompt = build_infographic_prompt(
+        _spec(style="checklist", items=["첫 항목", "둘째 항목"]),
+        variant=1,
+    )
+
+    assert "제목 아래에 번호가 붙은 둥근 카드를 세로로 나란히 놓는다." in prompt
+    assert "각 카드 왼쪽에 큰 번호, 오른쪽에 아래 문장을 하나씩 넣는다." in prompt
+    assert "큰 체크박스" not in prompt
+
+
+def test_variant_keeps_all_item_sentences():
+    items = ["첫 항목", "둘째 항목", "셋째 항목"]
+
+    prompt = build_infographic_prompt(_spec(style="timeline", items=items), variant=1)
+
+    for item in items:
+        assert f'"{item}"' in prompt
+
+
+def test_variant_keeps_category_rules_and_common_design():
+    prompt = build_infographic_prompt(
+        _spec(style="checklist", items=["첫 항목", "둘째 항목"]),
+        category_id="health",
+        variant=1,
+    )
+
+    assert "한국 건강·웰니스 블로그용" in prompt
+    assert "밝은 아이보리 배경" in prompt
+    assert "모바일에서 읽기 쉬운 큰 글씨" in prompt
+    assert "병을 단정하거나 스스로 진단하게 만드는 글자를 넣지 않는다." in prompt
+
+
+def test_variant_does_not_change_non_list_layouts():
+    specs = [
+        _spec(style="qa", qa_pairs=[("질문", "답변")]),
+        _spec(
+            style="risk_tier",
+            risk_tiers=[
+                ("safe", "안전", "안전한 상태"),
+                ("mid", "주의", "주의할 상태"),
+                ("risk", "위험", "위험한 상태"),
+            ],
+        ),
+        _spec(style="ox_quiz", ox_pair=("통념", "사실")),
+        _spec(style="gauge", gauge_stat=("7", "일"), gauge_label="기준"),
+        _spec(style="quote", quote_text="한 문장"),
+        _spec(style="before_after", before_pairs=[("나쁜 예", "고친 예")]),
+        _spec(style="grid", table=[["구분", "기준"], ["초보", "가볍게 시작"]]),
+    ]
+
+    alternate_layouts = (
+        "제목 아래에 번호가 붙은 둥근 카드를 세로로 나란히 놓는다.",
+        "제목 아래에 왼쪽은 작은 아이콘, 오른쪽은 글인 가로 띠를 세로로 쌓는다.",
+        "제목 아래에 두 칸 표를 그린다. 왼쪽 칸은 번호, 오른쪽 칸은 내용.",
+    )
+    for spec in specs:
+        prompt = build_infographic_prompt(spec, variant=9)
+        assert prompt
+        assert not any(layout in prompt for layout in alternate_layouts)
+
+
+def test_large_variant_uses_the_last_alternate_layout():
+    prompt = build_infographic_prompt(
+        _spec(style="summary", items=["첫 항목", "둘째 항목"]),
+        variant=9,
+    )
+
+    assert "제목 아래에 두 칸 표를 그린다. 왼쪽 칸은 번호, 오른쪽 칸은 내용." in prompt
+    assert "아래 문장을 순서대로 한 줄씩 넣는다." in prompt

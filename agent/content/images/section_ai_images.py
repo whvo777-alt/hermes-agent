@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MAX = 2
+_DEFAULT_MAX = 4
 
 
 def _plain_heading(text: str) -> str:
@@ -103,40 +103,64 @@ def build_section_ai_images(
         except Exception:  # noqa: BLE001
             alt = ""
         kind = str(getattr(spec, "style", "") or getattr(spec, "shape", "") or "")
-        ranked.append((-_material_score(spec), order, heading, prompt, kind, alt))
+        ranked.append((-_material_score(spec), order, heading, prompt, kind, alt, spec))
     ranked.sort()
 
     picks = []
     seen_kinds = set()
     chosen = set()
 
-    for score, _order, heading, prompt, kind, alt in ranked:
+    for score, _order, heading, prompt, kind, alt, spec in ranked:
         if -score <= 0:
             continue
         if kind in seen_kinds:
             continue
         seen_kinds.add(kind)
         chosen.add(heading)
-        picks.append((heading, prompt, alt))
+        picks.append((heading, prompt, alt, kind, spec))
 
-    for score, _order, heading, prompt, _kind, alt in ranked:
+    for score, _order, heading, prompt, kind, alt, spec in ranked:
         if -score <= 0:
             continue
         if heading in chosen:
             continue
         chosen.add(heading)
-        picks.append((heading, prompt, alt))
+        picks.append((heading, prompt, alt, kind, spec))
 
-    for _score, _order, heading, prompt, _kind, alt in ranked:
+    for _score, _order, heading, prompt, kind, alt, spec in ranked:
         if heading in chosen:
             continue
         chosen.add(heading)
-        picks.append((heading, prompt, alt))
+        picks.append((heading, prompt, alt, kind, spec))
 
-    picks += [(heading, "", "") for heading in free_headings if heading not in spec_map]
+    picks += [
+        (heading, "", "", "", None)
+        for heading in free_headings
+        if heading not in spec_map
+    ]
 
     results: List[Dict[str, Any]] = []
-    for index, (heading, prompt, alt) in enumerate(picks[:max_count]):
+    chosen_picks = picks[:max_count]
+    seen_counts: dict = {}
+    final_picks = []
+    for heading, prompt, alt, kind, spec in chosen_picks:
+        times = seen_counts.get(kind, 0)
+        seen_counts[kind] = times + 1
+        if times > 0 and spec is not None:
+            try:
+                retry = build_infographic_prompt(
+                    spec,
+                    category_id=category_id,
+                    category_name=category_name,
+                    variant=times,
+                )
+                if retry:
+                    prompt = retry
+            except Exception:  # noqa: BLE001 - 기존 프롬프트로 계속 그린다
+                pass
+        final_picks.append((heading, prompt, alt))
+
+    for index, (heading, prompt, alt) in enumerate(final_picks):
         saved = _render_one(
             heading=heading,
             prompt=prompt,
