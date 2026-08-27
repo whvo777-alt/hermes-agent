@@ -70,6 +70,16 @@ def _slugify(title: str) -> str:
     return slug[:60]
 
 
+def _wp_host() -> str:
+    """워드프레스 주소에서 호스트만 뽑는다. 못 얻으면 빈 글자."""
+    try:
+        from urllib.parse import urlparse
+
+        return (urlparse(os.environ.get("WORDPRESS_SITE_URL") or "").hostname or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _prefer_korean_slug(*, raw_slug: str, title: str, focus_keyword: str) -> str:
     """Always prefer Hangul in the WordPress slug when the topic is Korean."""
     candidate = (raw_slug or "").strip().strip("`").strip("/")
@@ -680,7 +690,10 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
             "status": "draft",
             "title": title,
             "slug": raw_slug,
-            "content": markdown_to_html(narrative_content),
+            "content": markdown_to_html(
+                narrative_content,
+                internal_host=_wp_host(),
+            ),
         }
         if seo_meta.get("Meta description"):
             payload["excerpt"] = seo_meta["Meta description"]

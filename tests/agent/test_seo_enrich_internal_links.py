@@ -29,7 +29,7 @@ def test_default_max_links_is_now_three():
         "## 마무리\n끝.", site_url="https://x.com", candidates=_CANDIDATES,
         preferred_terms=["요가", "스트레칭", "수면"],
     )
-    assert out.count("- [") == 3
+    assert out.count("](https://x.com/") == 3
 
 
 def test_degrades_gracefully_with_fewer_than_three_candidates():
@@ -41,7 +41,7 @@ def test_degrades_gracefully_with_fewer_than_three_candidates():
         preferred_terms=["요가"],
     )
     assert "요가 초보 확인 기준" in out
-    assert out.count("- [") == 1
+    assert out.count("](https://x.com/") == 1
 
 
 def test_no_candidates_falls_back_to_home_link_not_a_crash():
@@ -249,7 +249,7 @@ def test_full_topic_title_is_split_into_terms_for_matching():
         preferred_terms=["연차계산기 | 입사일로 연차휴가를 계산하는 방법과 확인할 점"],
     )
 
-    assert "- [연차계산기 사용법](https://x.com/related)" in out
+    assert "[연차계산기 사용법](https://x.com/related)" in out
     assert "다크초콜릿 고르는 법" not in out
 
 
@@ -267,7 +267,7 @@ def test_two_character_overlap_can_rank_a_candidate():
         preferred_terms=["어깨결림"],
     )
 
-    assert "- [컴퓨터 어깨 통증 완화](https://x.com/related)" in out
+    assert "[컴퓨터 어깨 통증 완화](https://x.com/related)" in out
     assert "다크초콜릿 고르는 법" not in out
 
 
@@ -285,7 +285,7 @@ def test_unrelated_candidates_are_excluded_when_any_related_candidate_exists():
         preferred_terms=["어깨결림"],
     )
 
-    assert out.count("- [") == 1
-    assert "- [컴퓨터 어깨 통증 완화](https://x.com/shoulder)" in out
+    assert out.count("](https://x.com/") == 1
+    assert "[컴퓨터 어깨 통증 완화](https://x.com/shoulder)" in out
     assert "다크초콜릿 고르는 법" not in out
     assert "셀룰라이트 관리 방법" not in out

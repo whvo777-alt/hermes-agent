@@ -499,13 +499,14 @@ def append_internal_links(
         logger.info("Internal links: no same-category candidates, using fallback links")
     if not picks:
         return markdown
-    block_lines = [
-        "",
-        "## 함께 읽으면 좋은 글",
-        "같은 블로그에서 이어서 보면 도움이 되는 글입니다.",
-    ]
-    block_lines.extend(f"- [{item['title']}]({item['link']})" for item in picks)
-    block = "\n".join(block_lines) + "\n"
+    link_paragraphs = "\n\n".join(
+        f"[{item['title']}]({item['link']})" for item in picks
+    )
+    block = (
+        "\n## 함께 읽으면 좋은 글\n"
+        "같은 블로그에서 이어서 보면 도움이 되는 글입니다.\n\n"
+        f"{link_paragraphs}\n"
+    )
 
     match = re.search(r"^##\s*마무리.*$", markdown or "", flags=re.M)
     if match:

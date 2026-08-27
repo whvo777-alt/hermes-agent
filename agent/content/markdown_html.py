@@ -41,7 +41,31 @@ def _strip_task_checkbox(text: str) -> str:
     return _TASK_CHECKBOX_RE.sub("", str(text or "")).strip()
 
 
-def _inline_md(text: str, *, seed: str = "", plain: bool = False) -> str:
+def _is_internal_url(url: str, internal_host: str) -> bool:
+    """우리 사이트 주소인지 본다."""
+    if not internal_host:
+        return False
+    try:
+        from urllib.parse import urlparse
+
+        host = (urlparse(str(url or "")).hostname or "").lower()
+    except Exception:  # noqa: BLE001
+        return False
+    target = str(internal_host or "").lower().lstrip(".")
+    if target.startswith("www."):
+        target = target[4:]
+    if host.startswith("www."):
+        host = host[4:]
+    return bool(host) and host == target
+
+
+def _inline_md(
+    text: str,
+    *,
+    seed: str = "",
+    plain: bool = False,
+    internal_host: str = "",
+) -> str:
     escaped = escape_html(text)
 
     def _image(match: re.Match) -> str:
@@ -67,6 +91,14 @@ def _inline_md(text: str, *, seed: str = "", plain: bool = False) -> str:
     def _link(match: re.Match) -> str:
         label, href = match.group(1), match.group(2)
         clean_href = href.replace("&amp;", "&").strip()
+        if _is_internal_url(clean_href, internal_host):
+            if plain:
+                return f'<a href="{escape_html(clean_href)}">{label} →</a>'
+            return (
+                f'<a href="{escape_html(clean_href)}" '
+                f'style="color:#1565c0;font-weight:600;text-decoration:underline;'
+                f'text-underline-offset:3px;">{label} →</a>'
+            )
         if plain:
             return f'<a href="{escape_html(clean_href)}">{label}</a>'
         return (
@@ -117,16 +149,24 @@ def _circled_number(num: int) -> str:
     return chr(0x245F + num) if 1 <= num <= 20 else f"{num}."
 
 
-def h2_inner_html(heading: str, *, seed: str = "") -> str:
+def h2_inner_html(
+    heading: str, *, seed: str = "", internal_host: str = ""
+) -> str:
     """Render H2 text without a decorative inner highlight span."""
-    return _inline_md(h2_display_text(heading), seed=seed)
+    return _inline_md(
+        h2_display_text(heading),
+        seed=seed,
+        internal_host=internal_host,
+    )
 
 
 def _split_table_row(line: str) -> List[str]:
     return [cell.strip() for cell in line.strip().strip("|").split("|")]
 
 
-def _render_table(rows: List[str], *, plain: bool = False) -> str:
+def _render_table(
+    rows: List[str], *, plain: bool = False, internal_host: str = ""
+) -> str:
     """Render consecutive markdown table lines as an HTML table."""
     header_cells = _split_table_row(rows[0])
     body_rows = rows[1:]
@@ -148,7 +188,7 @@ def _render_table(rows: List[str], *, plain: bool = False) -> str:
     parts.extend(
         '<th style="padding:14px 12px;text-align:left;color:#1b5e20;font-weight:700;'
         'background:#edf6ed;border-bottom:2px solid #dcebdc;white-space:nowrap;">'
-        f"{_inline_md(cell, plain=plain)}</th>"
+        f"{_inline_md(cell, plain=plain, internal_host=internal_host)}</th>"
         for cell in header_cells
     )
     parts.extend(["</tr>", "</thead>", "<tbody>"])
@@ -161,7 +201,7 @@ def _render_table(rows: List[str], *, plain: bool = False) -> str:
             first_style = "font-weight:700;color:#37474f;" if i == 0 else ""
             parts.append(
                 '<td style="padding:13px 10px;vertical-align:top;'
-                f'border-bottom:1px solid #f1f3f2;{first_style}">{_inline_md(cell, plain=plain)}</td>'
+                f'border-bottom:1px solid #f1f3f2;{first_style}">{_inline_md(cell, plain=plain, internal_host=internal_host)}</td>'
             )
         parts.append("</tr>")
     parts.extend(["</tbody>", "</table>"])
@@ -170,7 +210,29 @@ def _render_table(rows: List[str], *, plain: bool = False) -> str:
     return "\n".join(parts)
 
 
-def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
+def _render_internal_link_card(line: str, *, internal_host: str = "") -> Optional[str]:
+    if not internal_host:
+        return None
+    match = re.fullmatch(r"\s*\[([^\]]+)\]\(([^)]+)\)\s*", line)
+    if match is None:
+        return None
+    label, href = match.groups()
+    clean_href = href.replace("&amp;", "&").strip()
+    if not _is_internal_url(clean_href, internal_host):
+        return None
+    return (
+        f'<a href="{escape_html(clean_href)}" '
+        'style="display:block;padding:16px 20px;margin:14px 0;background:#f8f9fa;'
+        'color:#222222;text-decoration:none;border:1px solid #e5e7eb;'
+        'border-radius:14px;font-weight:700;font-size:16px;">'
+        f'{_inline_md(label, internal_host=internal_host)} '
+        '<span style="float:right;color:#6b7280;">→</span></a>'
+    )
+
+
+def markdown_to_html(
+    markdown: str, *, plain: bool = False, internal_host: str = ""
+) -> str:
     lines = strip_frontmatter(markdown).split("\n")
     html: List[str] = []
     in_list = False
@@ -195,7 +257,13 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
     def close_table() -> None:
         nonlocal table_rows
         if table_rows:
-            html.append(_render_table(table_rows, plain=plain))
+            html.append(
+                _render_table(
+                    table_rows,
+                    plain=plain,
+                    internal_host=internal_host,
+                )
+            )
             table_rows = []
 
     for raw in lines:
@@ -222,7 +290,12 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
                 accent = accent_for(heading_text, seed=doc_seed)
                 if level == 1:
                     heading_inner = (
-                        _inline_md(heading_text, seed=doc_seed, plain=plain)
+                        _inline_md(
+                            heading_text,
+                            seed=doc_seed,
+                            plain=plain,
+                            internal_host=internal_host,
+                        )
                         if plain
                         else (
                             f'<span style="{highlighter_style(heading_text, seed=doc_seed, padding="0 4px 3px")}">'
@@ -236,16 +309,29 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
                     )
                 elif level == 2:
                     heading_inner = (
-                        _inline_md(h2_display_text(heading_text), seed=doc_seed, plain=plain)
+                        _inline_md(
+                            h2_display_text(heading_text),
+                            seed=doc_seed,
+                            plain=plain,
+                            internal_host=internal_host,
+                        )
                         if plain
-                        else h2_inner_html(heading_text, seed=doc_seed)
+                        else h2_inner_html(
+                            heading_text,
+                            seed=doc_seed,
+                        )
                     )
                     if plain:
                         html.append(f"<h2>{heading_inner}</h2>")
                     else:
                         html.append(f'<h2 style="{_TISTORY_H2_STYLE}">{heading_inner}</h2>')
                 elif level == 3:
-                    heading_inner = _inline_md(heading_text, seed=doc_seed, plain=plain)
+                    heading_inner = _inline_md(
+                        heading_text,
+                        seed=doc_seed,
+                        plain=plain,
+                        internal_host=internal_host,
+                    )
                     if plain:
                         html.append(f"<h3>{heading_inner}</h3>")
                     else:
@@ -264,7 +350,9 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
                     if not in_list:
                         html.append('<ul style="list-style-type:disc;">')
                         in_list = True
-                    html.append(f"<li>{_inline_md(item_text, seed=doc_seed, plain=plain)}</li>")
+                    html.append(
+                        f"<li>{_inline_md(item_text, seed=doc_seed, plain=plain, internal_host=internal_host)}</li>"
+                    )
                     continue
                 if not in_list:
                     html.append(
@@ -276,7 +364,7 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
                 html.append(
                     f'<li style="margin:0 0 0.55em;">'
                     f'<span style="color:{list_accent["ink"]};margin-right:8px;">●</span>'
-                    f"{_inline_md(item_text, seed=doc_seed)}</li>"
+                    f"{_inline_md(item_text, seed=doc_seed, internal_host=internal_host)}</li>"
                 )
                 continue
             num_match = re.match(r"^(\d+)\.\s+(.+)$", line)
@@ -288,7 +376,7 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
                         plain_ordered_list = True
                     tip_text = num_match.group(2)
                     html.append(
-                        f"<li>{_inline_md(tip_text, seed=doc_seed, plain=plain)}</li>"
+                        f"<li>{_inline_md(tip_text, seed=doc_seed, plain=plain, internal_host=internal_host)}</li>"
                     )
                     continue
                 if in_list:
@@ -296,7 +384,11 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
                     in_list = False
                 badge = _circled_number(int(num_match.group(1)))
                 tip_text = num_match.group(2)
-                tip_body = _inline_md(tip_text, seed=doc_seed)
+                tip_body = _inline_md(
+                    tip_text,
+                    seed=doc_seed,
+                    internal_host=internal_host,
+                )
                 tip_accent = accent_for(tip_text, seed=doc_seed)
                 html.append(
                     f'<p style="{tip_bar_style(tip_text, seed=doc_seed)}">'
@@ -312,7 +404,7 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
                 colon_text = re.sub(r"^:\s+", "", line)
                 html.append(
                     '<p style="margin:0 0 1.15em 0.2em;line-height:1.85;color:#37474f;">'
-                    f"{_inline_md(colon_text, seed=doc_seed, plain=plain)}</p>"
+                    f"{_inline_md(colon_text, seed=doc_seed, plain=plain, internal_host=internal_host)}</p>"
                 )
                 continue
             close_list()
@@ -322,24 +414,29 @@ def markdown_to_html(markdown: str, *, plain: bool = False) -> str:
                 quote = re.sub(r"^>\s+", "", line)
                 if plain:
                     html.append(
-                        f"<blockquote>{_inline_md(quote, seed=doc_seed, plain=plain)}</blockquote>"
+                        f"<blockquote>{_inline_md(quote, seed=doc_seed, plain=plain, internal_host=internal_host)}</blockquote>"
                     )
                 else:
                     q_accent = accent_for(quote, seed=doc_seed)
                     html.append(
                         f'<blockquote style="margin:1.4em 0;padding:0.8em 1.1em;'
                         f'border-left:4px solid {q_accent["ink"]};background:{q_accent["tip"]};">'
-                        f"{_inline_md(quote, seed=doc_seed)}</blockquote>"
+                        f"{_inline_md(quote, seed=doc_seed, internal_host=internal_host)}</blockquote>"
                     )
             elif re.match(r"^---+$", line):
                 html.append('<hr style="border:none;border-top:1px solid #e5e7eb;margin:2em 0;">')
             else:
-                if plain:
-                    html.append(f"<p>{_inline_md(line, seed=doc_seed, plain=plain)}</p>")
+                card = _render_internal_link_card(line, internal_host=internal_host)
+                if card is not None:
+                    html.append(card)
+                elif plain:
+                    html.append(
+                        f"<p>{_inline_md(line, seed=doc_seed, plain=plain, internal_host=internal_host)}</p>"
+                    )
                 else:
                     html.append(
                         '<p style="margin:0 0 1.25em;line-height:1.9;color:#212121;">'
-                        f"{_inline_md(line, seed=doc_seed)}</p>"
+                        f"{_inline_md(line, seed=doc_seed, internal_host=internal_host)}</p>"
                     )
             continue
         continue
