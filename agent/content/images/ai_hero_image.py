@@ -73,9 +73,15 @@ _CARD_STYLE = (
     "clean flat-lay editorial illustration, soft studio lighting, "
     "minimal composition, pastel color palette"
 )
-_PHOTO_STYLE = (
+_PHOTO_STYLES = (
     "cinematic lifestyle photograph, natural light, shallow depth of field, "
-    "warm color grading"
+    "warm color grading",
+    "bright overhead flat-lay photograph, soft diffused daylight, "
+    "clean neutral background",
+    "documentary-style photograph, crisp even lighting, muted natural colors, "
+    "deep focus",
+    "close-up detail photograph, soft side light, textured surfaces, "
+    "cool neutral tones",
 )
 _NEGATIVE = (
     "no text, no letters, no words, no numbers, no logos, no watermark, "
@@ -87,12 +93,19 @@ _SCENE_SYSTEM_PROMPT = (
     "prompt that illustrates a Korean blog post's hero image.\n"
     "Rules:\n"
     "1) Output ONLY the scene description, one line, no quotes, no explanation.\n"
-    "2) Describe objects/setting only — no readable text, letters, numbers, logos, "
-    "or brand names in the scene, and no identifiable real people.\n"
-    "3) Nothing unsafe, medical/legal claims, or NSFW.\n"
-    "4) Under 20 words, concrete and visual (objects, props, setting, lighting), "
-    "suitable for a clean editorial flat-lay or lifestyle photo.\n"
-    "5) Stay topically relevant to the blog post title given by the user."
+    "2) The scene MUST show the specific object, tool, food, place, or activity "
+    "named in the title. Never swap it for a related-but-different one: a "
+    "bodyweight squat is not a stationary bike, a quotation form is not sticky "
+    "notes, a Gantt chart is not an empty notebook.\n"
+    "3) If the title also names a time of day, a season, or a body state, treat "
+    "that as context only. The main subject stays the thing the title is about.\n"
+    "4) Describe objects and setting only — no readable text, letters, numbers, "
+    "logos, or brand names in the scene, and no identifiable real people.\n"
+    "5) Nothing unsafe, no medical or legal claims, no NSFW.\n"
+    "6) Under 20 words, concrete and visual: objects, props, setting, lighting.\n"
+    "7) Vary the framing between posts. Sometimes a close-up of the object, "
+    "sometimes the room where it is used, sometimes an overhead arrangement. "
+    "Do not default to a flat-lay every time.\n"
 )
 _MAX_SCENE_WORDS = 25
 
@@ -150,7 +163,10 @@ def build_hero_prompt(
         vocab = _SCENE_VOCAB.get(category_id, _DEFAULT_SCENE_VOCAB)
         idx = _style_index(style_seed or category_id)
         scene = vocab[idx % len(vocab)]
-    style = _PHOTO_STYLE if hero_mode == "photo" else _CARD_STYLE
+    if hero_mode == "photo":
+        style = _PHOTO_STYLES[_style_index(style_seed or category_id) % len(_PHOTO_STYLES)]
+    else:
+        style = _CARD_STYLE
     return f"{scene}, {style}. {_NEGATIVE}."
 
 
