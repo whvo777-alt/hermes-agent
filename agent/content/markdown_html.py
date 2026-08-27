@@ -36,6 +36,28 @@ def escape_html(value: str) -> str:
 
 _TASK_CHECKBOX_RE = re.compile(r"^\[[ xX]\]\s*")
 
+_NEWS_HOSTS = frozenset({
+    "yna.co.kr", "news.naver.com", "chosun.com", "joongang.co.kr",
+    "hani.co.kr", "donga.com", "khan.co.kr", "hankyung.com",
+    "mk.co.kr", "edaily.co.kr", "newsis.com", "ytn.co.kr",
+    "kbs.co.kr", "sbs.co.kr", "imbc.com", "mt.co.kr",
+})
+
+_PUBLIC_SUFFIXES = (".go.kr", ".gov", ".or.kr", ".re.kr", ".ac.kr")
+
+
+def _is_site_root(url: str) -> bool:
+    """주소가 그 사이트의 첫 화면인지 본다."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(str(url or ""))
+    except Exception:  # noqa: BLE001
+        return False
+    path = (parsed.path or "").strip("/").lower()
+    if not path:
+        return True
+    return path in ("index.html", "index.do", "main.do", "main", "index", "home")
+
 
 def _strip_task_checkbox(text: str) -> str:
     return _TASK_CHECKBOX_RE.sub("", str(text or "")).strip()
@@ -218,15 +240,46 @@ def _render_internal_link_card(line: str, *, internal_host: str = "") -> Optiona
         return None
     label, href = match.groups()
     clean_href = href.replace("&amp;", "&").strip()
-    if not _is_internal_url(clean_href, internal_host):
-        return None
+    if _is_internal_url(clean_href, internal_host):
+        return (
+            f'<a href="{escape_html(clean_href)}" '
+            'style="display:block;padding:16px 20px;margin:14px 0;background:#f8f9fa;'
+            'color:#222222;text-decoration:none;border:1px solid #e5e7eb;'
+            'border-radius:14px;font-weight:700;font-size:16px;">'
+            f'{_inline_md(label, internal_host=internal_host)} '
+            '<span style="float:right;color:#6b7280;">→</span></a>'
+        )
+
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(clean_href).hostname or "").lower()
+    except Exception:  # noqa: BLE001
+        host = ""
+    if host.startswith("www."):
+        host = host[4:]
+    title = escape_html(label.strip())
+    if host in _NEWS_HOSTS or host.startswith("news."):
+        return (
+            f'<a href="{escape_html(clean_href)}" target="_blank" rel="noopener noreferrer" '
+            'style="display:block;padding:16px 20px;margin:18px 0;background:#fff7ed;'
+            'color:#9a3412;text-decoration:none;border-left:5px solid #f97316;'
+            'border-radius:12px;font-weight:700;">'
+            f'📰 {title} ↗</a>'
+        )
+    if host.endswith(_PUBLIC_SUFFIXES) and _is_site_root(clean_href):
+        return (
+            f'<a href="{escape_html(clean_href)}" target="_blank" rel="noopener noreferrer" '
+            'style="display:block;padding:15px 20px;margin:18px 0;background:#2563eb;'
+            'color:#ffffff;text-decoration:none;border-radius:14px;font-weight:700;'
+            'font-size:16px;text-align:center;">'
+            f'🔗 {title} ↗</a>'
+        )
     return (
-        f'<a href="{escape_html(clean_href)}" '
-        'style="display:block;padding:16px 20px;margin:14px 0;background:#f8f9fa;'
-        'color:#222222;text-decoration:none;border:1px solid #e5e7eb;'
-        'border-radius:14px;font-weight:700;font-size:16px;">'
-        f'{_inline_md(label, internal_host=internal_host)} '
-        '<span style="float:right;color:#6b7280;">→</span></a>'
+        f'<a href="{escape_html(clean_href)}" target="_blank" rel="noopener noreferrer" '
+        'style="display:block;padding:16px 20px;margin:18px 0;background:#f8fafc;'
+        'color:#1e293b;text-decoration:none;border:1px solid #cbd5e1;'
+        'border-radius:14px;font-weight:700;">'
+        f'📚 {title} <span style="float:right;">↗</span></a>'
     )
 
 

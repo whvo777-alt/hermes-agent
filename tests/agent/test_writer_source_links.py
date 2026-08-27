@@ -79,3 +79,12 @@ def test_source_links_are_limited_to_six_items():
     for link in links[:6]:
         assert f"- {link['title']} : {link['url']}" in prompt
     assert f"- {links[6]['title']} : {links[6]['url']}" not in prompt
+
+
+def test_source_links_are_placed_on_their_own_line():
+    prompt = _capture_user_prompt(
+        source_links=[{"title": "자료", "url": "https://example.com/source"}]
+    )
+
+    assert "설명한 문단 바로 다음 줄에 링크만 홀로 놓는다. 문장 안에 섞지 않는다." in prompt
+    assert "글 끝에 몰아넣지 않는다." in prompt
