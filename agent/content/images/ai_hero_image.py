@@ -27,6 +27,7 @@ from agent.content.images.hero_image import (
 )
 
 logger = logging.getLogger(__name__)
+_HERO_SEED_FILE = "hero_ai.seed"
 
 
 # Category -> English scene vocabulary for the AI prompt. Separate from
@@ -295,7 +296,26 @@ def _materialize_provider_image(
     return _to_jpeg(dest)
 
 
-def _find_cached_ai_hero(out_dir: Path) -> Optional[Path]:
+def _read_hero_seed(out_dir: Path) -> str:
+    try:
+        return (out_dir / _HERO_SEED_FILE).read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _write_hero_seed(out_dir: Path, style_seed: str) -> None:
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / _HERO_SEED_FILE).write_text(
+            str(style_seed or "").strip(), encoding="utf-8"
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _find_cached_ai_hero(out_dir: Path, *, style_seed: str = "") -> Optional[Path]:
+    if style_seed and _read_hero_seed(out_dir) != str(style_seed).strip():
+        return None
     for ext in ("png", "jpg", "jpeg", "webp"):
         cached = out_dir / f"hero_ai.{ext}"
         if cached.is_file():
@@ -340,7 +360,7 @@ def _try_generate(
 
     # A re-run of the same draft (same style_seed/topic) must not re-bill the
     # provider for an image that's already sitting on disk.
-    cached = _find_cached_ai_hero(out_dir)
+    cached = _find_cached_ai_hero(out_dir, style_seed=style_seed)
     if cached is not None:
         logger.debug("Reusing cached AI hero image: %s", cached)
         return _build_hero_image_record(
@@ -383,6 +403,7 @@ def _try_generate(
     if dest is None:
         return None
 
+    _write_hero_seed(out_dir, style_seed)
     return _build_hero_image_record(
         dest, category_name=category_name, topic_title=topic_title,
         blog_content=blog_content, prompt=prompt,
