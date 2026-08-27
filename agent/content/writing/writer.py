@@ -13,7 +13,7 @@ Token-saving change (Big-Bang migration goal):
 from __future__ import annotations
 
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from agent.content.llm_client import call_llm
 from agent.content.prompts.prompt_builder import build_system_prompt, build_writing_brief, summarize_planning, summarize_research
@@ -417,7 +417,8 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
                      category_keywords: List[str], caution_hints: List[str], current_date: str,
                      research_content: str, planning_content: str,
                      prior_feedback: Optional[List[str]] = None,
-                     recent_titles: Optional[List[str]] = None) -> str:
+                     recent_titles: Optional[List[str]] = None,
+                     source_links: Optional[List[Dict[str, str]]] = None) -> str:
     research_summary = summarize_research(research_content)
     planning_summary = summarize_planning(planning_content)
 
@@ -445,6 +446,20 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
             "- 위 글이 이미 다룬 범위는 짧게 스치고, 이 글만의 좁은 상황을 깊게 판다.\n"
             "- 겹치는 주제가 있으면 그 글이 안 다룬 각도를 고른다.\n"
         )
+    source_block = ""
+    if source_links:
+        listed = "\n".join(f"- {s['title']} : {s['url']}" for s in source_links[:6])
+        source_block = (
+            "\n[쓸 수 있는 바깥 자료]\n"
+            f"{listed}\n"
+            "위 목록에 있는 주소만 쓴다. 목록에 없는 주소는 만들지 않는다.\n"
+            "- 주소는 [제목](주소) 모양으로만 쓴다. 주소 글자를 그대로 늘어놓지 않는다.\n"
+            "- 제목은 그 자료에서 실제로 확인할 수 있는 것을 적는다.\n"
+            "  '자세히 보기', '여기', '클릭' 같은 말을 쓰지 않는다.\n"
+            "- 설명한 문단 바로 뒤에 넣는다. 글 끝에 몰아넣지 않는다.\n"
+            "- 같은 주소를 두 번 넣지 않는다.\n"
+            "- 쓸 자료가 없으면 바깥 링크를 아예 넣지 않는다. 억지로 넣지 않는다.\n"
+        )
 
     user = f"""카테고리: {category_name}
 플랫폼: {platform_label}
@@ -453,7 +468,7 @@ def write_blog_post(*, platform_id: str, platform_label: str, category_id: str, 
 키워드: {', '.join(topic_keywords)}
 카테고리 기본 키워드: {', '.join(category_keywords)}
 주의사항: {', '.join(caution_hints) or '없음'}
-{recent_block}현재 날짜: {current_date}
+{recent_block}{source_block}현재 날짜: {current_date}
 
 {brief.to_prompt_text()}
 

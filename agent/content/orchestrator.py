@@ -410,14 +410,32 @@ def generate_platform_draft(
     except Exception:  # noqa: BLE001 - 최근 제목을 못 얻어도 글은 나간다
         logging.getLogger(__name__).warning("recent titles lookup failed", exc_info=True)
 
+    source_links = []
+    try:
+        from agent.content.research.research import extract_source_links
+        source_links = extract_source_links(research_content)
+    except Exception:  # noqa: BLE001 - 주소를 못 얻어도 글은 나간다
+        logging.getLogger(__name__).warning("source links lookup failed", exc_info=True)
+
     blog_content = write_blog_post(
         platform_id=platform.id, platform_label=platform.label, category_id=category.id,
         category_name=category.name, target_audience=category.target_audience, tone=category.tone,
         topic_title=topic["topic_title"], topic_keywords=topic["topic_keywords"],
         category_keywords=category.keywords, caution_hints=category.caution_hints,
         current_date=resolved_date, research_content=research_content, planning_content=planning_content,
-        prior_feedback=prior_feedback, recent_titles=recent_titles,
+        prior_feedback=prior_feedback, recent_titles=recent_titles, source_links=source_links,
     )
+    try:
+        allowed = {s["url"] for s in source_links}
+        found = set(re.findall(r"\((https?://[^\s)]+)\)", blog_content or ""))
+        unknown = sorted(u for u in found if u not in allowed)
+        if unknown:
+            logging.getLogger(__name__).warning(
+                "draft has %d URL(s) not in the research list: %s",
+                len(unknown), ", ".join(unknown[:5]),
+            )
+    except Exception:  # noqa: BLE001
+        pass
     prepared_title = _prepare_title_for_image_and_quality(
         blog_content,
         topic_title=topic["topic_title"],

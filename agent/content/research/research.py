@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any, Dict, List
 
 from agent.content.llm_client import call_llm
@@ -114,6 +115,22 @@ def _format_sources_section(evidence: List[Dict[str, Any]]) -> str:
         title = str(item.get("title") or "").strip() or url
         lines.append(f"- [{title}]({url})")
     return "\n".join(lines)
+
+
+def extract_source_links(research_content: str, *, limit: int = 6) -> List[Dict[str, str]]:
+    """조사 결과에서 실제로 본 주소만 뽑는다. 없으면 빈 목록."""
+    out: List[Dict[str, str]] = []
+    seen: set = set()
+    for match in re.finditer(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", str(research_content or "")):
+        title = match.group(1).strip()
+        url = match.group(2).strip()
+        if not title or not url or url in seen:
+            continue
+        seen.add(url)
+        out.append({"title": title, "url": url})
+        if len(out) >= limit:
+            break
+    return out
 
 
 def run_research(*, platform_id: str, platform_label: str, category_id: str, category_name: str,
