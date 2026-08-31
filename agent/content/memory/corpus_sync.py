@@ -209,6 +209,16 @@ def _fetch_category_slugs(site_url: str, term_ids: List[int]) -> Dict[int, str]:
     return out
 
 
+def _known_category_ids() -> set:
+    """우리가 쓰는 카테고리 이름만 모은다. 못 얻으면 빈 집합."""
+    try:
+        from agent.content.config.categories import CATEGORIES
+
+        return {category.id for category in CATEGORIES}
+    except Exception:  # noqa: BLE001
+        return set()
+
+
 def _resolve_category(term_ids, slug_by_id: Dict[int, str], fallback: str) -> str:
     """글의 진짜 카테고리를 정한다. 못 알아내면 fallback 을 쓴다."""
     slugs = []
@@ -221,8 +231,10 @@ def _resolve_category(term_ids, slug_by_id: Dict[int, str], fallback: str) -> st
             slugs.append(slug)
     if fallback in slugs:
         return fallback
-    if slugs:
-        return slugs[0]
+    known = _known_category_ids()
+    for slug in slugs:
+        if slug in known:
+            return slug
     return fallback
 
 
