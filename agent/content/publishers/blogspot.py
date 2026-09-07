@@ -23,6 +23,16 @@ class BlogspotPublisherError(RuntimeError):
     pass
 
 
+def _blogspot_host() -> str:
+    """블로그 주소에서 이름만 뽑는다. 못 얻으면 빈 글자."""
+    try:
+        from urllib.parse import urlparse
+
+        return (urlparse(os.environ.get("BLOGSPOT_SITE_URL") or "").hostname or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def is_live_blogspot_draft_enabled(env: Optional[Mapping[str, str]] = None) -> bool:
     """True when Blogger OAuth credentials are present for draft upload.
 
@@ -67,8 +77,14 @@ def exchange_blogger_access_token(*, client_id: str, client_secret: str, refresh
     return data["access_token"]
 
 
-def build_blogger_post(markdown: str, *, title: str, labels: Optional[List[str]] = None,
-                        extra_content_html: str = "") -> Dict[str, Any]:
+def build_blogger_post(
+    markdown: str,
+    *,
+    title: str,
+    labels: Optional[List[str]] = None,
+    extra_content_html: str = "",
+    internal_host: str = "",
+) -> Dict[str, Any]:
     """``labels`` should be extracted from the RAW pre-strip blog content by
     the caller and passed in explicitly — by the time ``markdown`` reaches
     here it's already had frontmatter/SEO-meta stripped (same reason
@@ -84,7 +100,7 @@ def build_blogger_post(markdown: str, *, title: str, labels: Optional[List[str]]
     by the converter's fallback paragraph handler, which would mangle raw
     ``<script>`` tags if they were embedded in the markdown source instead.
     """
-    content_html = markdown_to_html(markdown)
+    content_html = markdown_to_html(markdown, internal_host=internal_host or _blogspot_host())
     if extra_content_html:
         content_html = f"{content_html}\n{extra_content_html}"
     return {
