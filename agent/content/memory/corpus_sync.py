@@ -91,17 +91,31 @@ def _drafts_root() -> Path:
     return Path(override) if override else _REPO_ROOT / "data" / "content_drafts"
 
 
+def _known_keywords(category_id: str, extra=None) -> list:
+    """기본 목록과 캐시를 합친다. 못 얻으면 넘겨받은 것만 쓴다."""
+    out = list(extra or [])
+    if not category_id:
+        return out
+    try:
+        from agent.content.config.categories import get_effective_keywords
+
+        for kw in get_effective_keywords(category_id) or []:
+            if kw and kw not in out:
+                out.append(kw)
+    except Exception:  # noqa: BLE001 - 캐시를 못 읽어도 기본으로 간다
+        pass
+    return out
+
+
 def _guess_main_keyword(title: str, category_keywords: Optional[List[str]] = None) -> str:
     lead = _lead_keyword(title)
-    if lead:
+    known = category_keywords or []
+    if lead and lead in known:
         return lead.lower()
     text = _normalize_text(_HTML_ENTITY_RE.sub(" ", str(title or "")))
-    for kw in category_keywords or []:
+    for kw in known:
         if _normalize_text(kw) and _normalize_text(kw) in text:
             return str(kw).strip()
-    for token in text.split():
-        if _usable_token(token):
-            return _strip_josa(token).lower()
     return ""
 
 
@@ -157,7 +171,8 @@ def ingest_local_drafts(
             except Exception:  # noqa: BLE001
                 cat_id = ""
                 kws = category_keywords or []
-            keyword = _guess_main_keyword(topic + " " + title, kws)
+            known = _known_keywords(cat_id, kws) if cat_id else list(kws or [])
+            keyword = _guess_main_keyword(topic + " " + title, known)
             added = add_content(
                 current,
                 {
@@ -292,7 +307,12 @@ def ingest_wordpress_published(
         if not title:
             continue
         raw_date = str(item.get("date") or "")[:10] or date_cls.today().isoformat()
-        keyword = _guess_main_keyword(title, category_keywords)
+        known = (
+            _known_keywords(category_id, category_keywords)
+            if category_id
+            else list(category_keywords or [])
+        )
+        keyword = _guess_main_keyword(title, known)
         slug = str(item.get("slug") or item.get("id") or title)
         resolved_category = _resolve_category(item.get("categories"), slug_by_id, category_id)
         added = add_content(

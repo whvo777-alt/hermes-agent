@@ -11,7 +11,7 @@ _KEYWORDS = ["다이어트", "운동", "스트레칭", "수면", "혈당", "걷�
 def test_leading_single_word_before_comma_is_main_keyword():
     title = "어깨결림, 목과 어깨가 함께 뻐근할 때 스트레칭과 진료 판단"
 
-    assert _guess_main_keyword(title, _KEYWORDS) == "어깨결림"
+    assert _guess_main_keyword(title, [*_KEYWORDS, "어깨결림"]) == "어깨결림"
 
 
 def test_multiple_words_before_comma_do_not_use_leading_phrase_as_keyword():
@@ -35,12 +35,15 @@ def test_digit_starting_token_is_not_selected_as_main_keyword():
     assert not result[:1].isdigit()
 
 
-def test_josa_is_removed_from_main_keyword():
-    assert _guess_main_keyword("노션에 날개 달기: 삭막한 페이지에 날씨, 시계 심는 위젯 사이트 추천") == "노션"
+def test_known_category_keyword_is_selected_for_legacy_title():
+    assert _guess_main_keyword(
+        "노션에 날개 달기: 삭막한 페이지에 날씨, 시계 심는 위젯 사이트 추천",
+        ["노션"],
+    ) == "노션"
 
 
 def test_two_character_word_keeps_its_final_character():
-    assert _guess_main_keyword("요가 초보가 수업 전 확인할 7가지 기준") == "요가"
+    assert _guess_main_keyword("요가 초보가 수업 전 확인할 7가지 기준", ["요가"]) == "요가"
 
 
 def test_category_keyword_fallback_is_preserved_for_legacy_titles():
@@ -64,7 +67,7 @@ def test_common_word_is_not_used_as_main_keyword():
 def test_english_main_keyword_is_lowercased():
     title = "PT, 운동 초보는 가격과 계약 조건을 먼저 비교할까?"
 
-    assert _guess_main_keyword(title, _KEYWORDS) == "pt"
+    assert _guess_main_keyword(title, [*_KEYWORDS, "pt"]) == "pt"
 
 
 def test_hangul_main_keyword_is_preserved():
