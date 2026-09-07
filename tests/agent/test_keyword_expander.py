@@ -353,9 +353,13 @@ def test_root_overlap_cap_limits_english_examples_by_two_char_fragment() -> None
     assert [candidate["keyword"] for candidate in reserve] == ["영어학습지"]
 
 
-def test_default_top_n_is_30_and_merge_cap_remains_30() -> None:
-    assert ke._DEFAULT_TOP_N == 30
-    assert ke._MAX_CACHED_CANDIDATES == 30
+def test_top_n_and_merge_cap_stay_wide_enough() -> None:
+    # 후보 42개(기본 12 + 캐시 30)에 이미 쓴 키워드 73개가 걸려
+    # "사용 가능한 새 주제가 없습니다" 로 원고가 멈췄다.
+    # _MAX_CACHED_CANDIDATES 만 올리면 _DEFAULT_TOP_N 이 30 에 걸려
+    # 실제 추가량이 그대로다. 둘을 같이 본다.
+    assert ke._DEFAULT_TOP_N == 100
+    assert ke._MAX_CACHED_CANDIDATES == 150
 
 
 def test_raw_candidates_are_deduplicated_and_total_volume_floor_is_1000() -> None:
@@ -569,7 +573,7 @@ def test_expand_scores_and_caps_before_and_after_llm_in_the_requested_order(tmp_
     monkeypatch.setattr(ke, "_limit_root_overlap", lambda candidates, **kwargs: (candidates, []))
     raw = [
         _row(f"주{i:03d}어", pc=1000 + i, mobile=1000 + i)
-        for i in range(120)
+        for i in range(220)
     ]
     captured = {}
 
@@ -589,12 +593,12 @@ def test_expand_scores_and_caps_before_and_after_llm_in_the_requested_order(tmp_
     saved = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
 
     assert result["status"] == "ok"
-    assert len(captured["candidates"]) == 100
+    assert len(captured["candidates"]) == 200
     assert captured["candidates"] == sorted(
         captured["candidates"], key=lambda candidate: candidate["score"], reverse=True
     )
     assert len(saved["candidates"]) == 30
-    assert result["llm_filter"]["input_candidates"] == 100
+    assert result["llm_filter"]["input_candidates"] == 200
     assert result["llm_filter"]["status"] == "ok"
 
 

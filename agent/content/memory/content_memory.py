@@ -20,6 +20,9 @@ from typing import Any, Dict, List, Optional
 _RECENT_DAYS = 30
 # Same-platform main keyword / title collisions are never allowed again.
 _BLOCK_FOREVER_DAYS = 3650
+# 같은 대표 키워드를 다시 쓸 수 있게 되는 기간. 제목이 60% 넘게 겹치면
+# is_topic_blocked() 가 따로 막으므로 이쪽만 짧게 둔다.
+_KEYWORD_REUSE_DAYS = 180
 
 _BLOCKING_REASONS = frozenset(
     {
@@ -301,7 +304,7 @@ def used_main_keywords(
     """Main keywords already used on this platform (never reuse)."""
     used = set()
     for item in find_recent_topics(
-        memory, date=date, days=_BLOCK_FOREVER_DAYS, category=category, platform=platform
+        memory, date=date, days=_KEYWORD_REUSE_DAYS, category=category, platform=platform
     ):
         kw = _normalize_text(item.get("mainKeyword") or "")
         if kw:
