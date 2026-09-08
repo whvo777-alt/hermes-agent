@@ -49,14 +49,28 @@ _PUBLISH_BLOCKED_MARKERS = (
     "자료 없음",
 )
 
+_QUOTE_OPEN = "\"'“‘『「"
+_QUOTE_CLOSE = "\"'”’』」"
+
+
+def _is_quoted(line: str, start: int, end: int) -> bool:
+    """금지어 바로 앞뒤가 따옴표면 인용이라고 본다."""
+    before = line[start - 1] if start > 0 else ""
+    after = line[end] if end < len(line) else ""
+    return before in _QUOTE_OPEN and after in _QUOTE_CLOSE
+
 
 def _find_publish_content_blockers(content: str) -> list[tuple[str, int]]:
     """Return author-note/placeholder markers with their 1-based line numbers."""
     blockers: list[tuple[str, int]] = []
     for line_number, line in enumerate(str(content or "").splitlines(), start=1):
         for marker in _PUBLISH_BLOCKED_MARKERS:
-            if marker in line:
-                blockers.append((marker, line_number))
+            idx = line.find(marker)
+            while idx >= 0:
+                if not _is_quoted(line, idx, idx + len(marker)):
+                    blockers.append((marker, line_number))
+                    break
+                idx = line.find(marker, idx + 1)
     return blockers
 
 
