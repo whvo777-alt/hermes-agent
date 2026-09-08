@@ -24,6 +24,7 @@ import base64
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -78,7 +79,7 @@ _SIZES = {
 # Codex Responses surface used for the request. The chat model itself is only
 # the host that calls the ``image_generation`` tool; the actual image work is
 # done by ``API_MODEL``.
-_CODEX_CHAT_MODEL = "gpt-5.5"
+_CODEX_CHAT_MODEL_FALLBACK = "gpt-5.6-luna"
 _CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 _CODEX_INSTRUCTIONS = (
     "You are an assistant that must fulfill image generation and image editing "
@@ -94,6 +95,35 @@ _MAX_INPUT_IMAGE_BYTES = 25 * 1024 * 1024
 _ACCEPTED_INPUT_MIME = frozenset(
     {"image/png", "image/jpeg", "image/gif", "image/webp"}
 )
+
+
+def _codex_chat_model() -> str:
+    """Read the active Codex chat model, falling back when unavailable.
+
+    Image generation uses the Codex Responses API chat model as its outer
+    model. Read the same ``CODEX_HOME``/``~/.codex`` location used by the
+    Codex CLI, so model changes there are picked up without a code change.
+    """
+    env = os.environ.get("CODEX_CHAT_MODEL", "").strip()
+    if env:
+        return env
+    try:
+        codex_home = os.environ.get("CODEX_HOME", "").strip()
+        if not codex_home:
+            codex_home = str(Path.home() / ".codex")
+        config_path = Path(codex_home).expanduser() / "config.toml"
+        text = config_path.read_text(encoding="utf-8")
+        match = re.search(
+            r'''(?m)^\s*model\s*=\s*["']([^"']+)["']''',
+            text,
+        )
+        if match:
+            found = match.group(1).strip()
+            if found:
+                return found
+    except Exception:  # noqa: BLE001 - a missing config must not block images
+        pass
+    return _CODEX_CHAT_MODEL_FALLBACK
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +294,7 @@ def _build_responses_payload(
     if input_images:
         content.extend(input_images)
     return {
-        "model": _CODEX_CHAT_MODEL,
+        "model": _codex_chat_model(),
         "store": False,
         "instructions": _CODEX_INSTRUCTIONS,
         "input": [{

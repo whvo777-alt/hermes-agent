@@ -126,6 +126,8 @@ class TestGenerate:
 
     def test_codex_stream_request_shape(self, provider, monkeypatch):
         monkeypatch.setattr(codex_plugin, "_read_codex_access_token", lambda: "codex-token")
+        # 모델 이름을 고정하지 않고 설정-driven override 전달만 검증한다.
+        monkeypatch.setenv("CODEX_CHAT_MODEL", "테스트-모델")
 
         captured = {}
 
@@ -143,7 +145,7 @@ class TestGenerate:
         result = provider.generate("a cat", aspect_ratio="portrait")
         assert result["success"] is True
 
-        assert captured["model"] == "gpt-5.5"
+        assert captured["model"] == "테스트-모델"
         assert captured["store"] is False
         assert captured["input"][0]["type"] == "message"
         assert captured["input"][0]["role"] == "user"
