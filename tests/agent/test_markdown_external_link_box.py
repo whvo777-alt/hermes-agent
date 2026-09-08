@@ -100,5 +100,8 @@ def test_external_box_is_rendered_when_internal_host_is_configured():
         internal_host=SITE_URL,
     )
 
-    assert "display:block;padding:16px 20px;margin:18px 0" in html
+    # 여백이 anchor에서 <p>로 옮겨졌다. 값(18px)은 그대로다.
+    # 블로거가 인라인 style을 지워도 <p>로 감싸져 링크가 붙지 않는다.
+    assert '<p style="margin:18px 0;">' in html
+    assert 'style="display:block;padding:16px 20px;margin:18px 0' not in html
     assert 'target="_blank" rel="noopener noreferrer"' in html

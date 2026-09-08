@@ -242,12 +242,13 @@ def _render_internal_link_card(line: str, *, internal_host: str = "") -> Optiona
     clean_href = href.replace("&amp;", "&").strip()
     if _is_internal_url(clean_href, internal_host):
         return (
+            '<p style="margin:14px 0;">'
             f'<a href="{escape_html(clean_href)}" '
-            'style="display:block;padding:16px 20px;margin:14px 0;background:#f8f9fa;'
+            'style="display:block;padding:16px 20px;background:#f8f9fa;'
             'color:#222222;text-decoration:none;border:1px solid #e5e7eb;'
             'border-radius:14px;font-weight:700;font-size:16px;">'
             f'{_inline_md(label, internal_host=internal_host)} '
-            '<span style="float:right;color:#6b7280;">→</span></a>'
+            '<span style="float:right;color:#6b7280;">→</span></a></p>'
         )
 
     try:
@@ -260,26 +261,29 @@ def _render_internal_link_card(line: str, *, internal_host: str = "") -> Optiona
     title = escape_html(label.strip())
     if host in _NEWS_HOSTS or host.startswith("news."):
         return (
+            '<p style="margin:18px 0;">'
             f'<a href="{escape_html(clean_href)}" target="_blank" rel="noopener noreferrer" '
-            'style="display:block;padding:16px 20px;margin:18px 0;background:#fff7ed;'
+            'style="display:block;padding:16px 20px;background:#fff7ed;'
             'color:#9a3412;text-decoration:none;border-left:5px solid #f97316;'
             'border-radius:12px;font-weight:700;">'
-            f'📰 {title} ↗</a>'
+            f'📰 {title} ↗</a></p>'
         )
     if host.endswith(_PUBLIC_SUFFIXES) and _is_site_root(clean_href):
         return (
+            '<p style="margin:18px 0;">'
             f'<a href="{escape_html(clean_href)}" target="_blank" rel="noopener noreferrer" '
-            'style="display:block;padding:15px 20px;margin:18px 0;background:#2563eb;'
+            'style="display:block;padding:15px 20px;background:#2563eb;'
             'color:#ffffff;text-decoration:none;border-radius:14px;font-weight:700;'
             'font-size:16px;text-align:center;">'
-            f'🔗 {title} ↗</a>'
+            f'🔗 {title} ↗</a></p>'
         )
     return (
+        '<p style="margin:18px 0;">'
         f'<a href="{escape_html(clean_href)}" target="_blank" rel="noopener noreferrer" '
-        'style="display:block;padding:16px 20px;margin:18px 0;background:#f8fafc;'
+        'style="display:block;padding:16px 20px;background:#f8fafc;'
         'color:#1e293b;text-decoration:none;border:1px solid #cbd5e1;'
         'border-radius:14px;font-weight:700;">'
-        f'📚 {title} <span style="float:right;">↗</span></a>'
+        f'📚 {title} <span style="float:right;">↗</span></a></p>'
     )
 
 
