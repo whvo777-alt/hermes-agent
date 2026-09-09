@@ -54,9 +54,16 @@ _QUOTE_CLOSE = "\"'”’』」"
 
 
 def _is_quoted(line: str, start: int, end: int) -> bool:
-    """금지어 바로 앞뒤가 따옴표면 인용이라고 본다."""
+    """금지어 바로 앞뒤가 따옴표면 인용이라고 본다.
+
+    줄의 처음과 끝은 따옴표가 아니다. 빈 글자는 어떤 글자열에도 들어 있다고
+    나오므로("" in _QUOTE_OPEN 이 참), 줄에 금지어만 있으면 앞뒤가 모두
+    빈 글자가 되어 인용으로 잘못 봤다. 2026-09-09 에 발견.
+    """
     before = line[start - 1] if start > 0 else ""
     after = line[end] if end < len(line) else ""
+    if not before or not after:
+        return False
     return before in _QUOTE_OPEN and after in _QUOTE_CLOSE
 
 

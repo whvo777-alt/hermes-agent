@@ -36,3 +36,31 @@ def test_other_marker_uses_the_same_quote_rule():
     assert _find_publish_content_blockers("현재 제공된 자료: 원문을 첨부한다.") == [
         ("현재 제공된 자료", 1)
     ]
+
+
+def test_marker_alone_on_line_blocks_publication():
+    assert _find_publish_content_blockers("검토 필요") == [("검토 필요", 1)]
+
+
+def test_marker_at_line_start_with_only_closing_quote_blocks():
+    assert _find_publish_content_blockers('검토 필요"') == [("검토 필요", 1)]
+
+
+def test_marker_at_line_end_with_only_opening_quote_blocks():
+    assert _find_publish_content_blockers('"검토 필요') == [("검토 필요", 1)]
+
+
+def test_marker_with_straight_quotes_on_both_sides_is_allowed():
+    assert _find_publish_content_blockers('"검토 필요"') == []
+
+
+def test_marker_with_curly_quotes_on_both_sides_is_allowed():
+    assert _find_publish_content_blockers("“검토 필요”") == []
+
+
+def test_marker_in_middle_of_sentence_blocks():
+    assert _find_publish_content_blockers("본문 검토 필요 입니다") == [("검토 필요", 1)]
+
+
+def test_marker_in_list_item_blocks():
+    assert _find_publish_content_blockers("- 검토 필요") == [("검토 필요", 1)]
