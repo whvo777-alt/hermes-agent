@@ -312,15 +312,8 @@ def build_infographic_prompt(
         )
         prompt_lines.extend(f'이전: "{before}" / 이후: "{after}"' for before, after in before_pairs)
     elif kind == "table":
-        header = table[0]
-        prompt_lines.extend(
-            [
-                f'제목 아래에 {len(header)}칸 표를 그린다.',
-                f'표의 머리줄은 {", ".join(f'"{cell}"' for cell in header)}.',
-                "아래 줄들을 순서대로 넣는다.",
-            ]
-        )
-        prompt_lines.extend(" | ".join(f'"{cell}"' for cell in row) for row in table[1:5])
+        # 표는 기존 인포그래픽 PNG를 사용하고 AI 후보에서는 제외한다.
+        return ""
     elif kind == "qa":
         prompt_lines.extend(
             [
@@ -442,6 +435,10 @@ def build_infographic_alt(spec) -> str:
     kind = _STYLE_KIND.get(selected_style, "summary")
     if selected_style == "grid" and table:
         kind = "table"
+
+    # 표 그림을 AI에서 제외하므로 대응하는 ALT도 남기지 않는다.
+    if kind == "table":
+        return ""
 
     if kind in {"checklist", "summary", "timeline"} and not items:
         return ""

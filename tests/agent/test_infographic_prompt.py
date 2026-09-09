@@ -62,10 +62,8 @@ def test_table_prompt_contains_header_and_body_cells():
         ["숙련", "강도를 조절"],
     ]
 
-    prompt = build_infographic_prompt(_spec(style="grid", table=table))
-
-    for cell in ("구분", "기준", "초보", "가볍게 시작", "숙련", "강도를 조절"):
-        assert f'"{cell}"' in prompt
+    # 표는 기존 인포그래픽 PNG를 사용하므로 AI 표 prompt는 비어 있어야 한다.
+    assert build_infographic_prompt(_spec(style="grid", table=table)) == ""
 
 
 def test_one_item_returns_empty_prompt():
@@ -283,11 +281,8 @@ def test_table_alt_contains_header_names():
         ],
     )
 
-    alt = build_infographic_alt(spec)
-
-    assert "상황" in alt
-    assert "대응" in alt
-    assert "비교표" in alt
+    # AI 표 그림을 만들지 않으므로 대응하는 ALT도 비어 있어야 한다.
+    assert build_infographic_alt(spec) == ""
 
 
 def test_alt_is_empty_without_material():
@@ -365,6 +360,7 @@ def test_variant_keeps_category_rules_and_common_design():
 
 
 def test_variant_does_not_change_non_list_layouts():
+    # 표는 AI에서 제외하는 별도 계약이므로 비표 variant 회귀 목록에서 분리한다.
     specs = [
         _spec(style="qa", qa_pairs=[("질문", "답변")]),
         _spec(
@@ -379,7 +375,6 @@ def test_variant_does_not_change_non_list_layouts():
         _spec(style="gauge", gauge_stat=("7", "일"), gauge_label="기준"),
         _spec(style="quote", quote_text="한 문장"),
         _spec(style="before_after", before_pairs=[("나쁜 예", "고친 예")]),
-        _spec(style="grid", table=[["구분", "기준"], ["초보", "가볍게 시작"]]),
     ]
 
     alternate_layouts = (
