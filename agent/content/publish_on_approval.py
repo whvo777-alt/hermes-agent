@@ -101,6 +101,19 @@ def _wp_host() -> str:
         return ""
 
 
+def _safe_check(html: str, site_host: str) -> dict:
+    """초안을 점검한다. 점검이 실패해도 발행을 막지 않는다.
+
+    점검은 곁다리다. 여기서 예외가 나서 발행이 멈추면 본말이 뒤바뀐다.
+    """
+    try:
+        from agent.content.publish_check import check_draft_html
+
+        return check_draft_html(html, site_host=site_host, min_chars=1500)
+    except Exception:  # noqa: BLE001 - 점검 실패로 발행을 멈추지 않는다
+        return {}
+
+
 def _prefer_korean_slug(*, raw_slug: str, title: str, focus_keyword: str) -> str:
     """Always prefer Hangul in the WordPress slug when the topic is Korean."""
     candidate = (raw_slug or "").strip().strip("`").strip("/")
@@ -925,6 +938,7 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
                 "Rank Math meta update failed: %s", exc
             )
             result["rankMath"] = {"apiCalled": False, "error": type(exc).__name__}
+        result["check"] = _safe_check(payload["content"], _wp_host())
         return result
 
     if platform_id == "blogspot":
@@ -1010,7 +1024,7 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
                 "Blogspot structured data build failed: %s", exc
             )
 
-        return create_blogspot_draft(
+        result = create_blogspot_draft(
             markdown=publishable,
             title=blogspot_title,
             labels=blogspot_labels,
@@ -1021,6 +1035,16 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
             live=live,
             extra_content_html=blogspot_structured_html,
         )
+        from agent.content.publishers.blogspot import _blogspot_host
+
+        blogspot_html = markdown_to_html(
+            publishable,
+            internal_host=_blogspot_host(),
+        )
+        if blogspot_structured_html:
+            blogspot_html = f"{blogspot_html}\n{blogspot_structured_html}"
+        result["check"] = _safe_check(blogspot_html, _blogspot_host())
+        return result
 
     if platform_id == "naver":
         return create_naver_draft(markdown=blog_content, live=live)
