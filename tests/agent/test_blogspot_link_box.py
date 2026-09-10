@@ -6,7 +6,7 @@ from agent.content.publishers.blogspot import build_blogger_post
 BLOGSPOT_URL = "https://cocoboll.com"
 
 
-def test_blogspot_site_url_keeps_internal_link(monkeypatch):
+def test_blogspot_site_url_renders_internal_link_as_gray_card(monkeypatch):
     monkeypatch.setenv("BLOGSPOT_SITE_URL", BLOGSPOT_URL)
 
     post = build_blogger_post(
@@ -15,8 +15,8 @@ def test_blogspot_site_url_keeps_internal_link(monkeypatch):
     )
 
     html = post["content"]
-    # 2026-09-10: Blogger removes inline style, so verify the link and title.
-    assert f'<a href="{BLOGSPOT_URL}/inside"' in html
+    assert "background:#f8f9fa" in html
+    assert "border:1px solid #e5e7eb" in html
     assert "내부 글" in html
     assert "target=\"_blank\"" not in html
 
@@ -30,8 +30,7 @@ def test_blogspot_site_url_renders_external_link_as_reference_box(monkeypatch):
     )
 
     html = post["content"]
-    # 2026-09-10: Blogger removes box styling, but the reference must survive.
-    assert '<a href="https://example.com/reference"' in html
+    assert "background:#f8fafc" in html
     assert "📚 참고 자료" in html
     assert 'target="_blank" rel="noopener noreferrer"' in html
 
@@ -46,8 +45,7 @@ def test_explicit_internal_host_takes_precedence_over_environment(monkeypatch):
     )
 
     html = post["content"]
-    # Explicit internal_host still controls internal-link classification.
-    assert f'<a href="{BLOGSPOT_URL}/inside"' in html
+    assert "background:#f8f9fa" in html
     assert "내부 글" in html
 
 

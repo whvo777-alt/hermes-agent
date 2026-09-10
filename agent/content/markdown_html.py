@@ -122,13 +122,7 @@ def _inline_md(
                 f'text-underline-offset:3px;">{label} →</a>'
             )
         if plain:
-            # 실제 바깥 URL의 target과 rel은 꾸밈이 아니라 동작이므로 유지한다.
-            if not re.match(r"^(?:https?:)?//", clean_href, re.I):
-                return f'<a href="{escape_html(clean_href)}">{label}</a>'
-            return (
-                f'<a href="{escape_html(clean_href)}" '
-                f'target="_blank" rel="noopener noreferrer">{label}</a>'
-            )
+            return f'<a href="{escape_html(clean_href)}">{label}</a>'
         return (
             f'<a href="{escape_html(clean_href)}" '
             f'style="color:#1565c0;font-weight:600;text-decoration:underline;'
