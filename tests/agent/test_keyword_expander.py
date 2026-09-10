@@ -33,9 +33,20 @@ def _candidate(
     }
 
 
-def test_seed_lists_are_specific_and_include_travel() -> None:
-    assert ke.SEED_KEYWORDS_BY_CATEGORY == {
-        "self-dev": ["시간관리", "목표설정", "습관", "계획표", "생산성"],
+def test_seed_lists_are_nonempty_and_preserve_existing_keywords() -> None:
+    # 씨앗 개수는 카테고리마다 다르고 앞으로 늘어난다. 비어 있지만 않으면 된다.
+    for category_id, seeds in ke.SEED_KEYWORDS_BY_CATEGORY.items():
+        assert seeds, f"{category_id} 에 씨앗이 없다"
+
+    # 기존 씨앗을 빼지 않고 뒤에 더하기만 한다.
+    assert ke.SEED_KEYWORDS_BY_CATEGORY["self-dev"][:5] == [
+        "시간관리", "목표설정", "습관", "계획표", "생산성",
+    ]
+    assert {
+        category_id: seeds
+        for category_id, seeds in ke.SEED_KEYWORDS_BY_CATEGORY.items()
+        if category_id != "self-dev"
+    } == {
         "health": ["다이어트식단", "홈트레이닝", "수면부족"],
         "finance": ["적금추천", "신용점수", "ETF추천"],
         "it-tech": ["엑셀함수", "클라우드백업", "사진정리"],
@@ -43,9 +54,9 @@ def test_seed_lists_are_specific_and_include_travel() -> None:
         "travel": ["국내여행지", "당일치기여행", "캠핑장추천"],
     }
 
-
-def test_seed_lists_have_at_most_five_per_category() -> None:
-    assert all(len(seeds) <= 5 for seeds in ke.SEED_KEYWORDS_BY_CATEGORY.values())
+    # 2026-09-10: 씨앗을 다섯씩 나눠 부르게 되어 목록 길이 제한이 사라졌다.
+    # 한 번에 다섯을 넘겨 보내지 않는지는
+    # tests/agent/test_keyword_seed_batches.py 5번이 본다.
 
 
 def test_related_keyword_fetch_retries_http_429(monkeypatch) -> None:

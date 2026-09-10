@@ -49,7 +49,13 @@ _CATEGORY_PROFILES = {
 # existing core keyword lists. Naver's keywordstool accepts at most 5
 # seeds per call (see naver_ad_client._MAX_SEEDS_PER_CALL).
 SEED_KEYWORDS_BY_CATEGORY: Dict[str, List[str]] = {
-    "self-dev": ["시간관리", "목표설정", "습관", "계획표", "생산성"],
+    # 2026-09-10: 씨앗 다섯으로는 후보가 40개에 그쳐 새 주제가 바닥났다.
+    # 앞의 다섯은 뜬구름 낱말이라 네이버에서 곁가지가 적게 나온다.
+    # 뒤의 다섯은 사람들이 실제로 찾는 물건·방법 낱말이다.
+    "self-dev": [
+        "시간관리", "목표설정", "습관", "계획표", "생산성",
+        "다이어리", "플래너", "공부법", "독서법", "자격증공부",
+    ],
     "health": ["다이어트식단", "홈트레이닝", "수면부족"],
     "finance": ["적금추천", "신용점수", "ETF추천"],
     "it-tech": ["엑셀함수", "클라우드백업", "사진정리"],
@@ -607,11 +613,13 @@ def _fetch_related_keywords_with_retry(
     *,
     attempts: int = 3,
     delay_seconds: float = 2.0,
+    client=None,
 ) -> List[dict]:
     """Fetch related keywords, retrying Naver HTTP 429 with linear backoff."""
     from agent.content.keywords.naver_ad_client import NaverAdApiError, NaverAdClient
 
-    client = NaverAdClient()
+    if client is None:
+        client = NaverAdClient()
     max_attempts = max(1, attempts)
     for attempt in range(1, max_attempts + 1):
         try:
@@ -629,6 +637,54 @@ def _fetch_related_keywords_with_retry(
             )
             time.sleep(wait_seconds)
     return []
+
+
+def _related_keywords_in_batches(
+    client,
+    seeds: List[str],
+    *,
+    attempts: int = 3,
+    delay_seconds: float = 2.0,
+) -> list:
+    """씨앗을 다섯씩 나눠 여러 번 부르고 합친다.
+
+    네이버 keywordstool 은 한 번에 씨앗 다섯까지만 받는다
+    (naver_ad_client._MAX_SEEDS_PER_CALL). 씨앗을 늘리려면 나눠 부르는
+    수밖에 없다. 2026-09-10 에 self-dev 씨앗이 다섯으로 막혀 후보가
+    40개에 그쳤고, 이미 쓴 키워드 64개에 밀려 새 주제가 안 나왔다.
+
+    한 덩어리가 실패해도 나머지 결과는 살린다. 모두 실패하면 빈 목록.
+    """
+    from agent.content.keywords.naver_ad_client import (
+        NaverAdApiError,
+        _MAX_SEEDS_PER_CALL,
+    )
+
+    merged = []
+    seen = set()
+    for start in range(0, len(seeds), _MAX_SEEDS_PER_CALL):
+        batch = seeds[start:start + _MAX_SEEDS_PER_CALL]
+        try:
+            related = _fetch_related_keywords_with_retry(
+                batch,
+                attempts=attempts,
+                delay_seconds=delay_seconds,
+                client=client,
+            )
+        except NaverAdApiError as exc:
+            logger.warning("Naver keyword batch failed for seeds=%s: %s", batch, exc)
+            continue
+        for record in related:
+            keyword = str(
+                record.get("relKeyword") or record.get("keyword") or ""
+            ).strip()
+            key = _keyword_key(keyword)
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            merged.append(record)
+    return merged
 
 
 def expand_category(
@@ -664,10 +720,12 @@ def expand_category(
         for candidate in existing_candidates
     }
 
-    from agent.content.keywords.naver_ad_client import NaverAdApiError
+    from agent.content.keywords.naver_ad_client import NaverAdApiError, NaverAdClient
 
     try:
-        raw = _fetch_related_keywords_with_retry(
+        client = NaverAdClient()
+        raw = _related_keywords_in_batches(
+            client,
             seeds,
             attempts=api_retry_attempts,
             delay_seconds=api_retry_delay_seconds,
