@@ -81,6 +81,17 @@ def _is_internal_url(url: str, internal_host: str) -> bool:
     return bool(host) and host == target
 
 
+def _is_external_href(href: str) -> bool:
+    """새 창으로 열어야 할 진짜 바깥 주소인지 본다.
+
+    _is_internal_url() 이 False 인 것과 다르다. 상대 링크(/about, ./guide,
+    #section)는 host 가 없어 그쪽에서도 False 가 되지만 내 블로그 안이다.
+    상대 링크를 새 창으로 열면 안 된다.
+    """
+    value = str(href or "").strip().lower()
+    return value.startswith(("http://", "https://", "//"))
+
+
 def _inline_md(
     text: str,
     *,
@@ -123,12 +134,12 @@ def _inline_md(
             )
         if plain:
             # 실제 바깥 URL의 target과 rel은 꾸밈이 아니라 동작이므로 유지한다.
-            if not re.match(r"^(?:https?:)?//", clean_href, re.I):
-                return f'<a href="{escape_html(clean_href)}">{label}</a>'
-            return (
-                f'<a href="{escape_html(clean_href)}" '
-                f'target="_blank" rel="noopener noreferrer">{label}</a>'
-            )
+            if _is_external_href(clean_href):
+                return (
+                    f'<a href="{escape_html(clean_href)}" '
+                    f'target="_blank" rel="noopener noreferrer">{label}</a>'
+                )
+            return f'<a href="{escape_html(clean_href)}">{label}</a>'
         return (
             f'<a href="{escape_html(clean_href)}" '
             f'style="color:#1565c0;font-weight:600;text-decoration:underline;'

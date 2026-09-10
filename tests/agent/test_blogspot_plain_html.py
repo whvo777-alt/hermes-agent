@@ -65,6 +65,14 @@ def test_blogspot_plain_html_internal_inline_link_has_no_target(monkeypatch):
     assert 'target="_blank"' not in html
 
 
+def test_blogspot_plain_html_relative_link_has_no_target(monkeypatch):
+    html = _blogspot_html(monkeypatch, "본문의 [소개](/about)입니다.")
+
+    assert '<a href="/about">소개</a>' in html
+    assert 'target="_blank"' not in html
+    assert 'rel="noopener noreferrer"' not in html
+
+
 def test_blogspot_plain_html_keeps_table_and_cell_content(monkeypatch):
     html = _blogspot_html(
         monkeypatch,
