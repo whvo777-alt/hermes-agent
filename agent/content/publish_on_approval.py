@@ -1039,6 +1039,8 @@ def publish_approved_item(bundle: DailyBlogApprovalBundle, platform_id: str, *, 
 
         blogspot_html = markdown_to_html(
             publishable,
+            # 실제 Blogspot payload와 같은 plain HTML을 점검한다.
+            plain=True,
             internal_host=_blogspot_host(),
         )
         if blogspot_structured_html:

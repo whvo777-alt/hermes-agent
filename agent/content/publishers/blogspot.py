@@ -100,7 +100,13 @@ def build_blogger_post(
     by the converter's fallback paragraph handler, which would mangle raw
     ``<script>`` tags if they were embedded in the markdown source instead.
     """
-    content_html = markdown_to_html(markdown, internal_host=internal_host or _blogspot_host())
+    # Blogger는 인라인 style을 지우므로 꾸밈 없는 HTML을 보낸다.
+    # 2026-09-10 확인. plain은 같은 내용과 링크를 꾸밈 없이 보존한다.
+    content_html = markdown_to_html(
+        markdown,
+        plain=True,
+        internal_host=internal_host or _blogspot_host(),
+    )
     if extra_content_html:
         content_html = f"{content_html}\n{extra_content_html}"
     return {
