@@ -84,6 +84,10 @@ _EMBED_FOOTER_TEXT_NO_PLAN = "Approval only. No execution will be dispatched."
 _FIELD_VALUE_MAX = 1024  # max chars per embed field value
 _DESCRIPTION_MAX = 3500  # stays under Discord's 4096 description cap with headroom
 _EMBED_TOTAL_MAX = 6000  # Discord aggregate embed character budget
+# The draft-check report is appended only when the existing report leaves
+# enough room in one ordinary Discord message.
+_DISCORD_MESSAGE_MAX = 2000
+_CHECK_MIN_ROOM = 120
 # UI readability cap for inline field values — not a Discord API hard limit
 # (Discord allows up to 1024 chars per field value via ``_FIELD_VALUE_MAX``).
 _INLINE_FIELD_VALUE_MAX = 256
@@ -1919,6 +1923,32 @@ def execute_daily_blog_approval_action(
     }
 
 
+def _append_draft_check(message: str, result: dict, *, label: str = "") -> str:
+    """발행 보고 뒤에 초안 점검표를 붙인다.
+
+    기존 보고가 먼저다. 합쳐서 2000자를 넘으면 디스코드가 메시지를 통째로
+    거절해 발행 보고까지 사라진다. 자리가 모자라면 점검표를 넣지 않는다.
+    점검표를 붙이다 터져도 기존 보고는 그대로 나가야 한다.
+    """
+    try:
+        check = (result or {}).get("check") or {}
+        if not check:
+            return message
+        from agent.content.publish_check import format_check_report
+
+        report = format_check_report(check, label=label)
+        if not report:
+            return message
+        room = _DISCORD_MESSAGE_MAX - len(message) - 2
+        if room < _CHECK_MIN_ROOM:
+            return message
+        if len(report) > room:
+            report = report[:room]
+        return message + "\n\n" + report
+    except Exception:  # noqa: BLE001 - 점검표 때문에 발행 보고를 잃지 않는다
+        return message
+
+
 def _daily_blog_result_message(result: Dict[str, Any], action: str) -> str:
     item = result.get("item") or {}
     platform = str(item.get("platform_label") or item.get("platform") or "")
@@ -1939,13 +1969,14 @@ def _daily_blog_result_message(result: Dict[str, Any], action: str) -> str:
     if platform_id == "blogspot":
         post_id = publish_result.get("postId") or "-"
         link = publish_result.get("url") or publish_result.get("selfLink") or "-"
-        return (
+        message = (
             "Blogspot 초안 생성 완료\n"
             f"- 글 ID: `{post_id}`\n"
             f"- 상태: `draft`\n"
             f"- 확인 링크: {link}\n"
             "- 공개 발행: 실행되지 않음"
         )
+        return _append_draft_check(message, publish_result, label="블로그스팟 초안")
     response = publish_result.get("response") or {}
     verification = publish_result.get("verification") or {}
     post_id = response.get("id") or verification.get("id") or "-"
@@ -1965,7 +1996,7 @@ def _daily_blog_result_message(result: Dict[str, Any], action: str) -> str:
         hero_label = "⚠️ 첨부 불일치 (수동 확인 필요)"
     else:
         hero_label = "확인 불가"
-    return (
+    message = (
         "WordPress 초안 생성 완료\n"
         f"- 글 ID: `{post_id}`\n"
         f"- 상태: `{status}`\n"
@@ -1973,6 +2004,7 @@ def _daily_blog_result_message(result: Dict[str, Any], action: str) -> str:
         f"- 대표이미지: {hero_label}\n"
         "- 공개 발행: 실행되지 않음"
     )
+    return _append_draft_check(message, publish_result, label="워드프레스 초안")
 
 
 async def _update_daily_blog_interaction(
